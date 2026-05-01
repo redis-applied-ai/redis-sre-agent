@@ -6,6 +6,8 @@ import copy
 import inspect
 import logging
 import re
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence
 from urllib.parse import urlparse
@@ -13,8 +15,18 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 from redisvl.query import CountQuery, FilterQuery
 
-from redis_sre_agent.core.clusters import RedisCluster, get_cluster_by_id, get_clusters
-from redis_sre_agent.core.instances import RedisInstance, get_instance_by_id, get_instances
+from redis_sre_agent.core.clusters import (
+    RedisCluster,
+    get_cluster_by_id,
+    get_clusters,
+    get_clusters_strict,
+)
+from redis_sre_agent.core.instances import (
+    RedisInstance,
+    get_instance_by_id,
+    get_instances,
+    get_instances_strict,
+)
 from redis_sre_agent.core.redis import SRE_TARGETS_INDEX, get_redis_client, get_targets_index
 from redis_sre_agent.core.threads import ThreadManager
 from redis_sre_agent.targets import (
@@ -54,6 +66,44 @@ _TYPE_HINTS = {
     "clustered": "oss_cluster",
 }
 _HEALTHY_STATUSES = {"healthy", "ok", "active", "available", "connected"}
+_AUTHORITATIVE_TARGET_CATALOG_CACHE_TTL_SECONDS = 30.0
+_authoritative_target_catalog_snapshot_cache: Optional[AuthoritativeTargetCatalogSnapshot] = None
+_authoritative_target_catalog_snapshot_cache_expires_at = 0.0
+
+
+@dataclass
+class AuthoritativeTargetCatalogSnapshot:
+    """One authoritative target-catalog read reused across repair operations."""
+
+    instances: List[RedisInstance]
+    clusters: List[RedisCluster]
+    docs: List["TargetCatalogDoc"]
+
+
+def _cache_authoritative_target_catalog_snapshot(
+    snapshot: AuthoritativeTargetCatalogSnapshot,
+) -> AuthoritativeTargetCatalogSnapshot:
+    """Store the latest authoritative snapshot for bounded reuse on the hot path."""
+    global _authoritative_target_catalog_snapshot_cache
+    global _authoritative_target_catalog_snapshot_cache_expires_at
+
+    cached_snapshot = copy.deepcopy(snapshot)
+    _authoritative_target_catalog_snapshot_cache = cached_snapshot
+    _authoritative_target_catalog_snapshot_cache_expires_at = (
+        time.monotonic() + _AUTHORITATIVE_TARGET_CATALOG_CACHE_TTL_SECONDS
+    )
+    return copy.deepcopy(cached_snapshot)
+
+
+def _get_cached_authoritative_target_catalog_snapshot() -> Optional[
+    AuthoritativeTargetCatalogSnapshot
+]:
+    """Return the cached authoritative snapshot when it is still fresh."""
+    if _authoritative_target_catalog_snapshot_cache is None:
+        return None
+    if time.monotonic() >= _authoritative_target_catalog_snapshot_cache_expires_at:
+        return None
+    return copy.deepcopy(_authoritative_target_catalog_snapshot_cache)
 
 
 class TargetCatalogDoc(BaseModel):
@@ -690,6 +740,60 @@ def build_target_catalog_docs(
     return docs
 
 
+def _target_catalog_matches_authoritative_docs(
+    catalog_docs: Sequence[TargetCatalogDoc],
+    authoritative_docs: Sequence[TargetCatalogDoc],
+) -> bool:
+    """Return whether indexed target docs exactly match authoritative records."""
+    if len(catalog_docs) != len(authoritative_docs):
+        return False
+
+    catalog_by_id = {doc.target_id: doc for doc in catalog_docs}
+    authoritative_by_id = {doc.target_id: doc for doc in authoritative_docs}
+
+    if catalog_by_id.keys() != authoritative_by_id.keys():
+        return False
+
+    return all(
+        catalog_by_id[target_id].model_dump() == authoritative_by_id[target_id].model_dump()
+        for target_id in authoritative_by_id
+    )
+
+
+async def sync_target_catalog_from_authoritative_records() -> List[TargetCatalogDoc]:
+    """Rebuild and persist the target catalog from stored instances and clusters."""
+    authoritative_snapshot = await load_authoritative_target_catalog_snapshot(force_refresh=True)
+
+    try:
+        await sync_target_catalog(
+            instances=authoritative_snapshot.instances,
+            clusters=authoritative_snapshot.clusters,
+        )
+    except Exception:
+        logger.debug("Best-effort authoritative target catalog sync failed", exc_info=True)
+
+    return authoritative_snapshot.docs
+
+
+async def load_authoritative_target_catalog_snapshot(
+    *, force_refresh: bool = False
+) -> AuthoritativeTargetCatalogSnapshot:
+    """Load authoritative target records once for drift checks and syncs."""
+    if not force_refresh:
+        cached_snapshot = _get_cached_authoritative_target_catalog_snapshot()
+        if cached_snapshot is not None:
+            return cached_snapshot
+
+    authoritative_instances = await get_instances_strict()
+    authoritative_clusters = await get_clusters_strict()
+    snapshot = AuthoritativeTargetCatalogSnapshot(
+        instances=authoritative_instances,
+        clusters=authoritative_clusters,
+        docs=build_target_catalog_docs(authoritative_instances, authoritative_clusters),
+    )
+    return _cache_authoritative_target_catalog_snapshot(snapshot)
+
+
 async def _ensure_targets_index_exists() -> None:
     try:
         index = await get_targets_index()
@@ -795,6 +899,13 @@ async def sync_target_catalog(
         for stale_id in stale_ids:
             await client.delete(f"{SRE_TARGETS_INDEX}:{stale_id}")
 
+        _cache_authoritative_target_catalog_snapshot(
+            AuthoritativeTargetCatalogSnapshot(
+                instances=actual_instances,
+                clusters=actual_clusters,
+                docs=docs,
+            )
+        )
         return True
     except Exception:
         logger.exception("Failed to sync unified target catalog")
@@ -851,6 +962,30 @@ async def get_target_catalog(
                         continue
                 if cursor == 0:
                     break
+
+        authoritative_snapshot: Optional[AuthoritativeTargetCatalogSnapshot] = None
+        try:
+            authoritative_snapshot = await load_authoritative_target_catalog_snapshot()
+        except Exception:
+            logger.debug(
+                "Skipping target catalog drift repair because authoritative records were unavailable",
+                exc_info=True,
+            )
+
+        if authoritative_snapshot and not _target_catalog_matches_authoritative_docs(
+            docs, authoritative_snapshot.docs
+        ):
+            logger.info(
+                "Target catalog drift detected; using authoritative instance/cluster records"
+            )
+            try:
+                await sync_target_catalog(
+                    instances=authoritative_snapshot.instances,
+                    clusters=authoritative_snapshot.clusters,
+                )
+            except Exception:
+                logger.debug("Best-effort target catalog drift repair failed", exc_info=True)
+            docs = authoritative_snapshot.docs
 
         filtered: List[TargetCatalogDoc] = []
         for parsed in docs:

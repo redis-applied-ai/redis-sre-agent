@@ -356,46 +356,55 @@ class RedisInstance(BaseModel):
             return None
 
 
+async def _load_instances_from_index() -> List[RedisInstance]:
+    """Load configured instances directly from the instances search index."""
+    await _ensure_instances_index_exists()
+    index = await get_instances_index()
+
+    # Determine how many docs exist, then fetch them in one search call.
+    try:
+        total = await index.query(CountQuery(filter_expression="*"))
+    except Exception:
+        total = 1000  # sensible fallback
+
+    if not total:
+        return []
+
+    q = FilterQuery(
+        filter_expression="*",
+        return_fields=["data"],  # full JSON payload is stored under 'data'
+        num_results=int(total) if isinstance(total, int) else 1000,
+    )
+    results = await index.query(q)
+
+    out: List[RedisInstance] = []
+    for doc in results or []:
+        try:
+            raw = doc.get("data")
+            if not raw:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            inst_data = json.loads(raw)
+            if inst_data.get("connection_url"):
+                inst_data["connection_url"] = get_secret_value(inst_data["connection_url"])
+            if inst_data.get("admin_password"):
+                inst_data["admin_password"] = get_secret_value(inst_data["admin_password"])
+            out.append(RedisInstance(**inst_data))
+        except Exception as e:
+            logger.exception("Failed to load instance from search result: %s. Skipping.", e)
+    return out
+
+
+async def get_instances_strict() -> List[RedisInstance]:
+    """Load configured instances and surface transport/index failures to callers."""
+    return await _load_instances_from_index()
+
+
 async def get_instances() -> List[RedisInstance]:
     """Load configured instances using a single FT.SEARCH over the instances index."""
     try:
-        # Ensure index exists (best-effort) and read instance docs from RediSearch
-        await _ensure_instances_index_exists()
-        index = await get_instances_index()
-
-        # Determine how many docs exist, then fetch them in one search call
-        try:
-            total = await index.query(CountQuery(filter_expression="*"))
-        except Exception:
-            total = 1000  # sensible fallback
-
-        if not total:
-            return []
-
-        q = FilterQuery(
-            filter_expression="*",
-            return_fields=["data"],  # full JSON payload is stored under 'data'
-            num_results=int(total) if isinstance(total, int) else 1000,
-        )
-        results = await index.query(q)
-
-        out: List[RedisInstance] = []
-        for doc in results or []:
-            try:
-                raw = doc.get("data")
-                if not raw:
-                    continue
-                if isinstance(raw, bytes):
-                    raw = raw.decode("utf-8")
-                inst_data = json.loads(raw)
-                if inst_data.get("connection_url"):
-                    inst_data["connection_url"] = get_secret_value(inst_data["connection_url"])
-                if inst_data.get("admin_password"):
-                    inst_data["admin_password"] = get_secret_value(inst_data["admin_password"])
-                out.append(RedisInstance(**inst_data))
-            except Exception as e:
-                logger.exception("Failed to load instance from search result: %s. Skipping.", e)
-        return out
+        return await _load_instances_from_index()
     except Exception as e:
         logger.exception("Failed to get instances from Redis: %s", e)
         return []
