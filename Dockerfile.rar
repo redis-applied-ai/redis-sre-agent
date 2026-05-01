@@ -119,13 +119,48 @@ if target.exists():
 shutil.copytree(src, target)
 PY
 
+RUN /workspace/.venv/bin/python - <<'PY'
+import pathlib
+import subprocess
+import sys
+import tomllib
+
+runner_pyproject = pathlib.Path("/workspace/.rar/sdk/runner/pyproject.toml")
+if not runner_pyproject.exists():
+    raise SystemExit(0)
+data = tomllib.loads(runner_pyproject.read_text(encoding="utf-8"))
+deps = []
+for item in data.get("project", {}).get("dependencies", []):
+    if not isinstance(item, str):
+        continue
+    normalized = item.strip()
+    if not normalized or normalized.lower().startswith("rar-policy"):
+        continue
+    deps.append(normalized)
+if deps:
+    subprocess.check_call(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--no-cache-dir",
+            *deps,
+        ]
+    )
+PY
+
 RUN rm -rf /root/.cache /workspace/.cache
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/workspace/.venv/bin:$PATH"
+    PATH="/workspace/.venv/bin:$PATH" \
+    PYTHONPATH="/workspace/.rar/sdk/runner:/workspace/.rar/sdk/rar_policy:${PYTHONPATH}" \
+    RAR_RESIDENT_WORKER_SOURCE_ROOT="/workspace" \
+    RAR_RESIDENT_WORKER_ENTRYPOINT="runtime_agent.py"
 
 WORKDIR /workspace
 
@@ -140,4 +175,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /workspace /workspace
 
-CMD ["python", "runtime_agent.py"]
+CMD ["python", "/workspace/.rar.generated.bootstrap.py"]

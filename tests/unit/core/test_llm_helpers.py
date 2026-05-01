@@ -72,6 +72,31 @@ class TestLLMHelpers:
             assert llm.openai_api_key.get_secret_value() == "custom-key"
             assert llm.request_timeout == 60.0
 
+    def test_create_llm_falls_back_to_live_env_when_settings_are_empty(self):
+        """Resident workers should honor live env even if settings were cached empty."""
+        with (
+            patch("redis_sre_agent.core.llm_helpers.settings") as mock_settings,
+            patch.dict(
+                "os.environ",
+                {
+                    "OPENAI_API_KEY": "env-key",
+                    "OPENAI_BASE_URL": "https://env-proxy.example.com/v1",
+                    "OPENAI_MODEL": "env-model",
+                },
+                clear=False,
+            ),
+        ):
+            mock_settings.openai_model = ""
+            mock_settings.openai_api_key = None
+            mock_settings.llm_timeout = 180.0
+            mock_settings.openai_base_url = None
+
+            llm = create_llm()
+
+            assert llm.model_name == "env-model"
+            assert llm.openai_api_key.get_secret_value() == "env-key"
+            assert llm.openai_api_base == "https://env-proxy.example.com/v1"
+
     def test_create_mini_llm_default_settings(self):
         """Test create_mini_llm with default settings."""
         with patch("redis_sre_agent.core.llm_helpers.settings") as mock_settings:
@@ -293,6 +318,32 @@ class TestAsyncOpenAIClientHelpers:
                 api_key="custom-key",
                 timeout=30.0,
                 max_retries=2,
+            )
+
+    def test_create_async_openai_client_falls_back_to_live_env_when_settings_are_empty(self):
+        """Async client creation should honor live env in resident workers."""
+        with (
+            patch("redis_sre_agent.core.llm_helpers.settings") as mock_settings,
+            patch("redis_sre_agent.core.llm_helpers.AsyncOpenAI") as mock_async_openai,
+            patch.dict(
+                "os.environ",
+                {
+                    "OPENAI_API_KEY": "env-key",
+                    "OPENAI_BASE_URL": "https://env-proxy.example.com/v1",
+                },
+                clear=False,
+            ),
+        ):
+            mock_settings.openai_api_key = None
+            mock_settings.llm_timeout = 180.0
+            mock_settings.openai_base_url = None
+
+            create_async_openai_client()
+
+            mock_async_openai.assert_called_once_with(
+                api_key="env-key",
+                timeout=180.0,
+                base_url="https://env-proxy.example.com/v1",
             )
 
     def test_get_async_openai_client_factory_returns_none_by_default(self):

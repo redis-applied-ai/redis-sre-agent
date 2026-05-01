@@ -31,6 +31,7 @@ Programmatic registration:
 
 import importlib
 import logging
+import os
 from typing import Optional, Protocol
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -40,6 +41,7 @@ from openai import AsyncOpenAI
 from redis_sre_agent.core.config import settings
 
 logger = logging.getLogger(__name__)
+_DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
 class LLMFactory(Protocol):
@@ -93,6 +95,53 @@ _llm_factory: Optional[LLMFactory] = None
 _factory_initialized: bool = False
 _async_openai_client_factory: Optional[AsyncOpenAIClientFactory] = None
 _async_openai_factory_initialized: bool = False
+
+
+def _configured_string(setting_name: str, env_name: str) -> Optional[str]:
+    """Return a non-empty config string, preferring the settings singleton then env."""
+
+    configured = getattr(settings, setting_name, None)
+    if isinstance(configured, str):
+        normalized = configured.strip()
+        if normalized:
+            return normalized
+    env_value = os.environ.get(env_name, "").strip()
+    return env_value or None
+
+
+def _configured_openai_api_key(explicit: Optional[str] = None) -> Optional[str]:
+    """Resolve the OpenAI API key from explicit input, settings, or live env."""
+
+    if isinstance(explicit, str):
+        normalized = explicit.strip()
+        if normalized:
+            return normalized
+    return _configured_string("openai_api_key", "OPENAI_API_KEY")
+
+
+def _configured_openai_base_url() -> Optional[str]:
+    """Resolve the OpenAI base URL from settings or live env."""
+
+    base_url = _configured_string("openai_base_url", "OPENAI_BASE_URL")
+    if base_url and base_url.rstrip("/") == _DEFAULT_OPENAI_BASE_URL:
+        return None
+    return base_url
+
+
+def _configured_openai_model(tier: str) -> str:
+    """Resolve the model for the given tier from settings or live env."""
+
+    if tier == "mini":
+        return (
+            _configured_string("openai_model_mini", "OPENAI_MODEL_MINI")
+            or settings.openai_model_mini
+        )
+    if tier == "nano":
+        return (
+            _configured_string("openai_model_nano", "OPENAI_MODEL_NANO")
+            or settings.openai_model_nano
+        )
+    return _configured_string("openai_model", "OPENAI_MODEL") or settings.openai_model
 
 
 def _load_factory_from_config() -> None:
@@ -241,23 +290,19 @@ def _default_openai_factory(
         Configured ChatOpenAI instance
     """
     # Get default model based on tier
-    default_models = {
-        "main": settings.openai_model,
-        "mini": settings.openai_model_mini,
-        "nano": settings.openai_model_nano,
-    }
-    default_model = default_models.get(tier, settings.openai_model)
+    default_model = _configured_openai_model(tier)
 
     llm_kwargs = {
         "model": model or default_model,
-        "api_key": kwargs.pop("api_key", None) or settings.openai_api_key,
+        "api_key": _configured_openai_api_key(kwargs.pop("api_key", None)),
         "timeout": timeout or settings.llm_timeout,
         **kwargs,
     }
 
     # Only include base_url if it's configured
-    if settings.openai_base_url:
-        llm_kwargs["base_url"] = settings.openai_base_url
+    base_url = _configured_openai_base_url()
+    if base_url:
+        llm_kwargs["base_url"] = base_url
 
     return ChatOpenAI(**llm_kwargs)
 
@@ -286,12 +331,13 @@ def _default_async_openai_client_factory(
     del tier, model
 
     client_kwargs = {
-        "api_key": api_key or settings.openai_api_key,
+        "api_key": _configured_openai_api_key(api_key),
         "timeout": timeout if timeout is not None else settings.llm_timeout,
         **kwargs,
     }
-    if settings.openai_base_url:
-        client_kwargs["base_url"] = settings.openai_base_url
+    base_url = _configured_openai_base_url()
+    if base_url:
+        client_kwargs["base_url"] = base_url
     return AsyncOpenAI(**client_kwargs)
 
 
