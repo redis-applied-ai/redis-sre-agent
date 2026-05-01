@@ -25,6 +25,8 @@ from redis_sre_agent.core.approvals import (
 from redis_sre_agent.core.docket_tasks import (
     SRE_TASK_COLLECTION,
     _thread_messages_to_conversation_history,
+    _transition_task_to_awaiting_approval,
+    _transition_task_to_awaiting_approval_from_interrupt,
     get_redis_url,
     ingest_sre_document,
     process_agent_turn,
@@ -3170,6 +3172,77 @@ class TestResumeTaskAfterApproval:
         assert rehydrated_instance.id == "redis-session-instance"
         assert rehydrated_instance.connection_url.get_secret_value() == "redis://localhost:6379"
         assert mock_chat_agent.resume_query.await_count == 1
+
+
+class TestApprovalTransitions:
+    @pytest.mark.asyncio
+    async def test_awaiting_approval_publish_survives_snapshot_persist_failure(self):
+        approval_error = _build_approval_required_error()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.set_pending_approval = AsyncMock()
+        mock_task_manager.set_resume_supported = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        with patch(
+            "redis_sre_agent.core.docket_tasks._persist_staged_session_instance_for_resume",
+            new=AsyncMock(side_effect=RuntimeError("persist failed")),
+        ):
+            result = await _transition_task_to_awaiting_approval(
+                task_manager=mock_task_manager,
+                task_id="task-123",
+                thread_id="thread-456",
+                error=approval_error,
+            )
+
+        assert result["status"] == TaskStatus.AWAITING_APPROVAL.value
+        mock_task_manager._publish_stream_update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_interrupt_awaiting_approval_publish_survives_snapshot_persist_failure(self):
+        next_error = _build_approval_required_error(
+            tool_name="redis_cloud_deadbeef_delete_database",
+            summary="redis_cloud_deadbeef_delete_database on tgt-db-1",
+        )
+        assert next_error.pending_approval is not None
+        interrupt_payload = {
+            "kind": "approval_required",
+            "approval_id": next_error.pending_approval.approval_id,
+            "interrupt_id": next_error.pending_approval.interrupt_id,
+            "tool_name": next_error.pending_approval.tool_name,
+            "pending_approval": next_error.pending_approval.model_dump(mode="json"),
+        }
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=None)
+        mock_task_manager.set_pending_approval = AsyncMock()
+        mock_task_manager.set_resume_supported = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        with patch(
+            "redis_sre_agent.core.docket_tasks._persist_staged_session_instance_for_resume",
+            new=AsyncMock(side_effect=RuntimeError("persist failed")),
+        ):
+            result = await _transition_task_to_awaiting_approval_from_interrupt(
+                task_manager=mock_task_manager,
+                task_id="task-123",
+                thread_id="thread-456",
+                error=GraphInterrupt(
+                    (
+                        Interrupt(
+                            value=interrupt_payload, id=next_error.pending_approval.interrupt_id
+                        ),
+                    )
+                ),
+            )
+
+        assert result["status"] == TaskStatus.AWAITING_APPROVAL.value
+        mock_task_manager._publish_stream_update.assert_awaited_once()
 
 
 class TestRunAgentWithProgress:

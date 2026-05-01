@@ -286,6 +286,9 @@ async def _transition_task_to_awaiting_approval(
             thread_id=thread_id,
             redis_client=task_manager._redis,
         )
+    except Exception:
+        logger.debug("Failed to persist staged session instance snapshot for task %s", task_id)
+    try:
         await task_manager._publish_stream_update(
             thread_id,
             "awaiting_approval",
@@ -535,6 +538,9 @@ async def _transition_task_to_awaiting_approval_from_interrupt(
             thread_id=thread_id,
             redis_client=task_manager._redis,
         )
+    except Exception:
+        logger.debug("Failed to persist staged session instance snapshot for task %s", task_id)
+    try:
         await task_manager._publish_stream_update(
             thread_id,
             "awaiting_approval",
