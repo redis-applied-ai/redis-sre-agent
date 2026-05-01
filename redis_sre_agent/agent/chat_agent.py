@@ -487,6 +487,7 @@ class ChatAgent:
                 "all_adapters": all_adapters,
                 "local_tools": {expand_spec["name"]: expand_spec["func"]},
                 "llm_with_expand": self.llm.bind_tools(all_adapters),
+                "local_tools": {expand_spec["name"]: expand_spec["func"]},
             }
             runtime_tools_by_generation[generation] = runtime
             return runtime

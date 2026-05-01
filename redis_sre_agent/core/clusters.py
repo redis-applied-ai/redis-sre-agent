@@ -191,10 +191,10 @@ async def get_clusters() -> List[RedisCluster]:
                     )
                 out.append(RedisCluster(**cluster_data))
             except Exception as e:
-                logger.error("Failed to load cluster from search result: %s. Skipping.", e)
+                logger.exception("Failed to load cluster from search result: %s. Skipping.", e)
         return out
     except Exception as e:
-        logger.error("Failed to get clusters from Redis: %s", e)
+        logger.exception("Failed to get clusters from Redis: %s", e)
         return []
 
 
@@ -271,12 +271,12 @@ async def query_clusters(
                     )
                 clusters.append(RedisCluster(**cluster_data))
             except Exception as e:
-                logger.error("Failed to load cluster from query result: %s. Skipping.", e)
+                logger.exception("Failed to load cluster from query result: %s. Skipping.", e)
 
         return ClusterQueryResult(clusters=clusters, total=total, limit=limit, offset=offset)
 
     except Exception as e:
-        logger.error("Failed to query clusters: %s", e)
+        logger.exception("Failed to query clusters: %s", e)
         return ClusterQueryResult(clusters=[], total=0, limit=limit, offset=offset)
 
 
@@ -433,5 +433,5 @@ async def get_cluster_by_id(cluster_id: str) -> Optional[RedisCluster]:
 
         return RedisCluster(**cluster_data)
     except Exception as e:
-        logger.error("Failed to get cluster by ID %s: %s", cluster_id, e)
+        logger.exception("Failed to get cluster by ID %s: %s", cluster_id, e)
         return None

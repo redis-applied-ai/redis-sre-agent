@@ -114,7 +114,7 @@ async def test_execute_tool_calls_with_gate_executes_local_tools_without_manager
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_calls_with_gate_preserves_order_with_local_and_manager_tools():
+async def test_execute_tool_calls_with_gate_preserves_order_with_manager_before_local_tools():
     tool_manager = SimpleNamespace(
         execute_tool_calls=AsyncMock(return_value=[{"status": "success", "value": "remote"}]),
     )
@@ -147,4 +147,49 @@ async def test_execute_tool_calls_with_gate_preserves_order_with_local_and_manag
     assert "redis_info" in tool_messages[1].content
     tool_manager.execute_tool_calls.assert_awaited_once_with(
         [{"name": "redis_info", "args": {"section": "memory"}}]
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_with_gate_preserves_order_with_local_before_manager_tools():
+    tool_manager = SimpleNamespace(
+        execute_tool_calls=AsyncMock(return_value=[{"status": "ok", "source": "manager"}]),
+    )
+
+    tool_messages = await execute_tool_calls_with_gate(
+        tool_manager=tool_manager,
+        tool_calls=[
+            {
+                "id": "tool-call-1",
+                "name": "expand_evidence",
+                "args": {"tool_key": "demo"},
+            },
+            {
+                "id": "tool-call-2",
+                "name": "redis_cloud_deadbeef_update_database",
+                "args": {"database_id": 7},
+            },
+        ],
+        local_tools={
+            "expand_evidence": lambda tool_key: {
+                "status": "success",
+                "tool_key": tool_key,
+                "source": "local",
+            }
+        },
+    )
+
+    assert [message.name for message in tool_messages] == [
+        "expand_evidence",
+        "redis_cloud_deadbeef_update_database",
+    ]
+    assert '"source": "local"' in tool_messages[0].content
+    assert '"source": "manager"' in tool_messages[1].content
+    tool_manager.execute_tool_calls.assert_awaited_once_with(
+        [
+            {
+                "name": "redis_cloud_deadbeef_update_database",
+                "args": {"database_id": 7},
+            }
+        ]
     )

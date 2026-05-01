@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 from ulid import ULID
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core import clusters as core_clusters
 from redis_sre_agent.core.cluster_admin_defaults import (
     build_enterprise_admin_missing_fields_error,
@@ -68,6 +69,7 @@ def clusters_list(as_json: bool, limit: int):
         try:
             items = await core_clusters.get_clusters()
         except Exception as e:
+            log_cli_exception(__name__, "cluster CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -139,6 +141,7 @@ def clusters_get(cluster_id: str, as_json: bool):
 
             console.print(table)
         except Exception as e:
+            log_cli_exception(__name__, "cluster CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": cluster_id}))
             else:
@@ -248,6 +251,7 @@ def clusters_create(
             else:
                 click.echo(f"✅ Created cluster {new_cluster.id}")
         except Exception as e:
+            log_cli_exception(__name__, "cluster CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -349,6 +353,7 @@ def clusters_update(
             else:
                 click.echo(f"✅ Updated cluster {validated.id}")
         except Exception as e:
+            log_cli_exception(__name__, "cluster CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": cluster_id}))
             else:
@@ -392,6 +397,7 @@ def clusters_delete(cluster_id: str, yes: bool, as_json: bool):
             else:
                 click.echo(f"✅ Deleted cluster {cluster_id}")
         except Exception as e:
+            log_cli_exception(__name__, "cluster CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": cluster_id}))
             else:
@@ -434,6 +440,7 @@ def clusters_backfill_instance_links(dry_run: bool, force: bool, as_json: bool):
                 for err in payload["errors"]:
                     click.echo(f"    - {err}")
         except Exception as e:
+            log_cli_exception(__name__, "cluster CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:

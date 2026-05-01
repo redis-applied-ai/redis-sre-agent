@@ -518,6 +518,26 @@ class Settings(BaseSettings):
         "'tools': {'search_memories': {'capability': 'logs'}}}}",
     )
 
+    # Skill backend configuration
+    skill_roots: List[str] = Field(
+        default_factory=list,
+        description="Additional filesystem roots that contain Agent Skills packages to ingest.",
+    )
+    skill_backend_kind: Literal["redis", "custom"] = Field(
+        default="redis",
+        description="Runtime skill backend selection. 'redis' uses the shipped Redis backend; "
+        "'custom' loads a deployment-provided implementation.",
+    )
+    skill_backend_class: Optional[str] = Field(
+        default=None,
+        description="Dot-path to a custom SkillBackend implementation when "
+        "skill_backend_kind='custom'.",
+    )
+    skill_reference_char_budget: int = Field(
+        default=12000,
+        description="Character budget for explicit skill resource retrieval responses.",
+    )
+
     target_integrations: TargetIntegrationsConfig = Field(
         default_factory=TargetIntegrationsConfig,
         description="Target discovery/binding integrations used to resolve and attach Redis targets.",

@@ -26,6 +26,7 @@ from redis_sre_agent.core.redis import (
     get_vectorizer,
 )
 from redis_sre_agent.core.runtime_overrides import dispatch_knowledge_backend_override
+from redis_sre_agent.skills.backend import get_skill_backend
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -691,132 +692,14 @@ async def skills_check_helper(
         offset,
         limit,
     )
-    index = await get_skills_index(config=config)
-
-    fetch_limit = min(max(limit + offset, 1) * 8, 1000)
-    common_return_fields = [
-        "id",
-        "document_hash",
-        "chunk_index",
-        "title",
-        "content",
-        "source",
-        "name",
-        "summary",
-        "priority",
-        "pinned",
-        "doc_type",
-        "version",
-        "score",
-        "vector_distance",
-        "distance",
-    ]
-    skills_return_fields = [
-        *common_return_fields,
-        "meta_name",
-        "meta_summary",
-        "meta_priority",
-        "meta_pinned",
-    ]
-
-    if query:
-        vectorizer = get_vectorizer(config=config)
-        vectors = await vectorizer.aembed_many([query])
-        query_vector = vectors[0] if vectors else []
-
-        def _skill_vector_query(query_return_fields: list[str]):
-            if distance_threshold is not None:
-                q = VectorRangeQuery(
-                    vector=query_vector,
-                    vector_field_name="vector",
-                    return_fields=query_return_fields,
-                    num_results=fetch_limit,
-                    distance_threshold=distance_threshold,
-                )
-            else:
-                q = VectorQuery(
-                    vector=query_vector,
-                    vector_field_name="vector",
-                    return_fields=query_return_fields,
-                    num_results=fetch_limit,
-                )
-            return q
-
-        candidates = await index.query(_skill_vector_query(skills_return_fields))
-    else:
-        candidates = await index.query(
-            FilterQuery(
-                filter_expression=Tag("document_hash") != "",
-                return_fields=skills_return_fields,
-                num_results=fetch_limit,
-            )
-        )
-
-    candidates = [{**doc, "_index_type": "skills"} for doc in candidates]
-
-    candidates = [
-        doc
-        for doc in _dedupe_docs(candidates)
-        if _doc_matches_requested_version(doc, version) and not _doc_is_pinned(doc)
-    ]
-
-    # Keep one representative row per document, preferring the first chunk.
-    by_document: Dict[str, Dict[str, Any]] = {}
-    for doc in candidates:
-        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
-        if not key:
-            continue
-        existing = by_document.get(key)
-        if existing is None or _doc_chunk_index(doc) < _doc_chunk_index(existing):
-            by_document[key] = doc
-
-    if query:
-
-        def _score(doc: Dict[str, Any]) -> float:
-            for key in ("score", "vector_distance", "distance"):
-                value = doc.get(key)
-                if value is not None:
-                    try:
-                        return float(value)
-                    except Exception:
-                        continue
-            return float("inf")
-
-        ordered_docs = sorted(
-            by_document.values(),
-            key=lambda d: (_score(d), _doc_name(d).lower(), str(d.get("source", "")).lower()),
-        )
-    else:
-        ordered_docs = sorted(
-            by_document.values(),
-            key=lambda d: (_doc_name(d).lower(), str(d.get("source", "")).lower()),
-        )
-    paged_docs = ordered_docs[offset : offset + limit]
-
-    skills = [
-        {
-            "name": _doc_name(doc),
-            "document_hash": str(doc.get("document_hash", "")),
-            "title": str(doc.get("title", "")),
-            "source": str(doc.get("source", "")),
-            "version": _normalized_doc_version(doc),
-            "priority": _doc_priority(doc),
-            "summary": _doc_summary(doc) or _summary_preview(str(doc.get("content", ""))),
-            "index_type": str(doc.get("_index_type", "skills")),
-        }
-        for doc in paged_docs
-    ]
-
-    return {
-        "query": query,
-        "version": version,
-        "offset": offset,
-        "limit": limit,
-        "results_count": len(skills),
-        "total_fetched": len(ordered_docs),
-        "skills": skills,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    backend = get_skill_backend(config=config)
+    return await backend.list_skills(
+        query=query,
+        limit=limit,
+        offset=offset,
+        version=version,
+        distance_threshold=distance_threshold,
+    )
 
 
 async def get_skill_helper(
@@ -833,126 +716,32 @@ async def get_skill_helper(
     if override_result is not None:
         return override_result
 
-    normalized_name = skill_name.strip()
-    if not normalized_name:
-        return {
-            "skill_name": skill_name,
-            "error": "Skill name is required",
-        }
+    backend = get_skill_backend(config=config)
+    return await backend.get_skill(skill_name=skill_name, version=version)
 
-    return_fields = [
-        "id",
-        "document_hash",
-        "chunk_index",
-        "title",
-        "content",
-        "source",
-        "name",
-        "summary",
-        "priority",
-        "pinned",
-        "meta_name",
-        "meta_summary",
-        "meta_priority",
-        "meta_pinned",
-        "doc_type",
-        "version",
-    ]
 
-    async def _query_by_name(index_type: str) -> list[dict]:
-        index = await _get_index_for_type(index_type, config=config)
-        query = FilterQuery(
-            filter_expression=_tag_equals_expression("name", normalized_name),
-            return_fields=return_fields,
-            num_results=50,
-        )
-        rows = await index.query(query)
-        return [{**row, "_index_type": index_type} for row in rows]
-
-    candidates = await _query_by_name("skills")
-
-    candidates = [
-        doc
-        for doc in _dedupe_docs(candidates)
-        if _doc_matches_requested_version(doc, version) and not _doc_is_pinned(doc)
-    ]
-
-    by_document: Dict[str, Dict[str, Any]] = {}
-    for doc in candidates:
-        key = str(doc.get("document_hash") or doc.get("id") or "").strip()
-        if not key:
-            continue
-        existing = by_document.get(key)
-        if existing is None or _doc_chunk_index(doc) < _doc_chunk_index(existing):
-            by_document[key] = doc
-
-    ordered = sorted(
-        by_document.values(),
-        key=lambda d: (_doc_name(d).lower(), str(d.get("source", "")).lower()),
-    )
-    target = next(
-        (doc for doc in ordered if _doc_name(doc).strip().lower() == normalized_name.lower()),
-        ordered[0] if ordered else None,
-    )
-
-    if target is None:
-        # Fallback only for the not-found path: provide a short list of nearby skills.
-        skills_result = await skills_check_helper(
-            query=skill_name,
-            limit=50,
-            offset=0,
-            version=version,
-            config=config,
-        )
-        skills = skills_result.get("skills") or []
-        return {
-            "skill_name": skill_name,
-            "error": "Skill not found",
-            "available_skills": [str(skill.get("name", "")) for skill in skills[:50]],
-        }
-
-    document_hash = str(target.get("document_hash", ""))
-    if not document_hash:
-        return {
-            "skill_name": skill_name,
-            "error": "Skill document hash is missing",
-        }
-    target_index_type = str(target.get("_index_type") or target.get("index_type") or "skills")
-
-    result = await get_all_document_fragments(
-        document_hash=document_hash,
-        include_metadata=True,
-        index_type=target_index_type,
+async def get_skill_resource_helper(
+    skill_name: str,
+    resource_path: str,
+    version: Optional[str] = "latest",
+    config: Optional[Settings] = None,
+) -> Dict[str, Any]:
+    """Get one named resource from an Agent Skills package."""
+    override_result = await _maybe_call_knowledge_backend(
+        "get_skill_resource",
+        skill_name=skill_name,
+        resource_path=resource_path,
         version=version,
-        config=config,
     )
+    if override_result is not None:
+        return override_result
 
-    fragments = result.get("fragments") or []
-    if not fragments:
-        return {
-            "skill_name": skill_name,
-            "document_hash": document_hash,
-            **result,
-        }
-
-    normalized_type = str(
-        result.get("doc_type") or _normalized_doc_type(fragments[0])  # type: ignore[index]
-    ).lower()
-    if normalized_type != "skill":
-        return {
-            "skill_name": skill_name,
-            "document_hash": document_hash,
-            "error": f"Document type is '{normalized_type}', not 'skill'",
-            "doc_type": normalized_type,
-        }
-
-    sorted_fragments = sorted(fragments, key=lambda x: _doc_chunk_index(x))
-    full_content = "\n\n".join(str(f.get("content", "")).strip() for f in sorted_fragments).strip()
-
-    return {
-        "skill_name": _doc_name({"name": target.get("name"), "title": result.get("title", "")}),
-        "full_content": full_content,
-    }
+    backend = get_skill_backend(config=config)
+    return await backend.get_skill_resource(
+        skill_name=skill_name,
+        resource_path=resource_path,
+        version=version,
+    )
 
 
 async def search_support_tickets_helper(
@@ -1796,6 +1585,21 @@ async def get_all_document_fragments(
                 "pinned",
                 "product_labels",
                 "version",
+                "skill_protocol",
+                "resource_kind",
+                "resource_path",
+                "mime_type",
+                "encoding",
+                "package_hash",
+                "entrypoint",
+                "has_references",
+                "has_scripts",
+                "has_assets",
+                "resource_title",
+                "resource_description",
+                "skill_description",
+                "ui_metadata",
+                "skill_manifest",
             ],
             num_results=1000,  # Set high limit to get all chunks
             dialect=2,

@@ -157,6 +157,7 @@ class ThreadResponse(BaseModel):
     """
 
     thread_id: str
+    task_id: Optional[str] = None
     user_id: Optional[str] = None
     priority: int = 0
     tags: List[str] = Field(default_factory=list)

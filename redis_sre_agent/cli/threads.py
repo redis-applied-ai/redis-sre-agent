@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from redis_sre_agent.agent.helpers import extract_citation_groups
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import (
     SRE_THREADS_INDEX,
@@ -311,6 +312,7 @@ def thread_reindex(drop: bool, limit: int, start: int):
                 console.print(f"[yellow]Dropped index:[/yellow] {SRE_THREADS_INDEX}")
 
             except Exception as e:
+                log_cli_exception(__name__, "threads CLI command failed", e)
                 console.print(f"[yellow]idx.drop() unavailable/failed:[/yellow] {e}")
                 try:
                     client = await tm._get_client()
@@ -332,6 +334,7 @@ def thread_reindex(drop: bool, limit: int, start: int):
             else:
                 console.print(f"[green]Index exists:[/green] {SRE_THREADS_INDEX}")
         except Exception as e:
+            log_cli_exception(__name__, "threads CLI command failed", e)
             console.print(f"[yellow]Warning ensuring index:[/yellow] {e}")
 
         # Backfill all thread docs
@@ -600,6 +603,7 @@ def thread_purge(
                 # default seconds if no suffix
                 return timedelta(seconds=float(s))
             except Exception as e:
+                log_cli_exception(__name__, "threads CLI command failed", e)
                 raise ValueError(f"Invalid duration '{s}': {e}")
 
         if not purge_all and not older_than:

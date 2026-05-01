@@ -47,6 +47,14 @@ class EvalKnowledgeBackend(Protocol):
         version: Optional[str] = "latest",
     ) -> dict[str, Any]: ...
 
+    async def get_skill_resource(
+        self,
+        *,
+        skill_name: str,
+        resource_path: str,
+        version: Optional[str] = "latest",
+    ) -> dict[str, Any]: ...
+
     async def search_support_tickets(
         self,
         *,

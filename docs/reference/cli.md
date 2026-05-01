@@ -53,6 +53,12 @@ Generated from the Click command tree.
 - knowledge fragments — Fetch all fragments for a document by document hash.
 - knowledge related — Fetch related fragments around a chunk index for a document.
 - knowledge search — Search the knowledge base (query helpers group).
+- skills — Inspect and scaffold Agent Skills packages.
+- skills list — List skills from the active skill backend.
+- skills read-reference — Alias for reading a reference resource by path.
+- skills read-resource — Read one resource from an Agent Skills package.
+- skills scaffold — Scaffold an Agent Skills package from a legacy markdown skill.
+- skills show — Show one skill manifest or legacy skill body.
 - pipeline — Data pipeline commands for scraping and ingestion.
 - pipeline cleanup — Clean up old batch directories.
 - pipeline full — Run the complete pipeline: scraping + ingestion.

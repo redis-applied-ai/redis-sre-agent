@@ -2163,6 +2163,9 @@ class TestChatAgentStartupContext:
 
         assert agent_state["toolset_generation"] == 1
         mock_execute_tool_calls.assert_awaited_once()
+        local_tools = mock_execute_tool_calls.await_args.kwargs["local_tools"]
+        assert "expand_evidence" in local_tools
+        assert callable(local_tools["expand_evidence"])
         assert mock_execute_tool_calls.await_args.kwargs["tool_manager"] is mock_tool_mgr
         assert mock_execute_tool_calls.await_args.kwargs["tool_calls"] == [
             {"id": "call-1", "name": "demo", "args": {}, "type": "tool_call"}

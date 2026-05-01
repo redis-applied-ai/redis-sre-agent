@@ -234,10 +234,24 @@ async def test_knowledge_agent_prompt_scenario_materializes_startup_context():
         for marker in ("handoff-to-full-sre-agent", "no-live-access-response")
     )
 
-    envelopes = getattr(startup_context, "internal_tool_envelopes", [])
-    assert len(envelopes) == 1
-    assert {result["document_hash"] for result in envelopes[0]["data"]["results"]} >= {
-        "no-live-instance-claims"
+    envelopes = {
+        envelope["tool_key"]: envelope
+        for envelope in getattr(startup_context, "internal_tool_envelopes", [])
+    }
+    assert set(envelopes) == {
+        "knowledge.pinned_context",
+        "knowledge.startup_skills_check",
+    }
+    assert {
+        result["document_hash"]
+        for result in envelopes["knowledge.pinned_context"]["data"]["results"]
+    } >= {"no-live-instance-claims"}
+    assert {
+        result["document_hash"]
+        for result in envelopes["knowledge.startup_skills_check"]["data"]["results"]
+    } >= {
+        "handoff-to-full-sre-agent",
+        "iterative-memory-check",
     }
 
 

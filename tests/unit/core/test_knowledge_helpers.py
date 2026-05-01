@@ -1728,6 +1728,25 @@ class TestSkillHelpers:
 
         assert result["results_count"] == 0
 
+    @pytest.mark.asyncio
+    async def test_skills_check_helper_normalizes_limit_offset_before_backend(self):
+        backend = MagicMock()
+        backend.list_skills = AsyncMock(return_value={"results_count": 0, "skills": []})
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_skill_backend",
+            return_value=backend,
+        ):
+            await skills_check_helper(query=None, limit="7", offset="-2", version="latest")
+
+        backend.list_skills.assert_awaited_once_with(
+            query=None,
+            limit=7,
+            offset=0,
+            version="latest",
+            distance_threshold=0.8,
+        )
+
 
 class TestSupportTicketHelpers:
     @pytest.mark.asyncio

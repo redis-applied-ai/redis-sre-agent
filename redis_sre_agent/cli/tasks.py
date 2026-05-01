@@ -6,6 +6,8 @@ import asyncio
 
 import click
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
+
 
 @click.group()
 def task():
@@ -165,6 +167,7 @@ def task_get(task_id: str, as_json: bool):
         try:
             t = await get_task_by_id(task_id=task_id)
         except Exception as e:
+            log_cli_exception(__name__, "tasks CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "task_id": task_id}))
             else:
@@ -267,6 +270,7 @@ def task_purge(
                     return timedelta(seconds=float(s[:-1]))
                 return timedelta(seconds=float(s))
             except Exception as e:
+                log_cli_exception(__name__, "tasks CLI command failed", e)
                 raise ValueError(f"Invalid duration '{s}': {e}")
 
         if not purge_all and not older_than and not status:
@@ -394,6 +398,7 @@ def task_delete(task_id: str, yes: bool, as_json: bool):
         try:
             await delete_task_core(task_id=task_id, redis_client=client)
         except Exception as e:
+            log_cli_exception(__name__, "tasks CLI command failed", e)
             payload = {"task_id": task_id, "status": "error", "error": str(e)}
             if as_json:
                 print(_json.dumps(payload))

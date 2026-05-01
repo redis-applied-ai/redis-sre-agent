@@ -202,13 +202,14 @@ def create_scraped_document_from_markdown(
     summary_raw = metadata.get("summary")
     summary = str(summary_raw).strip() if summary_raw is not None else ""
     pinned = parse_bool(metadata.get("pinned"), default=False)
+    explicit_url = str(metadata.get("url") or "").strip()
     passthrough_metadata = {
         key: value for key, value in metadata.items() if key not in RESERVED_METADATA_KEYS
     }
 
     return ScrapedDocument(
         title=title,
-        source_url=f"file://{md_file.absolute()}",
+        source_url=explicit_url or f"file://{md_file.absolute()}",
         content=content,
         category=category,
         doc_type=doc_type,

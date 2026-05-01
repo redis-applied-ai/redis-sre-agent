@@ -15,6 +15,7 @@ from ulid import ULID
 from redis_sre_agent.agent.chat_agent import get_chat_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core.citation_message import (
     build_citation_message_payloads,
     should_include_citations,
@@ -288,6 +289,7 @@ def query(
             )
 
         except Exception as e:
+            log_cli_exception(__name__, "query CLI command failed", e)
             console.print(f"[red]❌ Error: {e}[/red]")
             exit(1)
         finally:

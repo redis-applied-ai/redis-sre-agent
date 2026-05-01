@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from redis_sre_agent.pipelines.ingestion import pipeline_workflow_mixin
+from redis_sre_agent.pipelines.ingestion.deduplication import _normalize_indexed_optional_field
 from redis_sre_agent.pipelines.ingestion.processor import (
     DocumentProcessor,
     IngestionPipeline,
@@ -66,6 +68,40 @@ def _make_document(**overrides):
     for key, value in overrides.items():
         setattr(base, key, value)
     return base
+
+
+def _write_agent_skills_package(root: Path, name: str = "redis-maintenance-triage") -> Path:
+    package_dir = root / name
+    (package_dir / "references").mkdir(parents=True)
+    (package_dir / "scripts").mkdir()
+    (package_dir / "assets").mkdir()
+    (package_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                "description: Investigate maintenance mode before failover.",
+                "summary: Check maintenance state before disruptive actions.",
+                "---",
+                "",
+                "Entrypoint body",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (package_dir / "references" / "maintenance-checklist.md").write_text(
+        "---\ntitle: Maintenance Checklist\n---\n\nChecklist body\n",
+        encoding="utf-8",
+    )
+    (package_dir / "scripts" / "collect_context.sh").write_text(
+        "#!/usr/bin/env bash\necho collect\n",
+        encoding="utf-8",
+    )
+    (package_dir / "assets" / "example-query.txt").write_text(
+        "maintenance mode cluster owner\n",
+        encoding="utf-8",
+    )
+    return package_dir
 
 
 @pytest.mark.asyncio
@@ -127,6 +163,14 @@ def test_document_processor_knowledge_settings_and_helpers():
 
     broken = BrokenText()
     assert processor._strip_yaml_front_matter(broken) == (broken, False)
+
+
+def test_normalize_indexed_optional_field_preserves_boolean_values():
+    assert _normalize_indexed_optional_field("has_references", False) == "false"
+    assert _normalize_indexed_optional_field("entrypoint", "false") == "false"
+    assert _normalize_indexed_optional_field("has_assets", True) == "true"
+    assert _normalize_indexed_optional_field("has_scripts", "") is None
+    assert _normalize_indexed_optional_field("resource_kind", "reference") == "reference"
 
 
 def test_chunk_document_special_cases_and_empty_body():
@@ -622,6 +666,174 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
     } == {"category": "shared", "severity": "high"}
     assert any(
         result["status"] == "error" and result["file"] == "shared/broken.md" for result in results
+    )
+
+
+def test_load_source_documents_discovers_nested_and_configured_skill_roots(pipeline, tmp_path):
+    source_root = tmp_path / "source_documents"
+    shared_dir = source_root / "shared"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "guide.md").write_text("# Guide\n\nBody", encoding="utf-8")
+    _write_agent_skills_package(source_root / "skills", "local-skill")
+
+    external_root = tmp_path / "company-skills"
+    _write_agent_skills_package(external_root, "external-skill")
+    with patch.object(pipeline_workflow_mixin.app_settings, "skill_roots", [str(external_root)]):
+        documents = pipeline._load_source_documents(source_root, action="process")
+    paths = [str(document.metadata.get("source_document_path") or "") for document in documents]
+
+    assert "shared/guide.md" in paths
+    assert "skills/local-skill/SKILL.md" in paths
+    assert "skills/local-skill/references/maintenance-checklist.md" in paths
+    assert "skills/local-skill/scripts/collect_context.sh" in paths
+    assert "skills/local-skill/assets/example-query.txt" in paths
+    assert "company-skills/external-skill/SKILL.md" in paths
+    assert paths.count("skills/local-skill/references/maintenance-checklist.md") == 1
+
+
+def test_load_source_documents_discovers_skill_packages_directly_under_source_root(
+    pipeline, tmp_path
+):
+    source_root = tmp_path / "source_documents"
+    shared_dir = source_root / "shared"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "guide.md").write_text("# Guide\n\nBody", encoding="utf-8")
+    _write_agent_skills_package(source_root, "my-skill")
+
+    documents = pipeline._load_source_documents(source_root, action="process")
+    paths = [str(document.metadata.get("source_document_path") or "") for document in documents]
+
+    assert "shared/guide.md" in paths
+    assert "source_documents/my-skill/SKILL.md" in paths
+    assert "source_documents/my-skill/references/maintenance-checklist.md" in paths
+
+
+def test_load_source_documents_ignores_skill_markers_above_source_root(pipeline, tmp_path):
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: outer-skill\ndescription: outer package\n---\n",
+        encoding="utf-8",
+    )
+    source_root = tmp_path / "source_documents"
+    shared_dir = source_root / "shared"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "guide.md").write_text("# Guide\n\nBody", encoding="utf-8")
+
+    documents = pipeline._load_source_documents(source_root, action="process")
+
+    assert [str(document.metadata.get("source_document_path") or "") for document in documents] == [
+        "shared/guide.md"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ingest_source_documents_marks_unchanged_skill_resources(pipeline, tmp_path):
+    source_root = tmp_path / "source_documents"
+    _write_agent_skills_package(source_root / "skills")
+
+    def _chunk_document(document):
+        return [
+            {
+                "document_hash": f"hash-{document.metadata['resource_path']}",
+                "source_document_path": document.metadata["source_document_path"],
+            }
+        ]
+
+    with (
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            pipeline,
+            "_build_deduplicators",
+            return_value={"knowledge": AsyncMock(), "skill": AsyncMock()},
+        ),
+        patch.object(pipeline, "_list_tracked_source_documents", return_value={}),
+        patch.object(pipeline.processor, "chunk_document", side_effect=_chunk_document),
+        patch(
+            "redis_sre_agent.pipelines.ingestion.pipeline_workflow_mixin.index_processed_document",
+            new=AsyncMock(
+                side_effect=lambda document, **_: {
+                    "chunks_created": 1,
+                    "chunks_indexed": 0,
+                    "source_document_change": {
+                        "action": "unchanged",
+                        "source_document_path": document.metadata["source_document_path"],
+                    },
+                    "source_document_path": document.metadata["source_document_path"],
+                    "source_document_scope": document.metadata.get("source_document_scope", ""),
+                }
+            ),
+        ),
+    ):
+        results = await pipeline.ingest_source_documents(source_root)
+
+    unchanged_paths = {result["file"] for result in results if result["action"] == "unchanged"}
+    assert "skills/redis-maintenance-triage/SKILL.md" in unchanged_paths
+    assert "skills/redis-maintenance-triage/references/maintenance-checklist.md" in unchanged_paths
+
+
+@pytest.mark.asyncio
+async def test_ingest_source_documents_deletes_removed_skill_resources(pipeline, tmp_path):
+    source_root = tmp_path / "source_documents"
+    _write_agent_skills_package(source_root / "skills")
+
+    def _chunk_document(document):
+        return [
+            {
+                "document_hash": f"hash-{document.metadata['resource_path']}",
+                "source_document_path": document.metadata["source_document_path"],
+            }
+        ]
+
+    with (
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            pipeline,
+            "_build_deduplicators",
+            return_value={"knowledge": AsyncMock(), "skill": AsyncMock()},
+        ),
+        patch.object(
+            pipeline,
+            "_list_tracked_source_documents",
+            return_value={
+                "skills/redis-maintenance-triage/references/old-checklist.md": [
+                    {
+                        "deduplicator_key": "skill",
+                        "document_hash": "old-hash",
+                        "title": "Old Checklist",
+                        "category": "shared",
+                        "severity": "low",
+                    }
+                ]
+            },
+        ),
+        patch.object(pipeline.processor, "chunk_document", side_effect=_chunk_document),
+        patch(
+            "redis_sre_agent.pipelines.ingestion.pipeline_workflow_mixin.index_processed_document",
+            new=AsyncMock(
+                side_effect=lambda document, **_: {
+                    "chunks_created": 1,
+                    "chunks_indexed": 1,
+                    "source_document_change": {
+                        "action": "add",
+                        "source_document_path": document.metadata["source_document_path"],
+                    },
+                    "source_document_path": document.metadata["source_document_path"],
+                    "source_document_scope": document.metadata.get("source_document_scope", ""),
+                }
+            ),
+        ),
+    ):
+        results = await pipeline.ingest_source_documents(source_root)
+
+    assert any(
+        result["action"] == "delete"
+        and result["file"] == "skills/redis-maintenance-triage/references/old-checklist.md"
+        for result in results
     )
 
 

@@ -18,6 +18,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     get_all_document_fragments,
     get_related_document_fragments,
     get_skill_helper,
+    get_skill_resource_helper,
     get_support_ticket_helper,
     search_knowledge_base_helper,
     search_support_tickets_helper,
@@ -271,6 +272,28 @@ class KnowledgeBaseToolProvider(ToolProvider):
                         },
                     },
                     "required": ["skill_name"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_skill_resource"),
+                description=(
+                    "Retrieve one packaged skill resource by path. "
+                    "Use this after get_skill identifies a reference, script, or asset path."
+                ),
+                capability=ToolCapability.KNOWLEDGE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {
+                            "type": "string",
+                            "description": "Skill name from skills_check or get_skill",
+                        },
+                        "resource_path": {
+                            "type": "string",
+                            "description": "Relative resource path from get_skill, such as references/foo.md",
+                        },
+                    },
+                    "required": ["skill_name", "resource_path"],
                 },
             ),
             ToolDefinition(
@@ -529,6 +552,21 @@ class KnowledgeBaseToolProvider(ToolProvider):
             attributes={"skill_name.len": len(skill_name or "")},
         ):
             return await get_skill_helper(skill_name=skill_name)
+
+    async def get_skill_resource(self, skill_name: str, resource_path: str) -> Dict[str, Any]:
+        """Get one named resource from a skill package."""
+        logger.info("Getting skill resource %s from %s", resource_path, skill_name)
+        with tracer.start_as_current_span(
+            "tool.knowledge.get_skill_resource",
+            attributes={
+                "skill_name.len": len(skill_name or ""),
+                "resource_path.len": len(resource_path or ""),
+            },
+        ):
+            return await get_skill_resource_helper(
+                skill_name=skill_name,
+                resource_path=resource_path,
+            )
 
     @status_update("I'm searching support tickets for {query}.")
     async def search_support_tickets(

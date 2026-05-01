@@ -10,6 +10,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.schedule_helpers import run_schedule_now_helper
@@ -47,6 +48,7 @@ def schedules_list(as_json: bool, tz: str | None, limit: int):
         try:
             items = await list_schedules()
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -133,6 +135,7 @@ def schedules_get(schedule_id: str, as_json: bool, tz: str | None):
         try:
             s = await get_schedule(schedule_id)
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             payload = {"error": str(e), "id": schedule_id}
             if as_json:
                 print(_json.dumps(payload))
@@ -258,6 +261,7 @@ def schedules_create(
             else:
                 click.echo(f"✅ Created schedule {sched.id}")
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e)}))
             else:
@@ -351,6 +355,7 @@ def schedules_update(
             else:
                 click.echo(f"✅ Updated schedule {sched.id}")
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": schedule_id}))
             else:
@@ -393,6 +398,7 @@ def schedules_enable(schedule_id: str, as_json: bool):
             else:
                 click.echo(f"✅ Enabled schedule {sched.id}")
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": schedule_id}))
             else:
@@ -432,6 +438,7 @@ def schedules_disable(schedule_id: str, as_json: bool):
             else:
                 click.echo(f"✅ Disabled schedule {sched.id}")
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": schedule_id}))
             else:
@@ -468,6 +475,7 @@ def schedules_delete(schedule_id: str, yes: bool, as_json: bool):
             else:
                 click.echo(f"✅ Deleted schedule {schedule_id}")
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": schedule_id}))
             else:
@@ -501,6 +509,7 @@ def schedules_run_now(schedule_id: str, as_json: bool):
                     f"✅ Triggered schedule {schedule_id} (thread {payload.get('thread_id')})"
                 )
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": schedule_id}))
             else:
@@ -662,6 +671,7 @@ def schedules_runs(schedule_id: str, as_json: bool, tz: str | None, limit: int):
 
             console.print(table)
         except Exception as e:
+            log_cli_exception(__name__, "schedules CLI command failed", e)
             if as_json:
                 print(_json.dumps({"error": str(e), "id": schedule_id}))
             else:

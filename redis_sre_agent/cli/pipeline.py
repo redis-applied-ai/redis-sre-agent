@@ -6,6 +6,8 @@ from pathlib import Path
 
 import click
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
+
 from ..pipelines.orchestrator import PipelineOrchestrator
 
 
@@ -153,6 +155,7 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
             return results
 
         except Exception as e:
+            log_cli_exception(__name__, "pipeline CLI command failed", e)
             click.echo(f"❌ Scraping failed: {e}")
             raise
 
@@ -201,6 +204,7 @@ def ingest(batch_date: str, artifacts_path: str, latest_only: bool, verbose: boo
             return results
 
         except Exception as e:
+            log_cli_exception(__name__, "pipeline CLI command failed", e)
             click.echo(f"❌ Ingestion failed: {e}")
             raise
 
@@ -260,6 +264,7 @@ def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
             return results
 
         except Exception as e:
+            log_cli_exception(__name__, "pipeline CLI command failed", e)
             click.echo(f"❌ Full pipeline failed: {e}")
             raise
 
@@ -299,6 +304,7 @@ def status(artifacts_path: str):
             return status_info
 
         except Exception as e:
+            log_cli_exception(__name__, "pipeline CLI command failed", e)
             click.echo(f"❌ Status check failed: {e}")
             raise
 
@@ -380,6 +386,7 @@ def cleanup(keep_days: int, artifacts_path: str):
             return results
 
         except Exception as e:
+            log_cli_exception(__name__, "pipeline CLI command failed", e)
             click.echo(f"❌ Cleanup failed: {e}")
             raise
 
@@ -451,6 +458,7 @@ def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
             _echo_runbook_job_results(results)
 
         except Exception as e:
+            log_cli_exception(__name__, "pipeline CLI command failed", e)
             click.echo(f"❌ Runbook generation failed: {e}")
             raise
 
@@ -548,6 +556,7 @@ def prepare_sources(
                 )
 
         except Exception as e:
+            log_cli_exception(__name__, "pipeline CLI command failed", e)
             click.echo(f"❌ Source preparation failed: {e}")
             raise
 

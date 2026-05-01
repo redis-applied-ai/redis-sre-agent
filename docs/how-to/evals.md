@@ -6,7 +6,9 @@ It has two main entry points:
 1. Deterministic mocked evals for development and regression testing.
 2. Live-model suite runs for manual or scheduled baseline checks.
 
-The CLI currently exposes scenario listing, live-suite execution, and baseline comparison. Mocked one-off runs are currently easiest to drive through `pytest` or the Python entrypoints.
+The CLI exposes scenario listing, one-off mocked-scenario execution, live-suite execution, and
+baseline comparison. For deterministic regression coverage, prefer the pytest-backed mocked eval
+suite; `eval run` is best for interactive debugging and ad hoc inspection.
 
 ### Terms Used In This Guide
 
@@ -69,20 +71,32 @@ Do not treat `evals/scenarios/` as a single live-model suite. Most of those scen
 
 ### Running One Mocked Scenario
 
-Use the CLI when you want to execute a single mocked scenario directly:
+Use the CLI when you want to execute a single mocked scenario directly.
+
+For the most self-contained CLI path, start with an `agent_only` scenario. It still uses your
+configured model credentials, but it avoids the local Redis/task-system dependency that
+`full_turn` scenarios need.
 
 ```bash
 uv run redis-sre-agent eval run \
-  evals/scenarios/prompt/chat-iterative-tool-use/scenario.yaml
+  evals/scenarios/prompt/knowledge-agent-no-live-access/scenario.yaml
 ```
 
 For machine-readable output:
 
 ```bash
 uv run redis-sre-agent eval run \
-  evals/scenarios/prompt/chat-iterative-tool-use/scenario.yaml \
+  evals/scenarios/prompt/knowledge-agent-no-live-access/scenario.yaml \
   --json
 ```
+
+Requirements and caveats:
+
+- `agent_only` scenarios avoid local Redis/task orchestration, but they still execute the configured
+  model. Set `OPENAI_API_KEY` or the equivalent compatible-endpoint settings before using `eval run`.
+- `full_turn` scenarios exercise the real thread/task orchestration path and therefore also need the
+  local Redis-backed runtime available.
+- Scenarios marked `llm_mode: live` require explicit live opt-in with `--allow-live-llm`.
 
 Useful options:
 
@@ -272,4 +286,4 @@ Use live suites when:
 
 - The scenario corpus mixes `full_turn`, `agent_only`, `prompt`, `redis`, `knowledge`, `retrieval`, and `sources` lanes under one tree.
 - Live suites coerce loaded scenarios to live LLM mode before execution, even when the source manifest is authored for replay mode.
-- The current CLI does not yet expose a dedicated `run scenario` command for mocked evals, so `pytest` and the Python entrypoints are the intended developer workflow.
+- The CLI now exposes `eval run` for one-off debugging, but the supported deterministic regression gate remains the pytest workflow documented above.

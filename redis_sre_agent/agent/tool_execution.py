@@ -55,31 +55,39 @@ async def execute_tool_calls_with_gate(
         }
         for tool_call in tool_calls or []
     ]
+    tool_results: List[Any] = [None] * len(normalized_tool_calls)
+    manager_tool_calls: List[Dict[str, Any]] = []
+    manager_indices: List[int] = []
     local_tool_map = dict(local_tools or {})
-    manager_calls = [
-        {"name": tool_call["name"], "args": tool_call["args"]}
-        for tool_call in normalized_tool_calls
-        if tool_call["name"] not in local_tool_map
-    ]
+
+    for idx, tool_call in enumerate(normalized_tool_calls):
+        local_tool = local_tool_map.get(tool_call["name"])
+        if local_tool is not None:
+            result = local_tool(**tool_call["args"])
+            if inspect.isawaitable(result):
+                result = await result
+            tool_results[idx] = result
+            continue
+
+        manager_tool_calls.append({"name": tool_call["name"], "args": tool_call["args"]})
+        manager_indices.append(idx)
+
     manager_results: List[Any] = []
-    if manager_calls:
-        manager_results = await tool_manager.execute_tool_calls(manager_calls)
-    if len(manager_results) != len(manager_calls):
+    if manager_tool_calls:
+        manager_results = await tool_manager.execute_tool_calls(manager_tool_calls)
+
+    if len(manager_results) != len(manager_tool_calls):
         raise RuntimeError(
             "Tool manager returned a mismatched number of results for the requested tool calls"
         )
-    manager_result_iter = iter(manager_results)
+
+    for idx, result in zip(manager_indices, manager_results):
+        tool_results[idx] = result
 
     tool_messages: List[ToolMessage] = []
 
-    for tool_call in normalized_tool_calls:
+    for tool_call, result in zip(normalized_tool_calls, tool_results):
         tool_name = tool_call["name"]
-        if tool_name in local_tool_map:
-            result = local_tool_map[tool_name](**tool_call["args"])
-            if inspect.isawaitable(result):
-                result = await result
-        else:
-            result = next(manager_result_iter)
         tool_messages.append(
             ToolMessage(
                 content=_serialize_tool_result(result),

@@ -9,6 +9,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from redis_sre_agent.cli.logging_utils import log_cli_exception
+
 
 @click.group()
 def index():
@@ -87,6 +89,7 @@ def index_list(as_json: bool):
                     }
                 )
             except Exception as e:
+                log_cli_exception(__name__, "index CLI command failed", e)
                 results.append(
                     {
                         "name": name,

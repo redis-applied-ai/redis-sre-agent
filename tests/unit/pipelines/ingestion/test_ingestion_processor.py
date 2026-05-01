@@ -415,6 +415,30 @@ class TestIngestionPipeline:
         assert document.metadata["name"] == "Incident Triage"
         assert document.metadata["summary"] == "Step-by-step triage process."
 
+    def test_create_scraped_document_from_markdown_uses_explicit_frontmatter_url(
+        self, pipeline, tmp_path
+    ):
+        """Frontmatter url should override the default file:// source for documents and chunks."""
+        md_file = tmp_path / "with-url.md"
+        md_file.write_text(
+            (
+                "---\n"
+                "url: https://example.com/knowledge/frontmatter\n"
+                "---\n\n"
+                "# Frontmatter URL\n\n"
+                "Some content.\n"
+            ),
+            encoding="utf-8",
+        )
+
+        document = create_scraped_document_from_markdown(md_file)
+        chunks = pipeline.processor.chunk_document(document)
+
+        assert document.source_url == "https://example.com/knowledge/frontmatter"
+        assert document.metadata["url"] == "https://example.com/knowledge/frontmatter"
+        assert len(chunks) == 1
+        assert chunks[0]["source"] == "https://example.com/knowledge/frontmatter"
+
     def test_create_scraped_document_from_markdown_reserved_metadata_cannot_be_overridden(
         self, pipeline, tmp_path
     ):

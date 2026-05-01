@@ -199,6 +199,40 @@ export TOOL_PROVIDERS='[
 - Use `RedisInstance.extension_data` and `extension_secrets` to pass namespaced config to providers.
 - See the [Tool Providers guide](tool-providers.md) for details.
 
+### Skill backend settings
+
+Agent Skills retrieval is controlled through the skill backend configuration.
+
+Common settings:
+
+| Setting | Environment Variable | Default | Description |
+|---------|----------------------|---------|-------------|
+| `skill_roots` | `SKILL_ROOTS` | `[]` | Extra filesystem roots to scan for Agent Skills packages during ingestion |
+| `skill_backend_kind` | `SKILL_BACKEND_KIND` | `redis` | Select `redis` for the shipped backend or `custom` for a user-provided backend |
+| `skill_backend_class` | `SKILL_BACKEND_CLASS` | `null` | Import path for a custom backend class when `skill_backend_kind=custom` |
+| `skill_reference_char_budget` | `SKILL_REFERENCE_CHAR_BUDGET` | `12000` | Maximum characters returned by `get_skill_resource` before truncation |
+
+Example YAML:
+
+```yaml
+skill_roots:
+  - ./skills
+  - /srv/company-skills
+skill_backend_kind: redis
+skill_reference_char_budget: 8000
+```
+
+To use your own central skill service, implement the runtime `SkillBackend` contract and point
+`skill_backend_class` at that class:
+
+```yaml
+skill_backend_kind: custom
+skill_backend_class: my_company.skills.backend.CompanySkillBackend
+```
+
+The shipped runtime keeps execution separate from retrieval. Even with a custom backend, Agent Skills
+skill scripts are not executed by this agent in v1.
+
 ### Custom LLM providers
 
 By default, the agent uses OpenAI models via `ChatOpenAI`. You can replace this with any LangChain-compatible chat model (Anthropic, Azure OpenAI, Bedrock, Vertex AI, etc.) by configuring a custom factory function.
