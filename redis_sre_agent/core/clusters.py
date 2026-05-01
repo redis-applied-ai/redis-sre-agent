@@ -155,44 +155,52 @@ def _to_epoch(ts: Optional[str]) -> float:
             return 0.0
 
 
+async def _load_clusters_from_index() -> List[RedisCluster]:
+    """Load configured clusters directly from the clusters search index."""
+    await _ensure_clusters_index_exists()
+    index = await get_clusters_index()
+
+    try:
+        total = await index.query(CountQuery(filter_expression="*"))
+    except Exception:
+        total = 1000
+
+    if not total:
+        return []
+
+    q = FilterQuery(
+        filter_expression="*",
+        return_fields=["data"],
+        num_results=int(total) if isinstance(total, int) else 1000,
+    )
+    results = await index.query(q)
+
+    out: List[RedisCluster] = []
+    for doc in results or []:
+        try:
+            raw = doc.get("data")
+            if not raw:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            cluster_data = json.loads(raw)
+            if cluster_data.get("admin_password"):
+                cluster_data["admin_password"] = get_secret_value(cluster_data["admin_password"])
+            out.append(RedisCluster(**cluster_data))
+        except Exception as e:
+            logger.exception("Failed to load cluster from search result: %s. Skipping.", e)
+    return out
+
+
+async def get_clusters_strict() -> List[RedisCluster]:
+    """Load configured clusters and surface transport/index failures to callers."""
+    return await _load_clusters_from_index()
+
+
 async def get_clusters() -> List[RedisCluster]:
     """Load configured clusters using a single FT.SEARCH over the clusters index."""
     try:
-        await _ensure_clusters_index_exists()
-        index = await get_clusters_index()
-
-        try:
-            total = await index.query(CountQuery(filter_expression="*"))
-        except Exception:
-            total = 1000
-
-        if not total:
-            return []
-
-        q = FilterQuery(
-            filter_expression="*",
-            return_fields=["data"],
-            num_results=int(total) if isinstance(total, int) else 1000,
-        )
-        results = await index.query(q)
-
-        out: List[RedisCluster] = []
-        for doc in results or []:
-            try:
-                raw = doc.get("data")
-                if not raw:
-                    continue
-                if isinstance(raw, bytes):
-                    raw = raw.decode("utf-8")
-                cluster_data = json.loads(raw)
-                if cluster_data.get("admin_password"):
-                    cluster_data["admin_password"] = get_secret_value(
-                        cluster_data["admin_password"]
-                    )
-                out.append(RedisCluster(**cluster_data))
-            except Exception as e:
-                logger.exception("Failed to load cluster from search result: %s. Skipping.", e)
-        return out
+        return await _load_clusters_from_index()
     except Exception as e:
         logger.exception("Failed to get clusters from Redis: %s", e)
         return []

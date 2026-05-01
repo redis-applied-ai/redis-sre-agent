@@ -87,12 +87,16 @@ class TestLifespan:
         with (
             patch("redis_sre_agent.api.app.initialize_redis") as mock_init,
             patch("redis_sre_agent.api.app.run_instances_to_clusters_migration") as mock_migration,
+            patch(
+                "redis_sre_agent.api.app.sync_target_catalog_from_authoritative_records"
+            ) as mock_target_sync,
             patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register,
             patch.object(MCPConnectionPool, "start") as mock_pool_start,
             patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown,
         ):
             mock_init.return_value = {"redis": "connected"}
             mock_migration.return_value = SimpleNamespace(to_dict=lambda: {})
+            mock_target_sync.return_value = []
             mock_register.return_value = None
             mock_pool_start.return_value = {}
             mock_pool_shutdown.return_value = None
@@ -104,6 +108,7 @@ class TestLifespan:
             # Verify startup was called
             mock_init.assert_called_once()
             mock_migration.assert_called_once()
+            mock_target_sync.assert_called_once()
             mock_register.assert_called_once()
             mock_pool_start.assert_called_once()
             mock_pool_shutdown.assert_called_once()
@@ -119,11 +124,15 @@ class TestLifespan:
         with (
             patch("redis_sre_agent.api.app.initialize_redis") as mock_init,
             patch("redis_sre_agent.api.app.run_instances_to_clusters_migration") as mock_migration,
+            patch(
+                "redis_sre_agent.api.app.sync_target_catalog_from_authoritative_records"
+            ) as mock_target_sync,
             patch.object(MCPConnectionPool, "start") as mock_pool_start,
             patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown,
         ):
             mock_init.side_effect = Exception("Redis connection failed")
             mock_migration.return_value = SimpleNamespace(to_dict=lambda: {})
+            mock_target_sync.return_value = []
             mock_pool_start.return_value = {}
             mock_pool_shutdown.return_value = None
 
@@ -143,12 +152,16 @@ class TestLifespan:
         with (
             patch("redis_sre_agent.api.app.initialize_redis") as mock_init,
             patch("redis_sre_agent.api.app.run_instances_to_clusters_migration") as mock_migration,
+            patch(
+                "redis_sre_agent.api.app.sync_target_catalog_from_authoritative_records"
+            ) as mock_target_sync,
             patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register,
             patch.object(MCPConnectionPool, "start") as mock_pool_start,
             patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown,
         ):
             mock_init.return_value = {"redis": "connected"}
             mock_migration.return_value = SimpleNamespace(to_dict=lambda: {})
+            mock_target_sync.return_value = []
             mock_register.side_effect = Exception("Task registration failed")
             mock_pool_start.return_value = {}
             mock_pool_shutdown.return_value = None
@@ -159,6 +172,7 @@ class TestLifespan:
 
             mock_init.assert_called_once()
             mock_migration.assert_called_once()
+            mock_target_sync.assert_called_once()
             mock_register.assert_called_once()
 
     @pytest.mark.asyncio
@@ -172,12 +186,16 @@ class TestLifespan:
         with (
             patch("redis_sre_agent.api.app.initialize_redis") as mock_init,
             patch("redis_sre_agent.api.app.run_instances_to_clusters_migration") as mock_migration,
+            patch(
+                "redis_sre_agent.api.app.sync_target_catalog_from_authoritative_records"
+            ) as mock_target_sync,
             patch("redis_sre_agent.core.docket_tasks.register_sre_tasks") as mock_register,
             patch.object(MCPConnectionPool, "start") as mock_pool_start,
             patch.object(MCPConnectionPool, "shutdown") as mock_pool_shutdown,
         ):
             mock_init.return_value = {"redis": "connected"}
             mock_migration.return_value = SimpleNamespace(to_dict=lambda: {})
+            mock_target_sync.return_value = []
             mock_register.return_value = None
             mock_pool_start.return_value = {}
             mock_pool_shutdown.return_value = None

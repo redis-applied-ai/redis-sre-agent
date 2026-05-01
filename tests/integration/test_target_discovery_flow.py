@@ -15,8 +15,10 @@ from redis_sre_agent.core.instances import RedisInstance, save_instances
 from redis_sre_agent.core.redis import (
     SRE_CLUSTERS_SCHEMA,
     SRE_INSTANCES_SCHEMA,
+    SRE_TARGETS_INDEX,
     SRE_TARGETS_SCHEMA,
 )
+from redis_sre_agent.core.targets import TargetCatalogDoc
 from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.core.threads import ThreadManager
 from redis_sre_agent.targets import get_target_handle_store
@@ -330,6 +332,103 @@ async def test_target_inventory_tool_lists_known_targets_before_resolution(
         info_result = await mgr.resolve_tool_call(info_tool, {"section": "server"})
         assert info_result["status"] == "success"
         assert "redis_version" in info_result["data"]
+
+
+@pytest.mark.asyncio
+async def test_target_discovery_tool_repairs_stale_catalog_from_authoritative_instances(
+    async_redis_client,
+    redis_url,
+    redis_backed_target_state,
+):
+    """Discovery should self-heal when the target index drifts from stored instances."""
+
+    instance = RedisInstance(
+        id="redis-development-demo2",
+        name="demo2",
+        connection_url=redis_url,
+        environment="development",
+        usage="cache",
+        description="Demo Redis instance",
+        instance_type="oss_single",
+    )
+    await save_instances([instance])
+
+    cursor = 0
+    while True:
+        cursor, batch = await async_redis_client.scan(cursor=cursor, match=f"{SRE_TARGETS_INDEX}:*")
+        for key in batch or []:
+            await async_redis_client.delete(key)
+        if cursor == 0:
+            break
+
+    stale_doc = TargetCatalogDoc(
+        target_id="instance:redis-1",
+        target_kind="instance",
+        resource_id="redis-1",
+        display_name="New Instance",
+        name="New Instance",
+        environment="development",
+        status="unknown",
+        target_type="oss_single",
+        usage="cache",
+        search_text="new instance development cache",
+        capabilities=["redis", "diagnostics", "metrics", "logs"],
+    )
+    await async_redis_client.hset(
+        f"{SRE_TARGETS_INDEX}:{stale_doc.target_id}",
+        mapping={
+            "target_id": stale_doc.target_id,
+            "target_kind": stale_doc.target_kind,
+            "resource_id": stale_doc.resource_id,
+            "display_name": stale_doc.display_name,
+            "name": stale_doc.name,
+            "environment": stale_doc.environment or "",
+            "status": stale_doc.status or "",
+            "target_type": stale_doc.target_type or "",
+            "usage": stale_doc.usage or "",
+            "cluster_id": "",
+            "repo_slug": "",
+            "monitoring_identifier": "",
+            "logging_identifier": "",
+            "redis_cloud_subscription_id": "",
+            "redis_cloud_database_id": "",
+            "redis_cloud_database_name": "",
+            "search_aliases": "",
+            "capabilities": ",".join(stale_doc.capabilities),
+            "updated_at": 1,
+            "created_at": 1,
+            "search_text": stale_doc.search_text,
+            "user_id": "",
+            "data": stale_doc.model_dump_json(),
+        },
+    )
+
+    thread_manager = ThreadManager(redis_client=async_redis_client)
+    thread_id = await thread_manager.create_thread(
+        user_id="test-user",
+        session_id="test-session",
+        initial_context={},
+    )
+
+    async with ToolManager(thread_id=thread_id, user_id="test-user") as mgr:
+        list_tool = next(t.name for t in mgr.get_tools() if "list_known_redis_targets" in t.name)
+        inventory = await mgr.resolve_tool_call(list_tool, {})
+        assert inventory["status"] == "ok"
+        assert inventory["total_known_targets"] == 1
+        assert inventory["targets"][0]["display_name"] == "demo2"
+
+        resolve_tool = next(t.name for t in mgr.get_tools() if "resolve_redis_targets" in t.name)
+        resolution = await mgr.resolve_tool_call(
+            resolve_tool,
+            {
+                "query": "demo2",
+                "attach_tools": False,
+            },
+        )
+
+        assert resolution["status"] == "resolved"
+        assert resolution["matches"][0]["display_name"] == "demo2"
+        assert resolution["matches"][0]["environment"] == "development"
 
 
 @pytest.mark.asyncio

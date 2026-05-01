@@ -15,6 +15,7 @@ from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemor
 from redis_sre_agent.core.approvals import ApprovalRecord
 from redis_sre_agent.core.config import MCPServerConfig
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.core.targets import TargetCatalogDoc
 from redis_sre_agent.core.tasks import TaskMetadata, TaskState, TaskStatus, TaskUpdate
 from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
 from redis_sre_agent.evaluation.injection import EvalInjectionOverrides
@@ -1545,6 +1546,96 @@ async def test_run_full_turn_scenario_supports_discovery_first_approval_pause(
     assert len(approval_record.target_handles) == 1
     assert pending["summary"].endswith(f"on {approval_record.target_handles[0]}")
     assert _EvalApprovalProvider.actual_call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_without_eval_target_catalog_uses_runtime_catalog(
+    monkeypatch,
+):
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "runtime-catalog-target-discovery",
+            "name": "Runtime catalog target discovery",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-05-01",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "Check demo2 memory pressure.",
+                "route_via_router": False,
+                "agent": "chat",
+            },
+            "scope": {
+                "turn_scope": {
+                    "resolution_policy": "allow_zero_scope",
+                    "automation_mode": "automated",
+                }
+            },
+        }
+    )
+
+    runtime_doc = TargetCatalogDoc(
+        target_id="instance:redis-development-demo2",
+        target_kind="instance",
+        resource_id="redis-development-demo2",
+        display_name="demo2",
+        name="demo2",
+        environment="development",
+        status="unknown",
+        target_type="oss_single",
+        usage="cache",
+        search_text="demo2 development cache",
+        capabilities=["redis", "diagnostics", "metrics", "logs"],
+    )
+    runtime_catalog = AsyncMock(return_value=[runtime_doc])
+
+    async def turn_processor(**kwargs):
+        async with ToolManager(
+            thread_id=kwargs["thread_id"],
+            task_id=kwargs["task_id"],
+            user_id="user-123",
+        ) as tool_mgr:
+            resolve_tool = next(
+                tool.name
+                for tool in tool_mgr.get_tools()
+                if tool.name.startswith("target_discovery_")
+                and tool.name.endswith("resolve_redis_targets")
+            )
+            resolution = await tool_mgr.resolve_tool_call(
+                resolve_tool,
+                {
+                    "query": "demo2",
+                    "attach_tools": False,
+                },
+            )
+            return {"resolution": resolution}
+
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr(ToolManager, "_load_mcp_providers", AsyncMock())
+    monkeypatch.setattr(ToolManager, "_load_support_package_provider", AsyncMock())
+
+    with patch("redis_sre_agent.core.targets.get_target_catalog", new=runtime_catalog):
+        result = await run_full_turn_scenario(
+            scenario,
+            user_id="user-123",
+            session_id="session-123",
+            redis_client=object(),
+            turn_processor=turn_processor,
+        )
+
+    resolution = result.turn_result["resolution"]
+    assert resolution["status"] == "resolved"
+    assert resolution["matches"][0]["display_name"] == "demo2"
+    assert resolution["matches"][0]["environment"] == "development"
+    runtime_catalog.assert_awaited()
 
 
 @pytest.mark.asyncio

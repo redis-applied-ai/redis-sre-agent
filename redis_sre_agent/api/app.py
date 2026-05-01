@@ -24,6 +24,7 @@ from redis_sre_agent.core.migrations.instances_to_clusters import (
     run_instances_to_clusters_migration,
 )
 from redis_sre_agent.core.redis import initialize_redis
+from redis_sre_agent.core.targets import sync_target_catalog_from_authoritative_records
 from redis_sre_agent.observability.tracing import setup_tracing as setup_base_tracing
 from redis_sre_agent.tools.mcp.pool import MCPConnectionPool
 
@@ -112,6 +113,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Instance-cluster startup migration failed (continuing): %s", e)
             _app_startup_state["instance_cluster_migration"] = {"error": str(e)}
+
+        try:
+            authoritative_target_docs = await sync_target_catalog_from_authoritative_records()
+            _app_startup_state["target_catalog_sync"] = {
+                "status": "ok",
+                "target_count": len(authoritative_target_docs),
+            }
+            logger.info(
+                "Target catalog sync completed from authoritative records: %s targets",
+                len(authoritative_target_docs),
+            )
+        except Exception as e:
+            logger.warning("Target catalog startup sync failed (continuing): %s", e)
+            _app_startup_state["target_catalog_sync"] = {"error": str(e)}
 
         # Log configuration (mask Redis URL credentials)
         from redis_sre_agent.core.instances import mask_redis_url

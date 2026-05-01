@@ -20,12 +20,22 @@ from redis_sre_agent.core.targets import (
     build_target_doc_from_instance,
     get_attached_target_handles_from_context,
     get_target_bindings_from_context,
+    get_target_catalog,
     materialize_bound_target_scope,
     resolve_target_query,
     sync_target_catalog,
 )
 from redis_sre_agent.core.threads import Thread, ThreadMetadata
 from redis_sre_agent.targets.services import TargetBindingService
+
+
+@pytest.fixture(autouse=True)
+def reset_authoritative_target_catalog_snapshot_cache():
+    target_module._authoritative_target_catalog_snapshot_cache = None
+    target_module._authoritative_target_catalog_snapshot_cache_expires_at = 0.0
+    yield
+    target_module._authoritative_target_catalog_snapshot_cache = None
+    target_module._authoritative_target_catalog_snapshot_cache_expires_at = 0.0
 
 
 def test_build_target_doc_from_instance_excludes_secrets_and_includes_aliases():
@@ -974,3 +984,167 @@ async def test_sync_target_catalog_scan_fallback_only_deletes_prefixed_stale_key
     assert result is True
     deleted_keys = [call.args[0] for call in mock_client.delete.await_args_list]
     assert deleted_keys == ["sre_targets:instance:stale-target"]
+
+
+@pytest.mark.asyncio
+async def test_get_target_catalog_repairs_stale_index_from_authoritative_records():
+    instance = RedisInstance(
+        id="redis-development-demo2",
+        name="demo2",
+        connection_url="redis://redis-demo:6379/0",
+        environment="development",
+        usage="cache",
+        description="Demo Redis instance",
+        instance_type="oss_single",
+    )
+    stale_doc = TargetCatalogDoc(
+        target_id="instance:redis-1",
+        target_kind="instance",
+        resource_id="redis-1",
+        display_name="New Instance",
+        name="New Instance",
+        environment="development",
+        status="unknown",
+        target_type="oss_single",
+        usage="cache",
+        search_text="New Instance development cache",
+        capabilities=["redis", "diagnostics", "metrics", "logs"],
+    )
+    mock_index = AsyncMock()
+    mock_index.query = AsyncMock(
+        side_effect=[
+            1,
+            [{"data": stale_doc.model_dump_json()}],
+        ]
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.core.targets._ensure_targets_index_exists",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_targets_index", new=AsyncMock(return_value=mock_index)
+        ),
+        patch("redis_sre_agent.core.targets.get_redis_client", return_value=AsyncMock()),
+        patch(
+            "redis_sre_agent.core.targets.get_instances_strict",
+            new=AsyncMock(return_value=[instance]),
+        ) as mock_get_instances,
+        patch(
+            "redis_sre_agent.core.targets.get_clusters_strict",
+            new=AsyncMock(return_value=[]),
+        ) as mock_get_clusters,
+        patch(
+            "redis_sre_agent.core.targets.sync_target_catalog", new=AsyncMock(return_value=True)
+        ) as mock_sync,
+    ):
+        docs = await get_target_catalog()
+
+    assert [doc.resource_id for doc in docs] == ["redis-development-demo2"]
+    mock_get_instances.assert_awaited_once()
+    mock_get_clusters.assert_awaited_once()
+    mock_sync.assert_awaited_once()
+    assert mock_sync.await_args.kwargs["instances"] == [instance]
+    assert mock_sync.await_args.kwargs["clusters"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_target_catalog_keeps_index_docs_when_authoritative_fetch_fails():
+    indexed_doc = TargetCatalogDoc(
+        target_id="instance:redis-development-demo2",
+        target_kind="instance",
+        resource_id="redis-development-demo2",
+        display_name="demo2",
+        name="demo2",
+        environment="development",
+        status="healthy",
+        target_type="oss_single",
+        usage="cache",
+        search_text="demo2 development cache",
+        capabilities=["redis", "diagnostics", "metrics", "logs"],
+    )
+    mock_index = AsyncMock()
+    mock_index.query = AsyncMock(
+        side_effect=[
+            1,
+            [{"data": indexed_doc.model_dump_json()}],
+        ]
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.core.targets._ensure_targets_index_exists",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_targets_index", new=AsyncMock(return_value=mock_index)
+        ),
+        patch("redis_sre_agent.core.targets.get_redis_client", return_value=AsyncMock()),
+        patch(
+            "redis_sre_agent.core.targets.get_instances_strict",
+            new=AsyncMock(side_effect=RuntimeError("instances unavailable")),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_clusters_strict",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.sync_target_catalog", new=AsyncMock(return_value=True)
+        ) as mock_sync,
+    ):
+        docs = await get_target_catalog()
+
+    assert [doc.resource_id for doc in docs] == ["redis-development-demo2"]
+    mock_sync.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_target_catalog_reuses_cached_authoritative_snapshot():
+    instance = RedisInstance(
+        id="redis-development-demo2",
+        name="demo2",
+        connection_url="redis://redis-demo:6379/0",
+        environment="development",
+        usage="cache",
+        description="Demo Redis instance",
+        instance_type="oss_single",
+    )
+    authoritative_doc = target_module.build_target_doc_from_instance(instance)
+    target_module._cache_authoritative_target_catalog_snapshot(
+        target_module.AuthoritativeTargetCatalogSnapshot(
+            instances=[instance],
+            clusters=[],
+            docs=[authoritative_doc],
+        )
+    )
+
+    mock_index = AsyncMock()
+    mock_index.query = AsyncMock(
+        side_effect=[
+            1,
+            [{"data": authoritative_doc.model_dump_json()}],
+        ]
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.core.targets._ensure_targets_index_exists",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_targets_index", new=AsyncMock(return_value=mock_index)
+        ),
+        patch("redis_sre_agent.core.targets.get_redis_client", return_value=AsyncMock()),
+        patch(
+            "redis_sre_agent.core.targets.get_instances_strict",
+            new=AsyncMock(side_effect=AssertionError("cache should avoid instance reload")),
+        ),
+        patch(
+            "redis_sre_agent.core.targets.get_clusters_strict",
+            new=AsyncMock(side_effect=AssertionError("cache should avoid cluster reload")),
+        ),
+    ):
+        docs = await get_target_catalog()
+
+    assert [doc.resource_id for doc in docs] == ["redis-development-demo2"]
