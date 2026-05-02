@@ -177,6 +177,20 @@ class TestMCPToolProvider:
             == ToolActionKind.UNKNOWN
         )
 
+    def test_get_action_kind_keeps_leading_verb_for_resolved_mcp_operation_names(self):
+        """Test that already-resolved MCP operation names still infer write intent."""
+        config = MCPServerConfig(command="test")
+        provider = MCPToolProvider(server_name="github", server_config=config)
+
+        assert (
+            provider._get_action_kind(
+                "_update_repository",
+                "Operate on repository settings for the selected repo.",
+                ToolCapability.UTILITIES,
+            )
+            == ToolActionKind.WRITE
+        )
+
     def test_get_tool_config(self):
         """Test getting tool config."""
         tool_config = MCPToolConfig(
