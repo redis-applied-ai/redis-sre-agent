@@ -65,6 +65,7 @@ _SENSITIVE_ARG_KEYS = {
     "secret",
     "token",
 }
+_DEFAULT_LLM_TOOL_LIMIT = 128
 
 
 def interrupt(payload: Any) -> Any:
@@ -971,6 +972,65 @@ class ToolManager:
             List of ToolDefinition objects for LLM binding
         """
         return [t.definition for t in self._tools]
+
+    @staticmethod
+    def _llm_tool_priority(tool: Tool) -> tuple[int, int, str]:
+        """Rank tools for LLM binding when the provider set must be pruned.
+
+        Redis target discovery and live diagnostics stay first, followed by
+        utilities/knowledge, then observability, and finally external MCP
+        connectors. This keeps live Redis investigation functional when a
+        dynamic target attachment would otherwise exceed provider limits.
+        """
+        provider_name = str(tool.metadata.provider_name or "")
+        capability = tool.metadata.capability
+
+        if provider_name == "target_discovery":
+            priority = 0
+        elif provider_name == "redis_command":
+            priority = 1
+        elif provider_name in {"redis_enterprise_admin", "redis_cloud"}:
+            priority = 2
+        elif capability is ToolCapability.UTILITIES:
+            priority = 3
+        elif capability is ToolCapability.KNOWLEDGE:
+            priority = 4
+        elif capability is ToolCapability.DIAGNOSTICS:
+            priority = 5
+        elif capability is ToolCapability.METRICS:
+            priority = 6
+        elif capability is ToolCapability.LOGS:
+            priority = 7
+        elif capability is ToolCapability.TRACES:
+            priority = 8
+        elif capability in {ToolCapability.TICKETS, ToolCapability.REPOS}:
+            priority = 9
+        else:
+            priority = 10
+
+        # When priorities tie, keep built-in providers ahead of external MCP tools.
+        mcp_bias = 1 if provider_name.startswith("mcp_") else 0
+        return (priority, mcp_bias, tool.metadata.name)
+
+    def get_tools_for_llm(
+        self, *, max_tools: int = _DEFAULT_LLM_TOOL_LIMIT
+    ) -> List[ToolDefinition]:
+        """Return a tool list safe for model binding under provider limits."""
+        if max_tools <= 0:
+            return []
+        if len(self._tools) <= max_tools:
+            return self.get_tools()
+
+        prioritized_tools = sorted(self._tools, key=self._llm_tool_priority)
+        selected_tools = prioritized_tools[:max_tools]
+        dropped_tools = prioritized_tools[max_tools:]
+        logger.warning(
+            "Pruned LLM toolset from %s to %s tools; dropped=%s",
+            len(self._tools),
+            len(selected_tools),
+            [tool.metadata.name for tool in dropped_tools[:10]],
+        )
+        return [tool.definition for tool in selected_tools]
 
     def get_tools_by_provider_names(self, provider_names: List[str]) -> List[ToolDefinition]:
         """Return tools belonging to providers with given provider_name values.

@@ -181,6 +181,54 @@ async def test_tool_manager_knowledge_tools():
         assert len(redis_command_tools) == 0
 
 
+def test_get_tools_for_llm_prioritizes_target_discovery_and_redis_diagnostics():
+    mgr = ToolManager()
+
+    _register_tool(
+        mgr,
+        name="mcp_github_deadbe_search_repositories",
+        action_kind=ToolActionKind.READ,
+        invoke=AsyncMock(return_value={"status": "ok"}),
+        description="Search repositories",
+        capability=ToolCapability.REPOS,
+        provider_name="mcp_github",
+    )
+    _register_tool(
+        mgr,
+        name="knowledge_deadbe_search",
+        action_kind=ToolActionKind.READ,
+        invoke=AsyncMock(return_value={"status": "ok"}),
+        description="Search knowledge",
+        capability=ToolCapability.KNOWLEDGE,
+        provider_name="knowledge",
+    )
+    _register_tool(
+        mgr,
+        name="target_discovery_deadbe_resolve_redis_targets",
+        action_kind=ToolActionKind.READ,
+        invoke=AsyncMock(return_value={"status": "ok"}),
+        description="Resolve Redis targets",
+        capability=ToolCapability.UTILITIES,
+        provider_name="target_discovery",
+    )
+    _register_tool(
+        mgr,
+        name="redis_command_deadbe_info",
+        action_kind=ToolActionKind.READ,
+        invoke=AsyncMock(return_value={"status": "ok"}),
+        description="Get Redis INFO",
+        capability=ToolCapability.DIAGNOSTICS,
+        provider_name="redis_command",
+    )
+
+    tool_names = [tool.name for tool in mgr.get_tools_for_llm(max_tools=2)]
+
+    assert tool_names == [
+        "target_discovery_deadbe_resolve_redis_targets",
+        "redis_command_deadbe_info",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_attach_bound_targets_scopes_instance_tools_to_opaque_handle():
     """Attached targets should re-scope providers to the opaque target handle."""

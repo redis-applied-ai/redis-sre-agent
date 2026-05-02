@@ -472,7 +472,8 @@ class ChatAgent:
 
             from .helpers import build_adapters_for_tooldefs as _build_adapters
 
-            tooldefs = tool_mgr.get_tools()
+            # Reserve one slot for the local expand_evidence helper.
+            tooldefs = tool_mgr.get_tools_for_llm(max_tools=127)
             adapters = await _build_adapters(tool_mgr, tooldefs)
             expand_spec = self._build_expand_evidence_tool(envelopes_container)
             expand_tool = StructuredTool.from_function(

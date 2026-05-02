@@ -49,7 +49,7 @@ class MCPToolConfig(BaseModel):
     action_kind: Optional[ToolActionKind] = Field(
         default=None,
         description="Optional approval action override for the tool. "
-        "If omitted, MCP tools remain unknown by default.",
+        "If omitted, the agent infers read/write behavior from the tool name and description.",
     )
 
 
