@@ -191,6 +191,20 @@ class TestMCPToolProvider:
             == ToolActionKind.WRITE
         )
 
+    def test_get_action_kind_keeps_read_verb_for_multi_part_mcp_operation_names(self):
+        """Test that resolved MCP operation names like list_pull_requests stay intact."""
+        config = MCPServerConfig(command="test")
+        provider = MCPToolProvider(server_name="github", server_config=config)
+
+        assert (
+            provider._get_action_kind(
+                "list_pull_requests",
+                "Operate on the selected pull request collection.",
+                ToolCapability.REPOS,
+            )
+            == ToolActionKind.READ
+        )
+
     def test_get_tool_config(self):
         """Test getting tool config."""
         tool_config = MCPToolConfig(

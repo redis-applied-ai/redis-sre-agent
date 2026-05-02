@@ -117,9 +117,10 @@ def _extract_operation_name(tool_name: str, provider_name: str) -> str:
     if re.match(prefix_pattern, tool_name):
         return re.sub(prefix_pattern, "", tool_name, count=1)
     # MCP providers sometimes pass the already-resolved operation name (for
-    # example "_create_branch"). Preserve that verb-bearing form instead of
-    # splitting it again and dropping the leading action token.
-    if tool_name.startswith("_"):
+    # example "_create_branch" or "list_pull_requests"). Preserve that
+    # verb-bearing form instead of splitting it again and dropping the action
+    # token.
+    if provider_name.startswith("mcp_") or tool_name.startswith("_"):
         return tool_name
     parts = tool_name.split("_")
     if len(parts) >= 3:
