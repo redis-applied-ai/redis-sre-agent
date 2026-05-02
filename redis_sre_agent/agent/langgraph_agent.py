@@ -70,6 +70,33 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+def _coerce_response_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+            elif isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+        return "\n".join(parts).strip()
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+def _extract_ai_response(messages: List[BaseMessage]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            candidate = _coerce_response_text(message.content)
+            if candidate:
+                return candidate
+    return ""
+
+
 def _extract_operation_from_tool_name(tool_name: str) -> str:
     """Extract human-readable operation name from full tool name.
 
@@ -2441,8 +2468,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state["messages"]
-                    if messages and isinstance(messages[-1], AIMessage):
-                        response_content = messages[-1].content
+                    response_content = _extract_ai_response(messages)
+                    if response_content:
                         logger.info(
                             f"SRE agent completed processing with {final_state['iteration_count']} iterations"
                         )
@@ -2874,9 +2901,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    if messages and isinstance(messages[-1], AIMessage):
+                    response_content = _extract_ai_response(messages)
+                    if response_content:
                         return AgentResponse(
-                            response=messages[-1].content,
+                            response=response_content,
                             tool_envelopes=tool_envelopes,
                         )
 

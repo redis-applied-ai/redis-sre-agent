@@ -69,6 +69,36 @@ def _format_exception_message(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _coerce_response_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+            elif isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+        return "\n".join(parts).strip()
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+def _extract_final_response(messages: List[BaseMessage]) -> str:
+    if not messages:
+        return ""
+
+    for message in reversed(messages):
+        candidate = _coerce_response_text(getattr(message, "content", None))
+        if candidate:
+            return candidate
+
+    return ""
+
+
 CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.
 
 ## Your Approach - ITERATIVE INVESTIGATION
@@ -886,18 +916,12 @@ User Query: {query}"""
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state.get("messages", [])
-                    if messages:
-                        last_message = messages[-1]
-                        if isinstance(last_message, AIMessage):
-                            response = AgentResponse(
-                                response=last_message.content,
-                                tool_envelopes=tool_envelopes,
-                            )
-                        else:
-                            response = AgentResponse(
-                                response=str(last_message.content),
-                                tool_envelopes=tool_envelopes,
-                            )
+                    response_text = _extract_final_response(messages)
+                    if response_text:
+                        response = AgentResponse(
+                            response=response_text,
+                            tool_envelopes=tool_envelopes,
+                        )
                         await prepared_memory.persist_response_fail_open(response.response)
                         return response
 
@@ -993,15 +1017,10 @@ User Query: {query}"""
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    if messages:
-                        last_message = messages[-1]
-                        if isinstance(last_message, AIMessage):
-                            return AgentResponse(
-                                response=last_message.content,
-                                tool_envelopes=tool_envelopes,
-                            )
+                    response_text = _extract_final_response(messages)
+                    if response_text:
                         return AgentResponse(
-                            response=str(last_message.content),
+                            response=response_text,
                             tool_envelopes=tool_envelopes,
                         )
 

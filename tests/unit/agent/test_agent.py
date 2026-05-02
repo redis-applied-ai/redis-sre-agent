@@ -524,6 +524,63 @@ class TestSRELangGraphAgent:
         assert response.response == "Error resuming query: resume failed"
 
     @pytest.mark.asyncio
+    async def test_resume_query_rejects_blank_terminal_ai_message(self, mock_settings, mock_llm):
+        agent = SRELangGraphAgent()
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+        fake_checkpointer = MagicMock()
+
+        @asynccontextmanager
+        async def fake_open_graph_checkpointer(**_kwargs):
+            yield fake_checkpointer
+
+        class _FakeApp:
+            async def ainvoke(self, *_args, **kwargs):
+                return {
+                    "messages": [AIMessage(content=""), AIMessage(content="   ")],
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.open_graph_checkpointer",
+                side_effect=fake_open_graph_checkpointer,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.persist_checkpoint_metadata",
+                new=AsyncMock(),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            response = await agent.resume_query(
+                session_id="session-1",
+                user_id="user-1",
+                context={"task_id": "task-123"},
+                resume_payload={"decision": "approved"},
+            )
+
+        assert (
+            response.response
+            == "I apologize, but I couldn't generate a proper response. Please try again."
+        )
+
+    @pytest.mark.asyncio
     async def test_process_query_constructs_turn_scope_once(self, mock_settings, mock_llm):
         agent = SRELangGraphAgent()
 
@@ -631,6 +688,76 @@ class TestSRELangGraphAgent:
         assert response.response == "Hello there"
         mock_should_run_safety_fact.assert_not_called()
         prepared_memory.persist_response_fail_open.assert_awaited_once_with("Hello there")
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_process_query_rejects_blank_terminal_ai_message(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_build_startup_context.return_value = ""
+
+        agent = SRELangGraphAgent()
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="s1",
+            user_id=None,
+            query="How are you?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_tools_for_llm.return_value = []
+        mock_tool_mgr_ctx = MagicMock()
+        mock_tool_mgr_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_mgr_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        class _FakeApp:
+            async def ainvoke(self, *_args, **_kwargs):
+                return {
+                    "messages": [AIMessage(content=""), AIMessage(content="  ")],
+                    "iteration_count": 1,
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        with (
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent.ToolManager",
+                return_value=mock_tool_mgr_ctx,
+            ),
+            patch(
+                "redis_sre_agent.agent.langgraph_agent._build_adapters",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            response = await agent.process_query(
+                query="How are you?",
+                session_id="s1",
+                user_id=None,
+            )
+
+        assert (
+            response.response
+            == "I apologize, but I couldn't generate a proper response. Please try rephrasing your question."
+        )
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with(response.response)
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
