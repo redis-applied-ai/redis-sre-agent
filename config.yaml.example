@@ -72,3 +72,20 @@ mcp_servers:
 #   - redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider
 #   - redis_sre_agent.tools.logs.loki.provider.LokiToolProvider
 #   - redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider
+
+# Skill backend configuration
+# Leave these unset to use the shipped Redis-backed skill index.
+# To make a deployed runtime instance see the same workspace skills the Agent Workspace UI
+# manages through AFS, point the runtime at the control-plane Skills facade:
+#
+# skill_backend_kind: custom
+# skill_backend_class: redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend
+# skills_api_base_url: https://rar-api.example.internal
+# skills_api_tenant_id: tenant_123
+# skills_api_project_id: proj_123
+# skills_api_agent_id: redis-sre-agent
+# skills_api_token: your_optional_bearer_token_here
+# skills_api_timeout_seconds: 15
+# skill_reference_char_budget: 12000
+#
+# Compatibility note: the shipped backend also honors the RAR_SKILLS_API_* environment variables.

@@ -127,6 +127,25 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 |---|---|---|---|---|
 | `mcp_servers` | `MCP_SERVERS` | `dict[str, MCPServerConfig]` | Empty dict | JSON object of MCP server definitions. No MCP integrations are enabled unless you configure them. |
 
+### Skill Backend
+
+| Field | Environment Variable | Type | Default | Notes |
+|---|---|---|---|---|
+| `skill_roots` | `SKILL_ROOTS` | `list[str]` | `[]` | Extra filesystem roots to scan for Agent Skills packages during ingestion. |
+| `skill_backend_kind` | `SKILL_BACKEND_KIND` | `Literal["redis", "custom"]` | `redis` | Select the shipped Redis backend or a custom backend implementation. |
+| `skill_backend_class` | `SKILL_BACKEND_CLASS` | `str \| None` | `None` | Dot-path to the custom backend class when `skill_backend_kind=custom`. |
+| `skills_api_base_url` | `SKILLS_API_BASE_URL` | `str \| None` | `None` | Base URL for the runtime-owned Skills facade used by the shipped proxy-backed workspace backend. |
+| `skills_api_tenant_id` | `SKILLS_API_TENANT_ID` | `str \| None` | `None` | Tenant id sent to the runtime-owned Skills facade. |
+| `skills_api_project_id` | `SKILLS_API_PROJECT_ID` | `str \| None` | `None` | Project id sent to the runtime-owned Skills facade. |
+| `skills_api_agent_id` | `SKILLS_API_AGENT_ID` | `str \| None` | `None` | Agent app id sent to the runtime-owned Skills facade. |
+| `skills_api_token` | `SKILLS_API_TOKEN` | `str \| None` | `None` | Optional bearer token for the runtime-owned Skills facade. |
+| `skills_api_timeout_seconds` | `SKILLS_API_TIMEOUT_SECONDS` | `float` | `15.0` | HTTP timeout in seconds for the runtime-owned Skills facade. |
+| `skill_reference_char_budget` | `SKILL_REFERENCE_CHAR_BUDGET` | `int` | `12000` | Maximum characters returned by `get_skill_resource` before truncation. |
+
+Compatibility note:
+- The shipped `AFSWorkspaceSkillBackend` also honors the `RAR_SKILLS_API_*` environment variables
+  used by the control-plane deployment wiring.
+
 `MCPServerConfig` object keys:
 
 - `command`: command to start MCP server (stdio mode)

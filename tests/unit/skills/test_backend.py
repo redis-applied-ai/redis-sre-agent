@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from redis_sre_agent.skills.afs_workspace_backend import AFSWorkspaceSkillBackend
 from redis_sre_agent.skills import backend as skill_backend_module
 from redis_sre_agent.skills.backend import RedisSkillBackend, get_skill_backend
 
@@ -376,3 +377,28 @@ def test_get_skill_backend_caches_default_backend_instance():
 
     assert first is second
     skill_backend_module._DEFAULT_BACKEND_CACHE = None
+
+
+def test_get_skill_backend_loads_custom_afs_workspace_backend():
+    config = SimpleNamespace(
+        skill_backend_kind="custom",
+        skill_backend_class="redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend",
+        skill_reference_char_budget=4096,
+        skills_api_base_url="https://rar.example.test",
+        skills_api_tenant_id="tenant_a",
+        skills_api_project_id="proj_1",
+        skills_api_agent_id="agent_1",
+        skills_api_token="secret-token",
+        skills_api_timeout_seconds="7.5",
+    )
+
+    backend = get_skill_backend(config=config)
+
+    assert isinstance(backend, AFSWorkspaceSkillBackend)
+    assert backend.base_url == "https://rar.example.test"
+    assert backend.tenant_id == "tenant_a"
+    assert backend.project_id == "proj_1"
+    assert backend.agent_id == "agent_1"
+    assert backend.bearer_token == "secret-token"
+    assert backend.timeout_seconds == 7.5
+    assert backend.skill_reference_char_budget == 4096
