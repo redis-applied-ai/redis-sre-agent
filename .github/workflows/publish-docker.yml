@@ -17,6 +17,9 @@ on:
         required: false
         type: boolean
         default: true
+  release:
+    types:
+      - published
 
 permissions:
   contents: read
@@ -72,8 +75,8 @@ jobs:
             redislabs/redis-sre-agent
             ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=${{ github.event.inputs.tag }}
-            type=raw,value=latest,enable=${{ github.event.inputs.push_latest }}
+            type=raw,value=${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
             type=sha,prefix={{branch}}-
 
       - name: Free Disk Space (Ubuntu)
@@ -139,8 +142,8 @@ jobs:
             redislabs/redis-sre-agent-ui
             ghcr.io/${{ github.repository_owner }}/redis-sre-agent-ui
           tags: |
-            type=raw,value=${{ github.event.inputs.tag }}
-            type=raw,value=latest,enable=${{ github.event.inputs.push_latest }}
+            type=raw,value=${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
             type=sha,prefix={{branch}}-
 
       - name: Build and push UI Docker image
@@ -161,7 +164,7 @@ jobs:
 
   publish-airgap:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.build_airgap == 'true' }}
+    if: ${{ github.event_name == 'release' || github.event.inputs.build_airgap == 'true' }}
 
     steps:
       # Free disk space FIRST before anything else
@@ -230,8 +233,8 @@ jobs:
             redislabs/redis-sre-agent
             ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=${{ github.event.inputs.tag }}-airgap
-            type=raw,value=airgap,enable=${{ github.event.inputs.push_latest }}
+            type=raw,value=${{ (github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag) }}-airgap
+            type=raw,value=airgap,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
 
       - name: Build and push air-gap Docker image
         uses: docker/build-push-action@v5
@@ -251,7 +254,7 @@ jobs:
 
   publish-ui-airgap:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.build_airgap == 'true' }}
+    if: ${{ github.event_name == 'release' || github.event.inputs.build_airgap == 'true' }}
 
     steps:
       - name: Checkout code
@@ -286,8 +289,8 @@ jobs:
             redislabs/redis-sre-agent-ui
             ghcr.io/${{ github.repository_owner }}/redis-sre-agent-ui
           tags: |
-            type=raw,value=${{ github.event.inputs.tag }}-airgap
-            type=raw,value=airgap,enable=${{ github.event.inputs.push_latest }}
+            type=raw,value=${{ (github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag) }}-airgap
+            type=raw,value=airgap,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
 
       - name: Build and push air-gap UI Docker image
         uses: docker/build-push-action@v5
