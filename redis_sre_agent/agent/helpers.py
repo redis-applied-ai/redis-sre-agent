@@ -40,12 +40,22 @@ def coerce_response_text(content: Any) -> str:
 
 
 def extract_last_ai_response(messages: List[Any]) -> str:
-    """Return the last non-empty AI message content from a transcript."""
+    """Return a non-empty response from the transcript's trailing AI segment only."""
+    if not messages:
+        return ""
+
+    saw_trailing_ai = False
     for message in reversed(messages):
-        if isinstance(message, AIMessage):
-            candidate = coerce_response_text(getattr(message, "content", None))
-            if candidate:
-                return candidate
+        if not isinstance(message, AIMessage):
+            if saw_trailing_ai:
+                break
+            return ""
+
+        saw_trailing_ai = True
+        candidate = coerce_response_text(getattr(message, "content", None))
+        if candidate:
+            return candidate
+
     return ""
 
 

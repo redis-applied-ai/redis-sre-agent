@@ -75,6 +75,17 @@ class TestSRELangGraphAgent:
 
         assert extract_last_ai_response(messages) == ""
 
+    def test_extract_last_ai_response_does_not_leak_prior_turn_history(self):
+        messages = [
+            SystemMessage(content="seeded prompt"),
+            HumanMessage(content="old prompt"),
+            AIMessage(content="stale response"),
+            HumanMessage(content="current prompt"),
+            AIMessage(content=""),
+        ]
+
+        assert extract_last_ai_response(messages) == ""
+
     def test_init(self, mock_settings, mock_llm):
         """Test agent initialization."""
         agent = SRELangGraphAgent()

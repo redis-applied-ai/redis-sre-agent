@@ -298,6 +298,16 @@ class TestChatAgentResponseExtraction:
 
         assert _extract_final_response(messages) == ""
 
+    def test_extract_final_response_does_not_reuse_prior_turn_ai_message(self):
+        messages = [
+            HumanMessage(content="old prompt"),
+            AIMessage(content="stale response"),
+            HumanMessage(content="current prompt"),
+            AIMessage(content=""),
+        ]
+
+        assert _extract_final_response(messages) == ""
+
 
 class TestChatAgentWorkflowBuild:
     """Test the _build_workflow method and emitter parameter."""
