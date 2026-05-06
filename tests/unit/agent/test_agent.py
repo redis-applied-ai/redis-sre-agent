@@ -7,11 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from redis_sre_agent.agent.langgraph_agent import (
-    SRELangGraphAgent,
-    _extract_ai_response,
-    get_sre_agent,
-)
+from redis_sre_agent.agent.helpers import extract_last_ai_response
+from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent, get_sre_agent
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 from redis_sre_agent.core.turn_scope import TurnScope
@@ -68,7 +65,7 @@ def mock_sre_tasks():
 class TestSRELangGraphAgent:
     """Test cases for SRE LangGraph Agent."""
 
-    def test_extract_ai_response_ignores_non_ai_tail_messages(self):
+    def test_extract_last_ai_response_ignores_non_ai_tail_messages(self):
         messages = [
             HumanMessage(content="prompt"),
             AIMessage(content=""),
@@ -76,7 +73,7 @@ class TestSRELangGraphAgent:
             SystemMessage(content="hidden system prompt"),
         ]
 
-        assert _extract_ai_response(messages) == ""
+        assert extract_last_ai_response(messages) == ""
 
     def test_init(self, mock_settings, mock_llm):
         """Test agent initialization."""

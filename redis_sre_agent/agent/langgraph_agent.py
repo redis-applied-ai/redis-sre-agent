@@ -70,10 +70,6 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-def _extract_ai_response(messages: List[BaseMessage]) -> str:
-    return extract_last_ai_response(messages)
-
-
 def _extract_operation_from_tool_name(tool_name: str) -> str:
     """Extract human-readable operation name from full tool name.
 
@@ -2445,7 +2441,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state["messages"]
-                    response_content = _extract_ai_response(messages)
+                    response_content = extract_last_ai_response(messages)
                     if response_content:
                         logger.info(
                             f"SRE agent completed processing with {final_state['iteration_count']} iterations"
@@ -2878,7 +2874,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    response_content = _extract_ai_response(messages)
+                    response_content = extract_last_ai_response(messages)
                     if response_content:
                         return AgentResponse(
                             response=response_content,
