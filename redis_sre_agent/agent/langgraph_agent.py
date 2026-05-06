@@ -59,7 +59,7 @@ from .checkpointing import (
 )
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
-from .helpers import log_preflight_messages
+from .helpers import extract_last_ai_response, log_preflight_messages
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 from .prompts import SRE_SYSTEM_PROMPT
@@ -70,31 +70,8 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-def _coerce_response_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    parts.append(text.strip())
-            elif isinstance(item, str) and item.strip():
-                parts.append(item.strip())
-        return "\n".join(parts).strip()
-    if content is None:
-        return ""
-    return str(content).strip()
-
-
 def _extract_ai_response(messages: List[BaseMessage]) -> str:
-    for message in reversed(messages):
-        if isinstance(message, AIMessage):
-            candidate = _coerce_response_text(message.content)
-            if candidate:
-                return candidate
-    return ""
+    return extract_last_ai_response(messages)
 
 
 def _extract_operation_from_tool_name(tool_name: str) -> str:

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import jmespath
 from jmespath.exceptions import JMESPathError
+from langchain_core.messages import AIMessage
 
 KNOWLEDGE_SEARCH_RETRIEVAL_KIND = "knowledge_search"
 KNOWLEDGE_SEARCH_RETRIEVAL_LABEL = "Knowledge search"
@@ -17,6 +18,35 @@ STARTUP_CONTEXT_CITATION_GROUP = "startup_context_loaded"
 STARTUP_CONTEXT_CITATION_GROUP_LABEL = "Startup context loaded"
 DISCOVERED_CONTEXT_CITATION_GROUP = "discovered_context"
 DISCOVERED_CONTEXT_CITATION_GROUP_LABEL = "Discovered context"
+
+
+def coerce_response_text(content: Any) -> str:
+    """Normalize structured model output into a non-empty text response."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+            elif isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+        return "\n".join(parts).strip()
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+def extract_last_ai_response(messages: List[Any]) -> str:
+    """Return the last non-empty AI message content from a transcript."""
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            candidate = coerce_response_text(getattr(message, "content", None))
+            if candidate:
+                return candidate
+    return ""
 
 
 def parse_json_maybe_fenced(text: str) -> Any:

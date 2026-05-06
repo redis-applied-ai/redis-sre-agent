@@ -50,7 +50,7 @@ from .checkpointing import (
     persist_checkpoint_metadata,
     resolve_graph_thread_id,
 )
-from .helpers import build_result_envelope
+from .helpers import build_result_envelope, extract_last_ai_response
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 from .tool_execution import execute_tool_calls_with_gate
@@ -69,34 +69,11 @@ def _format_exception_message(exc: Exception) -> str:
     return type(exc).__name__
 
 
-def _coerce_response_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    parts.append(text.strip())
-            elif isinstance(item, str) and item.strip():
-                parts.append(item.strip())
-        return "\n".join(parts).strip()
-    if content is None:
-        return ""
-    return str(content).strip()
-
-
 def _extract_final_response(messages: List[BaseMessage]) -> str:
     if not messages:
         return ""
 
-    for message in reversed(messages):
-        candidate = _coerce_response_text(getattr(message, "content", None))
-        if candidate:
-            return candidate
-
-    return ""
+    return extract_last_ai_response(messages)
 
 
 CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.

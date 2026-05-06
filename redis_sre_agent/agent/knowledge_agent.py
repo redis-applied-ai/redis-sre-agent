@@ -26,7 +26,12 @@ from redis_sre_agent.core.progress import (
 )
 from redis_sre_agent.tools.manager import ToolManager
 
-from .helpers import build_result_envelope, extract_citations
+from .helpers import (
+    build_result_envelope,
+    coerce_response_text,
+    extract_citations,
+    extract_last_ai_response,
+)
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 
@@ -648,37 +653,17 @@ class KnowledgeOnlyAgent:
 
                 return AgentResponse(response=error_response, search_results=[], tool_envelopes=[])
 
-    @staticmethod
-    def _coerce_response_text(content: Any) -> str:
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict):
-                    text = item.get("text")
-                    if isinstance(text, str) and text.strip():
-                        parts.append(text.strip())
-                elif isinstance(item, str) and item.strip():
-                    parts.append(item.strip())
-            return "\n".join(parts).strip()
-        if content is None:
-            return ""
-        return str(content).strip()
-
     @classmethod
     def _extract_final_response(cls, messages: List[BaseMessage]) -> str:
         if not messages:
             return ""
 
-        for message in reversed(messages):
-            if isinstance(message, AIMessage):
-                candidate = cls._coerce_response_text(message.content)
-                if candidate:
-                    return candidate
+        candidate = extract_last_ai_response(messages)
+        if candidate:
+            return candidate
 
         last_message = messages[-1]
-        candidate = cls._coerce_response_text(getattr(last_message, "content", None))
+        candidate = coerce_response_text(getattr(last_message, "content", None))
         if candidate:
             return candidate
 
