@@ -260,20 +260,6 @@ class TestChatAgentSystemPrompt:
 class TestChatAgentState:
     """Test the ChatAgentState TypedDict."""
 
-
-class TestChatAgentResponseExtraction:
-    """Test chat-agent final response selection."""
-
-    def test_extract_final_response_ignores_non_ai_tail_messages(self):
-        messages = [
-            HumanMessage(content="user prompt"),
-            AIMessage(content=""),
-            ToolMessage(content='{"status":"ok"}', tool_call_id="tool-1"),
-            SystemMessage(content="hidden system prompt"),
-        ]
-
-        assert _extract_final_response(messages) == ""
-
     def test_state_has_required_fields(self):
         """Test that ChatAgentState has all required fields."""
         state: ChatAgentState = {
@@ -297,6 +283,20 @@ class TestChatAgentResponseExtraction:
         assert "startup_system_prompt" in state
         assert "toolset_generation" in state
         assert "signals_envelopes" in state
+
+
+class TestChatAgentResponseExtraction:
+    """Test chat-agent final response selection."""
+
+    def test_extract_final_response_ignores_non_ai_tail_messages(self):
+        messages = [
+            HumanMessage(content="user prompt"),
+            AIMessage(content=""),
+            ToolMessage(content='{"status":"ok"}', tool_call_id="tool-1"),
+            SystemMessage(content="hidden system prompt"),
+        ]
+
+        assert _extract_final_response(messages) == ""
 
 
 class TestChatAgentWorkflowBuild:
