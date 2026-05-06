@@ -73,7 +73,7 @@ class TestSRELangGraphAgent:
             SystemMessage(content="hidden system prompt"),
         ]
 
-        assert extract_last_ai_response(messages) == ""
+        assert extract_last_ai_response(messages, terminal_only=True) == ""
 
     def test_extract_last_ai_response_does_not_leak_prior_turn_history(self):
         messages = [
@@ -84,7 +84,7 @@ class TestSRELangGraphAgent:
             AIMessage(content=""),
         ]
 
-        assert extract_last_ai_response(messages) == ""
+        assert extract_last_ai_response(messages, terminal_only=True) == ""
 
     def test_init(self, mock_settings, mock_llm):
         """Test agent initialization."""

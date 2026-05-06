@@ -73,7 +73,7 @@ def _extract_final_response(messages: List[BaseMessage]) -> str:
     if not messages:
         return ""
 
-    return extract_last_ai_response(messages)
+    return extract_last_ai_response(messages, terminal_only=True)
 
 
 CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.

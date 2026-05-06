@@ -2441,7 +2441,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state["messages"]
-                    response_content = extract_last_ai_response(messages)
+                    response_content = extract_last_ai_response(messages, terminal_only=True)
                     if response_content:
                         logger.info(
                             f"SRE agent completed processing with {final_state['iteration_count']} iterations"
@@ -2874,7 +2874,7 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    response_content = extract_last_ai_response(messages)
+                    response_content = extract_last_ai_response(messages, terminal_only=True)
                     if response_content:
                         return AgentResponse(
                             response=response_content,
