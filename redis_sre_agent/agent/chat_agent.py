@@ -50,7 +50,7 @@ from .checkpointing import (
     persist_checkpoint_metadata,
     resolve_graph_thread_id,
 )
-from .helpers import build_result_envelope
+from .helpers import build_result_envelope, extract_last_ai_response
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 from .tool_execution import execute_tool_calls_with_gate
@@ -886,18 +886,12 @@ User Query: {query}"""
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state.get("messages", [])
-                    if messages:
-                        last_message = messages[-1]
-                        if isinstance(last_message, AIMessage):
-                            response = AgentResponse(
-                                response=last_message.content,
-                                tool_envelopes=tool_envelopes,
-                            )
-                        else:
-                            response = AgentResponse(
-                                response=str(last_message.content),
-                                tool_envelopes=tool_envelopes,
-                            )
+                    response_text = extract_last_ai_response(messages, terminal_only=True)
+                    if response_text:
+                        response = AgentResponse(
+                            response=response_text,
+                            tool_envelopes=tool_envelopes,
+                        )
                         await prepared_memory.persist_response_fail_open(response.response)
                         return response
 
@@ -993,15 +987,10 @@ User Query: {query}"""
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    if messages:
-                        last_message = messages[-1]
-                        if isinstance(last_message, AIMessage):
-                            return AgentResponse(
-                                response=last_message.content,
-                                tool_envelopes=tool_envelopes,
-                            )
+                    response_text = extract_last_ai_response(messages, terminal_only=True)
+                    if response_text:
                         return AgentResponse(
-                            response=str(last_message.content),
+                            response=response_text,
                             tool_envelopes=tool_envelopes,
                         )
 

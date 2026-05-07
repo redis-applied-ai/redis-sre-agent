@@ -59,7 +59,7 @@ from .checkpointing import (
 )
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 from .helpers import build_adapters_for_tooldefs as _build_adapters
-from .helpers import log_preflight_messages
+from .helpers import extract_last_ai_response, log_preflight_messages
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 from .prompts import SRE_SYSTEM_PROMPT
@@ -2441,8 +2441,8 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state["messages"]
-                    if messages and isinstance(messages[-1], AIMessage):
-                        response_content = messages[-1].content
+                    response_content = extract_last_ai_response(messages, terminal_only=True)
+                    if response_content:
                         logger.info(
                             f"SRE agent completed processing with {final_state['iteration_count']} iterations"
                         )
@@ -2874,9 +2874,10 @@ For now, I can still perform basic Redis diagnostics using the database connecti
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    if messages and isinstance(messages[-1], AIMessage):
+                    response_content = extract_last_ai_response(messages, terminal_only=True)
+                    if response_content:
                         return AgentResponse(
-                            response=messages[-1].content,
+                            response=response_content,
                             tool_envelopes=tool_envelopes,
                         )
 

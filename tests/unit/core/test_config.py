@@ -507,6 +507,50 @@ class TestSettingsValidation:
             assert settings.max_iterations == 1
             assert settings.tool_timeout == 1
 
+    def test_skill_backend_workspace_api_settings_load_from_config_file(self):
+        """Test that custom skill backend settings load from config files."""
+        from redis_sre_agent.core.config import Settings
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "openai_api_key": "test-key",
+                        "skill_backend_kind": "custom",
+                        "skill_backend_class": (
+                            "redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend"
+                        ),
+                        "skills_api_base_url": "https://rar-api.example.internal",
+                        "skills_api_tenant_id": "tenant_a",
+                        "skills_api_project_id": "proj_1",
+                        "skills_api_agent_id": "agent_1",
+                        "skills_api_token": "secret-token",
+                        "skills_api_timeout_seconds": 7.5,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {"SRE_AGENT_CONFIG": str(config_path), "OPENAI_API_KEY": "test-key"},
+                clear=True,
+            ):
+                settings = Settings(_env_file=None)
+
+        assert settings.skill_backend_kind == "custom"
+        assert (
+            settings.skill_backend_class
+            == "redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend"
+        )
+        assert settings.skills_api_base_url == "https://rar-api.example.internal"
+        assert settings.skills_api_tenant_id == "tenant_a"
+        assert settings.skills_api_project_id == "proj_1"
+        assert settings.skills_api_agent_id == "agent_1"
+        assert settings.skills_api_token == "secret-token"
+        assert settings.skills_api_timeout_seconds == 7.5
+
 
 class TestYamlConfigLoading:
     """Test YAML configuration file loading."""

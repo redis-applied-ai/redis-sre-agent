@@ -133,6 +133,7 @@ class MCPConnectionPool:
                     stdio_client(server_params)
                 )
             elif config.url:
+                expanded_url = os.path.expandvars(config.url)
                 headers = None
                 if config.headers:
                     headers = {k: os.path.expandvars(v) for k, v in config.headers.items()}
@@ -140,11 +141,11 @@ class MCPConnectionPool:
                 transport_type = (config.transport or "streamable_http").lower()
                 if transport_type == "sse":
                     read_stream, write_stream = await exit_stack.enter_async_context(
-                        sse_client(config.url, headers=headers)
+                        sse_client(expanded_url, headers=headers)
                     )
                 else:
                     (read_stream, write_stream, _) = await exit_stack.enter_async_context(
-                        streamablehttp_client(config.url, headers=headers)
+                        streamablehttp_client(expanded_url, headers=headers)
                     )
             else:
                 raise ValueError(f"MCP server '{server_name}' needs 'command' or 'url'")
