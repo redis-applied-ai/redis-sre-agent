@@ -138,13 +138,15 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `skills_api_tenant_id` | `SKILLS_API_TENANT_ID` | `str \| None` | `None` | Tenant id sent to the runtime-owned Skills facade. |
 | `skills_api_project_id` | `SKILLS_API_PROJECT_ID` | `str \| None` | `None` | Project id sent to the runtime-owned Skills facade. |
 | `skills_api_agent_id` | `SKILLS_API_AGENT_ID` | `str \| None` | `None` | Agent app id sent to the runtime-owned Skills facade. |
-| `skills_api_token` | `SKILLS_API_TOKEN` | `str \| None` | `None` | Optional bearer token for the runtime-owned Skills facade. |
+| `skills_api_token` | `SKILLS_API_TOKEN` | `str \| None` | `None` | Bearer token for the runtime-owned Skills facade. Required when using the shipped workspace backend. |
 | `skills_api_timeout_seconds` | `SKILLS_API_TIMEOUT_SECONDS` | `float` | `15.0` | HTTP timeout in seconds for the runtime-owned Skills facade. |
 | `skill_reference_char_budget` | `SKILL_REFERENCE_CHAR_BUDGET` | `int` | `12000` | Maximum characters returned by `get_skill_resource` before truncation. |
 
 Compatibility note:
 - The shipped `AFSWorkspaceSkillBackend` also honors the `RAR_SKILLS_API_*` environment variables
   used by the control-plane deployment wiring.
+- In runtime deployments it can also read the runner-provided `RAK_API_TOKEN`/`RAK_SERVICE_TOKEN`
+  values. Direct AFS fallback is not part of the worker skills path.
 
 `MCPServerConfig` object keys:
 

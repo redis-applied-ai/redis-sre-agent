@@ -84,5 +84,6 @@ mcp_servers:
         action_kind: write
 
 # Runtime deployments rely on runner-provided RAK_* identity and auth env vars.
+# Skills are fetched through the runtime-owned Skills facade, not directly from AFS.
 skill_backend_kind: custom
 skill_backend_class: redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend

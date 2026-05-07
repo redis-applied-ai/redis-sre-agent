@@ -160,6 +160,10 @@ class AFSWorkspaceSkillBackend:
                 ("skills_api_token", "RAK_SERVICE_TOKEN"),
             ),
         )
+        if not token:
+            raise ValueError(
+                "AFS workspace skill backend requires an authenticated skills API bearer token"
+            )
         timeout_raw = _first_non_empty(
             config,
             (
@@ -172,16 +176,6 @@ class AFSWorkspaceSkillBackend:
             timeout_seconds = float(timeout_raw)
         except ValueError as exc:
             raise ValueError("skills API timeout must be numeric") from exc
-        gateway_url = os.environ.get("RAR_RUNTIME_AFS_MCP_URL", "").strip() or None
-        gateway_token = os.environ.get("RAR_RUNTIME_AFS_MCP_TOKEN", "").strip() or None
-        workspace_id = (
-            os.environ.get("RAR_SKILLS_WORKSPACE_ID", "").strip()
-            or _build_skills_workspace_id(
-                tenant_id=tenant_id,
-                project_id=project_id,
-                agent_id=agent_id,
-            )
-        )
         return cls(
             base_url=base_url.rstrip("/"),
             tenant_id=tenant_id,
@@ -190,9 +184,6 @@ class AFSWorkspaceSkillBackend:
             bearer_token=token or None,
             timeout_seconds=timeout_seconds,
             skill_reference_char_budget=max(int(config.skill_reference_char_budget), 1),
-            gateway_url=gateway_url,
-            gateway_token=gateway_token,
-            workspace_id=workspace_id or None,
         )
 
     async def list_skills(
@@ -205,66 +196,15 @@ class AFSWorkspaceSkillBackend:
         distance_threshold: float | None = 0.8,
     ) -> dict[str, Any]:
         del distance_threshold
-        api_result: dict[str, Any] | None = None
-        api_error: Exception | None = None
-        try:
-            api_result = await self._list_skills_via_api(
-                query=query,
-                limit=limit,
-                offset=offset,
-                version=version,
-            )
-        except Exception as exc:
-            api_error = exc
-        else:
-            if int(api_result.get("results_count", 0)) > 0 or not self._use_gateway():
-                return api_result
-
-        if self._use_gateway():
-            gateway_result = await self._list_skills_via_gateway(
-                query=query,
-                limit=limit,
-                offset=offset,
-                version=version,
-            )
-            if int(gateway_result.get("results_count", 0)) > 0 or api_result is None:
-                return gateway_result
-
-        if api_result is not None:
-            return api_result
-        if api_error is not None:
-            raise api_error
-        return {
-            "query": query,
-            "version": version,
-            "offset": offset,
-            "limit": limit,
-            "results_count": 0,
-            "total_fetched": 0,
-            "skills": [],
-        }
+        return await self._list_skills_via_api(
+            query=query,
+            limit=limit,
+            offset=offset,
+            version=version,
+        )
 
     async def get_skill(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
-        api_result: dict[str, Any] | None = None
-        api_error: Exception | None = None
-        try:
-            api_result = await self._get_skill_via_api(skill_name=skill_name, version=version)
-        except Exception as exc:
-            api_error = exc
-        else:
-            if not self._is_missing_result(api_result, "Skill not found") or not self._use_gateway():
-                return api_result
-
-        if self._use_gateway():
-            gateway_result = await self._get_skill_via_gateway(skill_name=skill_name, version=version)
-            if not self._is_missing_result(gateway_result, "Skill not found") or api_result is None:
-                return gateway_result
-
-        if api_result is not None:
-            return api_result
-        if api_error is not None:
-            raise api_error
-        return {"skill_name": skill_name, "error": "Skill not found"}
+        return await self._get_skill_via_api(skill_name=skill_name, version=version)
 
     async def get_skill_resource(
         self,
@@ -273,44 +213,11 @@ class AFSWorkspaceSkillBackend:
         resource_path: str,
         version: str | None,
     ) -> dict[str, Any]:
-        api_result: dict[str, Any] | None = None
-        api_error: Exception | None = None
-        try:
-            api_result = await self._get_skill_resource_via_api(
-                skill_name=skill_name,
-                resource_path=resource_path,
-                version=version,
-            )
-        except Exception as exc:
-            api_error = exc
-        else:
-            if (
-                not self._is_missing_result(api_result, "Skill resource not found")
-                or not self._use_gateway()
-            ):
-                return api_result
-
-        if self._use_gateway():
-            gateway_result = await self._get_skill_resource_via_gateway(
-                skill_name=skill_name,
-                resource_path=resource_path,
-                version=version,
-            )
-            if (
-                not self._is_missing_result(gateway_result, "Skill resource not found")
-                or api_result is None
-            ):
-                return gateway_result
-
-        if api_result is not None:
-            return api_result
-        if api_error is not None:
-            raise api_error
-        return {
-            "skill_name": skill_name,
-            "resource_path": resource_path,
-            "error": "Skill resource not found",
-        }
+        return await self._get_skill_resource_via_api(
+            skill_name=skill_name,
+            resource_path=resource_path,
+            version=version,
+        )
 
     async def _list_skills_via_api(
         self,

@@ -250,7 +250,7 @@ skills_api_agent_id: redis-sre-agent
 skills_api_timeout_seconds: 15
 ```
 
-Optional authentication:
+Authentication is required:
 
 ```yaml
 skills_api_token: ${RAR_SKILLS_API_TOKEN}
@@ -260,10 +260,12 @@ Notes:
 - `skills_api_base_url` must point at the runtime-owned Skills facade in `apps/api`, not at the
   AFS gateway directly.
 - The facade itself is responsible for talking to the AFS gateway and keeping the runtime aligned
-  with the Skills page storage model.
+  with the Skills page storage model. The worker does not read skills directly from AFS.
 - For compatibility with existing deployments, the shipped backend also honors
   `RAR_SKILLS_API_BASE_URL`, `RAR_SKILLS_API_TENANT_ID`, `RAR_SKILLS_API_PROJECT_ID`,
   `RAR_SKILLS_API_AGENT_ID`, `RAR_SKILLS_API_TOKEN`, and `RAR_SKILLS_API_TIMEOUT_SECONDS`.
+- In runtime-managed deployments the preferred wiring is to provide a valid runtime API key via
+  `RAR_RUNTIME_SERVICE_TOKEN`, which the runner maps into `RAK_API_TOKEN` for the worker.
 
 The shipped runtime keeps execution separate from retrieval. Even with a custom backend, Agent Skills
 skill scripts are not executed by this agent in v1.
