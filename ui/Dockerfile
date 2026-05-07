@@ -1,5 +1,7 @@
 # Multi-stage Dockerfile for Redis SRE Agent UI
-FROM node:20-alpine AS base
+# Use the Debian-based Node image for build stages; the Alpine variant hit
+# arm64/QEMU illegal-instruction failures in CI during npm install.
+FROM node:20-bookworm-slim AS base
 
 # Set working directory
 WORKDIR /app
