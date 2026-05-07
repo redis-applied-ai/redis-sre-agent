@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
@@ -19,9 +19,7 @@ except ModuleNotFoundError:  # pragma: no cover - runtime image fallback
 from redis_sre_agent.core.config import Settings
 
 
-def _first_non_empty(
-    config: Settings, names: tuple[tuple[str, str], ...], default: str = ""
-) -> str:
+def _first_non_empty(config: Settings, names: tuple[tuple[str, str], ...], default: str = "") -> str:
     for attr_name, env_name in names:
         value = _env_or_attr(config, attr_name, env_name)
         if value:
@@ -33,8 +31,6 @@ def _env_or_attr(config: Settings, attr_name: str, env_name: str, default: str =
     value = getattr(config, attr_name, "")
     if isinstance(value, str) and value.strip():
         return value.strip()
-    if isinstance(value, (int, float)):
-        return str(value)
     return os.environ.get(env_name, default).strip()
 
 
@@ -45,10 +41,9 @@ def _slug_fragment(value: str) -> str:
 
 
 def _build_skills_workspace_id(*, tenant_id: str, project_id: str, agent_id: str) -> str:
-    readable = (
-        "-".join(_slug_fragment(value) for value in (project_id, agent_id) if value.strip())
-        or "workspace"
-    )
+    readable = "-".join(
+        _slug_fragment(value) for value in (project_id, agent_id) if value.strip()
+    ) or "workspace"
     digest = hashlib.sha1(f"{tenant_id}:{project_id}:{agent_id}".encode("utf-8")).hexdigest()[:12]
     return f"skills-{readable[:36]}-{digest}"
 
@@ -94,6 +89,7 @@ class AFSWorkspaceSkillBackend:
             config,
             (
                 ("skills_api_base_url", "RAR_SKILLS_API_BASE_URL"),
+                ("skills_api_base_url", "SKILLS_API_BASE_URL"),
                 ("skills_api_base_url", "RAK_API_BASE_URL"),
             ),
         )
@@ -101,6 +97,7 @@ class AFSWorkspaceSkillBackend:
             config,
             (
                 ("skills_api_tenant_id", "RAR_SKILLS_API_TENANT_ID"),
+                ("skills_api_tenant_id", "SKILLS_API_TENANT_ID"),
                 ("skills_api_tenant_id", "RAK_TENANT_ID"),
             ),
         )
@@ -108,6 +105,7 @@ class AFSWorkspaceSkillBackend:
             config,
             (
                 ("skills_api_project_id", "RAR_SKILLS_API_PROJECT_ID"),
+                ("skills_api_project_id", "SKILLS_API_PROJECT_ID"),
                 ("skills_api_project_id", "RAK_PROJECT_ID"),
                 ("skills_api_project_id", "RAK_PROJECT"),
             ),
@@ -116,6 +114,7 @@ class AFSWorkspaceSkillBackend:
             config,
             (
                 ("skills_api_agent_id", "RAR_SKILLS_API_AGENT_ID"),
+                ("skills_api_agent_id", "SKILLS_API_AGENT_ID"),
                 ("skills_api_agent_id", "RAK_SELF_AGENT_ID"),
                 ("skills_api_agent_id", "RAK_AGENT"),
             ),
@@ -128,6 +127,7 @@ class AFSWorkspaceSkillBackend:
             config,
             (
                 ("skills_api_token", "RAR_SKILLS_API_TOKEN"),
+                ("skills_api_token", "SKILLS_API_TOKEN"),
                 ("skills_api_token", "RAK_API_TOKEN"),
                 ("skills_api_token", "RAK_SERVICE_TOKEN"),
             ),
@@ -146,12 +146,13 @@ class AFSWorkspaceSkillBackend:
             raise ValueError("skills API timeout must be numeric") from exc
         gateway_url = os.environ.get("RAR_RUNTIME_AFS_MCP_URL", "").strip() or None
         gateway_token = os.environ.get("RAR_RUNTIME_AFS_MCP_TOKEN", "").strip() or None
-        workspace_id = os.environ.get(
-            "RAR_SKILLS_WORKSPACE_ID", ""
-        ).strip() or _build_skills_workspace_id(
-            tenant_id=tenant_id,
-            project_id=project_id,
-            agent_id=agent_id,
+        workspace_id = (
+            os.environ.get("RAR_SKILLS_WORKSPACE_ID", "").strip()
+            or _build_skills_workspace_id(
+                tenant_id=tenant_id,
+                project_id=project_id,
+                agent_id=agent_id,
+            )
         )
         return cls(
             base_url=base_url.rstrip("/"),
@@ -176,28 +177,121 @@ class AFSWorkspaceSkillBackend:
         distance_threshold: float | None = 0.8,
     ) -> dict[str, Any]:
         del distance_threshold
+        api_result: dict[str, Any] | None = None
+        api_error: Exception | None = None
+        try:
+            api_result = await self._list_skills_via_api(
+                query=query,
+                limit=limit,
+                offset=offset,
+                version=version,
+            )
+        except Exception as exc:
+            api_error = exc
+        else:
+            if int(api_result.get("results_count", 0)) > 0 or not self._use_gateway():
+                return api_result
+
         if self._use_gateway():
-            raw_skills = await self._gateway_catalog_entries(version=version)
-            if query:
-                query_text = query.strip().lower()
-                raw_skills = [
-                    skill
-                    for skill in raw_skills
-                    if query_text in json.dumps(skill, sort_keys=True).lower()
-                ]
-            paged = raw_skills[offset : offset + limit]
-            normalized_skills = [
-                self._normalize_skill_summary(skill, matched_path=None) for skill in paged
-            ]
-            return {
-                "query": query,
-                "version": version,
-                "offset": offset,
-                "limit": limit,
-                "results_count": len(normalized_skills),
-                "total_fetched": len(raw_skills),
-                "skills": normalized_skills,
-            }
+            gateway_result = await self._list_skills_via_gateway(
+                query=query,
+                limit=limit,
+                offset=offset,
+                version=version,
+            )
+            if int(gateway_result.get("results_count", 0)) > 0 or api_result is None:
+                return gateway_result
+
+        if api_result is not None:
+            return api_result
+        if api_error is not None:
+            raise api_error
+        return {
+            "query": query,
+            "version": version,
+            "offset": offset,
+            "limit": limit,
+            "results_count": 0,
+            "total_fetched": 0,
+            "skills": [],
+        }
+
+    async def get_skill(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
+        api_result: dict[str, Any] | None = None
+        api_error: Exception | None = None
+        try:
+            api_result = await self._get_skill_via_api(skill_name=skill_name, version=version)
+        except Exception as exc:
+            api_error = exc
+        else:
+            if not self._is_missing_result(api_result, "Skill not found") or not self._use_gateway():
+                return api_result
+
+        if self._use_gateway():
+            gateway_result = await self._get_skill_via_gateway(skill_name=skill_name, version=version)
+            if not self._is_missing_result(gateway_result, "Skill not found") or api_result is None:
+                return gateway_result
+
+        if api_result is not None:
+            return api_result
+        if api_error is not None:
+            raise api_error
+        return {"skill_name": skill_name, "error": "Skill not found"}
+
+    async def get_skill_resource(
+        self,
+        *,
+        skill_name: str,
+        resource_path: str,
+        version: str | None,
+    ) -> dict[str, Any]:
+        api_result: dict[str, Any] | None = None
+        api_error: Exception | None = None
+        try:
+            api_result = await self._get_skill_resource_via_api(
+                skill_name=skill_name,
+                resource_path=resource_path,
+                version=version,
+            )
+        except Exception as exc:
+            api_error = exc
+        else:
+            if (
+                not self._is_missing_result(api_result, "Skill resource not found")
+                or not self._use_gateway()
+            ):
+                return api_result
+
+        if self._use_gateway():
+            gateway_result = await self._get_skill_resource_via_gateway(
+                skill_name=skill_name,
+                resource_path=resource_path,
+                version=version,
+            )
+            if (
+                not self._is_missing_result(gateway_result, "Skill resource not found")
+                or api_result is None
+            ):
+                return gateway_result
+
+        if api_result is not None:
+            return api_result
+        if api_error is not None:
+            raise api_error
+        return {
+            "skill_name": skill_name,
+            "resource_path": resource_path,
+            "error": "Skill resource not found",
+        }
+
+    async def _list_skills_via_api(
+        self,
+        *,
+        query: str | None,
+        limit: int,
+        offset: int,
+        version: str | None,
+    ) -> dict[str, Any]:
         path = self._base_path()
         params: dict[str, Any] = {"version": version} if version else {}
         if query:
@@ -212,27 +306,20 @@ class AFSWorkspaceSkillBackend:
         raw_skills = data.get("skills", [])
         if not isinstance(raw_skills, list):
             raw_skills = []
-        normalized_skills = (
-            [
-                self._normalize_skill_summary(skill, matched_path=None)
-                for skill in raw_skills[offset : offset + limit]
-                if isinstance(skill, Mapping)
-            ]
-            if query
-            else [
-                self._normalize_skill_summary(skill, matched_path=None)
-                for skill in raw_skills
-                if isinstance(skill, Mapping)
-            ]
-        )
+        normalized_skills = [
+            self._normalize_skill_summary(skill, matched_path=None)
+            for skill in raw_skills[offset : offset + limit]
+            if isinstance(skill, Mapping)
+        ] if query else [
+            self._normalize_skill_summary(skill, matched_path=None)
+            for skill in raw_skills
+            if isinstance(skill, Mapping)
+        ]
         if query:
             matches = data.get("matches", [])
             if isinstance(matches, list):
                 by_identity = {
-                    (
-                        str(item.get("skillSlug", "")).strip(),
-                        str(item.get("version", "")).strip(),
-                    ): item
+                    (str(item.get("skillSlug", "")).strip(), str(item.get("version", "")).strip()): item
                     for item in matches
                     if isinstance(item, Mapping)
                 }
@@ -263,47 +350,35 @@ class AFSWorkspaceSkillBackend:
             "skills": normalized_skills,
         }
 
-    async def get_skill(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
-        if self._use_gateway():
-            skill = await self._gateway_skill_metadata(skill_name=skill_name, version=version)
-            if skill is None:
-                return {"skill_name": skill_name, "error": "Skill not found"}
-            entrypoint_path = str(skill.get("entrypointPath", "SKILL.md")).strip() or "SKILL.md"
-            entrypoint_content = await self._gateway_read_text(
-                self._gateway_skill_resource_path(
-                    skill_slug=str(skill.get("skillSlug", skill_name)).strip() or skill_name,
-                    version=str(skill.get("version", version or "v1")).strip() or "v1",
-                    resource_path=entrypoint_path,
-                )
-            )
-            references: list[dict[str, str]] = []
-            scripts: list[dict[str, str]] = []
-            assets: list[dict[str, str]] = []
-            for item in skill.get("resources", []):
-                if not isinstance(item, Mapping):
-                    continue
-                normalized = {
-                    "path": str(item.get("path", "")).strip(),
-                    "kind": str(item.get("kind", "")).strip(),
-                }
-                if normalized["kind"] == "reference":
-                    references.append(normalized)
-                elif normalized["kind"] == "script":
-                    scripts.append(normalized)
-                elif normalized["kind"] == "asset":
-                    assets.append(normalized)
-            return {
-                "skill_name": str(skill.get("skillSlug", skill_name)).strip() or skill_name,
-                "title": str(skill.get("displayName", skill_name)).strip() or skill_name,
-                "summary": str(skill.get("description", "")).strip(),
-                "version": str(skill.get("version", version or "v1")).strip() or "v1",
-                "content": entrypoint_content,
-                "protocol": "agent_skills_v1",
-                "backend_kind": "afs_workspace",
-                "references": references,
-                "scripts": scripts,
-                "assets": assets,
-            }
+    async def _list_skills_via_gateway(
+        self,
+        *,
+        query: str | None,
+        limit: int,
+        offset: int,
+        version: str | None,
+    ) -> dict[str, Any]:
+        raw_skills = await self._gateway_catalog_entries(version=version)
+        if query:
+            query_text = query.strip().lower()
+            raw_skills = [
+                skill for skill in raw_skills if query_text in json.dumps(skill, sort_keys=True).lower()
+            ]
+        paged = raw_skills[offset : offset + limit]
+        normalized_skills = [
+            self._normalize_skill_summary(skill, matched_path=None) for skill in paged
+        ]
+        return {
+            "query": query,
+            "version": version,
+            "offset": offset,
+            "limit": limit,
+            "results_count": len(normalized_skills),
+            "total_fetched": len(raw_skills),
+            "skills": normalized_skills,
+        }
+
+    async def _get_skill_via_api(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
         try:
             payload = await self._request_json(
                 "GET",
@@ -318,86 +393,39 @@ class AFSWorkspaceSkillBackend:
         skill = data.get("skill")
         if not isinstance(skill, Mapping):
             return {"skill_name": skill_name, "error": "Skill not found"}
-        entrypoint = skill.get("entrypoint")
-        entrypoint_content = ""
-        if isinstance(entrypoint, Mapping):
-            entrypoint_content = str(entrypoint.get("content", ""))
-        references = []
-        scripts = []
-        assets = []
-        for item in skill.get("resources", []):
-            if not isinstance(item, Mapping):
-                continue
-            normalized = {
-                "path": str(item.get("path", "")).strip(),
-                "kind": str(item.get("kind", "")).strip(),
-            }
-            if normalized["kind"] == "reference":
-                references.append(normalized)
-            elif normalized["kind"] == "script":
-                scripts.append(normalized)
-            elif normalized["kind"] == "asset":
-                assets.append(normalized)
-        return {
-            "skill_name": str(skill.get("skillSlug", skill_name)).strip() or skill_name,
-            "title": str(skill.get("displayName", skill_name)).strip() or skill_name,
-            "summary": str(skill.get("description", "")).strip(),
-            "version": str(skill.get("version", version or "v1")).strip() or "v1",
-            "content": entrypoint_content,
-            "protocol": "agent_skills_v1",
-            "backend_kind": "afs_workspace",
-            "references": references,
-            "scripts": scripts,
-            "assets": assets,
-        }
+        return self._serialize_skill_payload(skill, default_skill_name=skill_name, default_version=version)
 
-    async def get_skill_resource(
+    async def _get_skill_via_gateway(
+        self,
+        *,
+        skill_name: str,
+        version: str | None,
+    ) -> dict[str, Any]:
+        skill = await self._gateway_skill_metadata(skill_name=skill_name, version=version)
+        if skill is None:
+            return {"skill_name": skill_name, "error": "Skill not found"}
+        entrypoint_path = str(skill.get("entrypointPath", "SKILL.md")).strip() or "SKILL.md"
+        entrypoint_content = await self._gateway_read_text(
+            self._gateway_skill_resource_path(
+                skill_slug=str(skill.get("skillSlug", skill_name)).strip() or skill_name,
+                version=str(skill.get("version", version or "v1")).strip() or "v1",
+                resource_path=entrypoint_path,
+            )
+        )
+        return self._serialize_skill_payload(
+            skill,
+            default_skill_name=skill_name,
+            default_version=version,
+            entrypoint_content=entrypoint_content,
+        )
+
+    async def _get_skill_resource_via_api(
         self,
         *,
         skill_name: str,
         resource_path: str,
         version: str | None,
     ) -> dict[str, Any]:
-        if self._use_gateway():
-            skill = await self._gateway_skill_metadata(skill_name=skill_name, version=version)
-            if skill is None:
-                return {
-                    "skill_name": skill_name,
-                    "resource_path": resource_path,
-                    "error": "Skill resource not found",
-                }
-            normalized_resource_path = resource_path.strip().strip("/")
-            allowed_paths = {
-                str(item.get("path", "")).strip()
-                for item in skill.get("resources", [])
-                if isinstance(item, Mapping)
-            }
-            if (
-                normalized_resource_path not in allowed_paths
-                and normalized_resource_path != "SKILL.md"
-            ):
-                return {
-                    "skill_name": skill_name,
-                    "resource_path": resource_path,
-                    "error": "Skill resource not found",
-                }
-            content = await self._gateway_read_text(
-                self._gateway_skill_resource_path(
-                    skill_slug=str(skill.get("skillSlug", skill_name)).strip() or skill_name,
-                    version=str(skill.get("version", version or "v1")).strip() or "v1",
-                    resource_path=normalized_resource_path,
-                )
-            )
-            truncated_content, truncated = self._truncate_resource_content(content)
-            return {
-                "skill_name": skill_name,
-                "resource_path": normalized_resource_path,
-                "version": str(skill.get("version", version or "v1")).strip() or "v1",
-                "content": truncated_content,
-                "truncated": truncated,
-                "backend_kind": "afs_workspace",
-                "mime_type": "text/plain",
-            }
         try:
             payload = await self._request_json(
                 "GET",
@@ -429,6 +457,50 @@ class AFSWorkspaceSkillBackend:
             "skill_name": skill_name,
             "resource_path": str(resource.get("path", resource_path)).strip() or resource_path,
             "version": str(resource.get("version", version or "v1")).strip() or "v1",
+            "content": truncated_content,
+            "truncated": truncated,
+            "backend_kind": "afs_workspace",
+            "mime_type": "text/plain",
+        }
+
+    async def _get_skill_resource_via_gateway(
+        self,
+        *,
+        skill_name: str,
+        resource_path: str,
+        version: str | None,
+    ) -> dict[str, Any]:
+        skill = await self._gateway_skill_metadata(skill_name=skill_name, version=version)
+        if skill is None:
+            return {
+                "skill_name": skill_name,
+                "resource_path": resource_path,
+                "error": "Skill resource not found",
+            }
+        normalized_resource_path = resource_path.strip().strip("/")
+        allowed_paths = {
+            str(item.get("path", "")).strip()
+            for item in skill.get("resources", [])
+            if isinstance(item, Mapping)
+        }
+        if normalized_resource_path not in allowed_paths and normalized_resource_path != "SKILL.md":
+            return {
+                "skill_name": skill_name,
+                "resource_path": resource_path,
+                "error": "Skill resource not found",
+            }
+        content = await self._gateway_read_text(
+            self._gateway_skill_resource_path(
+                skill_slug=str(skill.get("skillSlug", skill_name)).strip() or skill_name,
+                version=str(skill.get("version", version or "v1")).strip() or "v1",
+                resource_path=normalized_resource_path,
+            )
+        )
+        truncated_content, truncated = self._truncate_resource_content(content)
+        return {
+            "skill_name": skill_name,
+            "resource_path": normalized_resource_path,
+            "version": str(skill.get("version", version or "v1")).strip() or "v1",
             "content": truncated_content,
             "truncated": truncated,
             "backend_kind": "afs_workspace",
@@ -491,6 +563,53 @@ class AFSWorkspaceSkillBackend:
     def _use_gateway(self) -> bool:
         return bool(self.gateway_url and self.gateway_token and self.workspace_id)
 
+    def _serialize_skill_payload(
+        self,
+        skill: Mapping[str, Any],
+        *,
+        default_skill_name: str,
+        default_version: str | None,
+        entrypoint_content: str | None = None,
+    ) -> dict[str, Any]:
+        if entrypoint_content is None:
+            entrypoint = skill.get("entrypoint")
+            if isinstance(entrypoint, Mapping):
+                entrypoint_content = str(entrypoint.get("content", ""))
+            else:
+                entrypoint_content = ""
+        references: list[dict[str, str]] = []
+        scripts: list[dict[str, str]] = []
+        assets: list[dict[str, str]] = []
+        for item in skill.get("resources", []):
+            if not isinstance(item, Mapping):
+                continue
+            normalized = {
+                "path": str(item.get("path", "")).strip(),
+                "kind": str(item.get("kind", "")).strip(),
+            }
+            if normalized["kind"] == "reference":
+                references.append(normalized)
+            elif normalized["kind"] == "script":
+                scripts.append(normalized)
+            elif normalized["kind"] == "asset":
+                assets.append(normalized)
+        return {
+            "skill_name": str(skill.get("skillSlug", default_skill_name)).strip() or default_skill_name,
+            "title": str(skill.get("displayName", default_skill_name)).strip() or default_skill_name,
+            "summary": str(skill.get("description", "")).strip(),
+            "version": str(skill.get("version", default_version or "v1")).strip() or "v1",
+            "content": entrypoint_content,
+            "protocol": "agent_skills_v1",
+            "backend_kind": "afs_workspace",
+            "references": references,
+            "scripts": scripts,
+            "assets": assets,
+        }
+
+    @staticmethod
+    def _is_missing_result(payload: Mapping[str, Any], expected_error: str) -> bool:
+        return str(payload.get("error", "")).strip() == expected_error
+
     def _gateway_endpoint(self) -> str:
         if not self.gateway_url:
             raise ValueError("AFS gateway URL is not configured")
@@ -515,9 +634,7 @@ class AFSWorkspaceSkillBackend:
             return []
         entries = [entry for entry in raw_entries if isinstance(entry, Mapping)]
         if version and version != "latest":
-            entries = [
-                entry for entry in entries if str(entry.get("version", "")).strip() == version
-            ]
+            entries = [entry for entry in entries if str(entry.get("version", "")).strip() == version]
         return entries
 
     async def _gateway_skill_metadata(
@@ -528,7 +645,9 @@ class AFSWorkspaceSkillBackend:
     ) -> Mapping[str, Any] | None:
         entries = await self._gateway_catalog_entries(version=version)
         matches = [
-            entry for entry in entries if str(entry.get("skillSlug", "")).strip() == skill_name
+            entry
+            for entry in entries
+            if str(entry.get("skillSlug", "")).strip() == skill_name
         ]
         if not matches:
             return None
@@ -683,11 +802,7 @@ class AFSWorkspaceSkillBackend:
                 response.raise_for_status()
                 payload = response.json()
         else:
-            query = (
-                f"?{urlencode({k: v for k, v in (params or {}).items() if v is not None})}"
-                if params
-                else ""
-            )
+            query = f"?{urlencode({k: v for k, v in (params or {}).items() if v is not None})}" if params else ""
             payload = self._stdlib_request_json(
                 method,
                 f"{self.base_url.rstrip('/')}{path}{query}",
