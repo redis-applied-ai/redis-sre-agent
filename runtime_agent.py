@@ -6,13 +6,11 @@ import inspect
 import json
 import os
 import re
-import sys
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-
 
 MAX_HISTORY_MESSAGES = 20
 DEFAULT_USER_ID = "runtime-user"
