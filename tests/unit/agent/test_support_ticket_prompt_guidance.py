@@ -3,7 +3,7 @@
 from redis_sre_agent.agent.chat_agent import CHAT_SYSTEM_PROMPT
 from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
 from redis_sre_agent.agent.knowledge_context import _tool_instruction_lines_for_categories
-from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+from redis_sre_agent.agent.prompts import REDIS_COMMAND_SEMANTICS_GUARDRAILS, SRE_SYSTEM_PROMPT
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
 
@@ -103,3 +103,9 @@ def test_sre_prompt_includes_command_semantics_guardrails():
     assert "`info clients`" in prompt
     assert "`client list`" in prompt
     assert "clients.normal" in prompt
+
+
+def test_chat_and_sre_prompts_share_guardrails_constant():
+    shared = REDIS_COMMAND_SEMANTICS_GUARDRAILS.strip()
+    assert shared in CHAT_SYSTEM_PROMPT
+    assert shared in SRE_SYSTEM_PROMPT

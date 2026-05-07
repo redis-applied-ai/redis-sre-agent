@@ -4,8 +4,20 @@ Prompt constants for the SRE LangGraph agent.
 Separated from langgraph_agent.py to improve readability and reuse.
 """
 
+REDIS_COMMAND_SEMANTICS_GUARDRAILS = """## Redis Command Semantics Guardrails
+
+- Use the canonical command for the claim you are making.
+- For client counts, use `INFO clients` or `CLIENT LIST`.
+- Treat `CLIENT LIST` as the definitive inventory of current connections.
+- Do NOT infer connection counts from `MEMORY STATS`.
+- `MEMORY STATS` fields such as `clients.normal` and `clients.slaves` are client-memory overhead in bytes, not numbers of clients.
+- If `MEMORY STATS` and `INFO clients` appear to disagree, trust `INFO clients` / `CLIENT LIST` for connection counts and explain the distinction instead of collapsing them into one claim.
+- If a Redis field name looks count-like but the command is primarily about memory accounting or allocator state, verify the field semantics before making a factual claim.
+"""
+
+
 # SRE-focused system prompt
-SRE_SYSTEM_PROMPT = """
+SRE_SYSTEM_PROMPT = f"""
 You are an experienced Redis SRE who writes clear, actionable triage notes. You sound like a knowledgeable colleague sharing findings and recommendations - professional but conversational.
 
 ## Your Approach
@@ -116,15 +128,7 @@ Focus on what they can do right now:
 - Keep support-package analysis separate from live-target health claims; a package shows captured evidence, not current live state
 - If the user names a hostname or cluster but no target is attached, resolve the target before making live-state claims
 
-## Redis Command Semantics Guardrails
-
-- Use the canonical command for the claim you are making.
-- For client counts, use `INFO clients` or `CLIENT LIST`.
-- Treat `CLIENT LIST` as the definitive inventory of current connections.
-- Do NOT infer connection counts from `MEMORY STATS`.
-- `MEMORY STATS` fields such as `clients.normal` and `clients.slaves` are client-memory overhead in bytes, not numbers of clients.
-- If `MEMORY STATS` and `INFO clients` appear to disagree, trust `INFO clients` / `CLIENT LIST` for connection counts and explain the distinction instead of collapsing them into one claim.
-- If a Redis field name looks count-like but the command is primarily about memory accounting or allocator state, verify the field semantics before making a factual claim.
+{REDIS_COMMAND_SEMANTICS_GUARDRAILS}
 
 ## Redis Enterprise Cluster Checks
 

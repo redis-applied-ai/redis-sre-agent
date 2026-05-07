@@ -53,6 +53,7 @@ from .checkpointing import (
 from .helpers import build_result_envelope
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
+from .prompts import REDIS_COMMAND_SEMANTICS_GUARDRAILS
 from .tool_execution import execute_tool_calls_with_gate
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def _format_exception_message(exc: Exception) -> str:
     return type(exc).__name__
 
 
-CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.
+CHAT_SYSTEM_PROMPT = f"""You are a Redis SRE agent with access to tools for investigating Redis deployments.
 
 ## Your Approach - ITERATIVE INVESTIGATION
 
@@ -136,14 +137,7 @@ Only call categories that are available in your current tool list.
 - Be conversational about what you're finding and what you'll check next
 - For truly exhaustive multi-topic analysis, suggest "deep triage"
 
-## Redis Command Semantics Guardrails
-- Use the canonical command for the claim you are making.
-- For client counts, use `INFO clients` or `CLIENT LIST`.
-- Treat `CLIENT LIST` as the definitive inventory of current connections.
-- Do NOT infer connection counts from `MEMORY STATS`.
-- `MEMORY STATS` fields such as `clients.normal` and `clients.slaves` are client-memory overhead in bytes, not numbers of clients.
-- If `MEMORY STATS` and `INFO clients` appear to disagree, trust `INFO clients` / `CLIENT LIST` for connection counts and explain the distinction instead of collapsing them into one claim.
-- If a Redis field name looks count-like but the command is primarily about memory accounting or allocator state, verify the field semantics before making a factual claim.
+{REDIS_COMMAND_SEMANTICS_GUARDRAILS}
 
 ## Redis Enterprise / Redis Cloud Notes
 - For managed Redis, INFO output can be misleading
