@@ -78,7 +78,7 @@ jobs:
           tags: |
             type=raw,value=${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
-            type=sha,prefix={{branch}}-
+            type=sha,prefix=sha-
 
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
@@ -146,7 +146,7 @@ jobs:
           tags: |
             type=raw,value=${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
-            type=sha,prefix={{branch}}-
+            type=sha,prefix=sha-
 
       - name: Build and push UI Docker image
         uses: docker/build-push-action@v5
