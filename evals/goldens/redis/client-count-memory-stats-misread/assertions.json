@@ -1,0 +1,32 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "memory_stats",
+      "target_handle": "tgt_instance_runtime_cache"
+    },
+    {
+      "provider_family": "redis_command",
+      "operation": "info",
+      "target_handle": "tgt_instance_runtime_cache"
+    }
+  ],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "config_set",
+      "target_handle": "tgt_instance_runtime_cache"
+    }
+  ],
+  "required_findings": [
+    "is client-memory overhead",
+    "explicit client list enumeration",
+    "does not mean 72k clients"
+  ],
+  "forbidden_claims": [
+    "clients.normal is the client count",
+    "72696 connected clients"
+  ],
+  "required_sources": [],
+  "expected_routing_decision": "chat"
+}

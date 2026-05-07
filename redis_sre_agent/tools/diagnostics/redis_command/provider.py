@@ -175,8 +175,9 @@ class RedisCommandToolProvider(ToolProvider):
                 description=(
                     "Execute Redis INFO command to get server statistics and information. "
                     "Use this to check Redis server status, memory usage, client connections, "
-                    "replication status, and performance metrics. Can query specific sections "
-                    "or get all information."
+                    "replication status, and performance metrics. For actual client counts, "
+                    "prefer the 'clients' section. Can query specific sections or get all "
+                    "information."
                 ),
                 capability=ToolCapability.DIAGNOSTICS,
                 parameters={
@@ -260,7 +261,8 @@ class RedisCommandToolProvider(ToolProvider):
                 description=(
                     "List connected Redis clients using CLIENT LIST. Use this to diagnose "
                     "connection issues, identify problematic clients, or check client "
-                    "connection details."
+                    "connection details. This is the definitive inventory of current client "
+                    "connections."
                 ),
                 capability=ToolCapability.DIAGNOSTICS,
                 parameters={
@@ -311,7 +313,10 @@ class RedisCommandToolProvider(ToolProvider):
                 description=(
                     "Get detailed Redis memory statistics using MEMORY STATS. Use this "
                     "for in-depth memory analysis including allocator stats, fragmentation, "
-                    "and memory breakdown by category."
+                    "and memory breakdown by category. Do not use this for client counts: "
+                    "fields such as clients.normal and clients.slaves are client-memory "
+                    "overhead in bytes, not numbers of connected clients. Use INFO clients "
+                    "or CLIENT LIST for counts."
                 ),
                 capability=ToolCapability.DIAGNOSTICS,
                 parameters={
@@ -673,6 +678,15 @@ class RedisCommandToolProvider(ToolProvider):
             return {
                 "status": "success",
                 "stats": result,
+                "interpretation_notes": [
+                    "MEMORY STATS reports memory-accounting metrics, not connection counts.",
+                    "Fields such as clients.normal and clients.slaves are client-related memory overhead in bytes.",
+                    "Use INFO clients or CLIENT LIST to measure current connected clients.",
+                ],
+                "canonical_sources": {
+                    "memory_breakdown": ["MEMORY STATS", "INFO memory"],
+                    "client_counts": ["INFO clients", "CLIENT LIST"],
+                },
             }
         except Exception as e:
             if _is_command_unavailable_error(e):

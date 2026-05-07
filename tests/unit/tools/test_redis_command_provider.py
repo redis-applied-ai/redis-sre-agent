@@ -121,6 +121,24 @@ class TestRedisCommandToolProviderSchemas:
         tool_names = [s.name for s in schemas]
         assert any("slowlog" in name for name in tool_names)
 
+    def test_tool_schemas_encode_client_count_semantics(self):
+        """Test that schema descriptions steer client counting to canonical commands."""
+        provider = RedisCommandToolProvider(connection_url="redis://localhost:6379")
+        schemas = provider.create_tool_schemas()
+
+        info_schema = next(schema for schema in schemas if schema.name.endswith("_info"))
+        client_list_schema = next(
+            schema for schema in schemas if schema.name.endswith("_client_list")
+        )
+        memory_stats_schema = next(
+            schema for schema in schemas if schema.name.endswith("_memory_stats")
+        )
+
+        assert "client counts" in info_schema.description.lower()
+        assert "definitive inventory" in client_list_schema.description.lower()
+        assert "do not use this for client counts" in memory_stats_schema.description.lower()
+        assert "clients.normal" in memory_stats_schema.description
+
 
 class TestRedisCommandToolProviderClient:
     """Test RedisCommandToolProvider client management."""
@@ -609,6 +627,13 @@ class TestRedisCommandToolProviderMemoryStats:
             assert result["status"] == "success"
             assert "stats" in result
             assert result["stats"]["peak.allocated"] == 1234567
+            assert "interpretation_notes" in result
+            assert "canonical_sources" in result
+            assert any("not connection counts" in note for note in result["interpretation_notes"])
+            assert result["canonical_sources"]["client_counts"] == [
+                "INFO clients",
+                "CLIENT LIST",
+            ]
 
     @pytest.mark.asyncio
     async def test_memory_stats_error(self):

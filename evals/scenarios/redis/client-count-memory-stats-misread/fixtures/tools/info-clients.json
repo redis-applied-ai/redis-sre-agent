@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "section": "clients",
+  "data": {
+    "connected_clients": 19,
+    "blocked_clients": 5,
+    "pubsub_clients": 2,
+    "maxclients": 10000
+  }
+}
