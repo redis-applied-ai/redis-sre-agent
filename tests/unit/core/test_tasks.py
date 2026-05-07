@@ -755,7 +755,6 @@ class TestProcessChatTurn:
         assert messages[0]["content"] == "Test response text"
         assert isinstance(messages[0]["content"], str)
 
-
 class TestProcessKnowledgeQuery:
     """Test process_knowledge_query task."""
 
@@ -1019,6 +1018,40 @@ class TestProcessKnowledgeQuery:
 
         _, kwargs = mock_agent.process_query.call_args
         assert kwargs["max_iterations"] == 5
+
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_caps_max_iterations_at_thirty(self):
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
+        mock_thread_manager.append_messages = AsyncMock()
+
+        agent_response = AgentResponse(response="Answer", search_results=[])
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(return_value=agent_response)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+            patch("redis_sre_agent.core.docket_tasks.settings.max_iterations", 50),
+        ):
+            await process_knowledge_query(
+                query="What are Redis best practices?",
+                task_id="task-123",
+                thread_id="thread-456",
+                user_id="user-1",
+            )
+
+        _, kwargs = mock_agent.process_query.call_args
+        assert kwargs["max_iterations"] == 30
 
 
 def test_thread_messages_to_conversation_history_filters_non_dialog_roles():
@@ -1457,6 +1490,68 @@ class TestProcessAgentTurn:
             tool_envelopes=[{"name": "redis_info", "status": "success"}],
             otel_trace_id=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_caps_chat_max_iterations_at_thirty(self):
+        mock_redis = AsyncMock()
+
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.messages = []
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="new-task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+
+        mock_chat_agent = AsyncMock()
+        mock_chat_agent.process_query = AsyncMock(
+            return_value=AgentResponse(response="Chat response", search_results=[])
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ),
+            patch("redis_sre_agent.core.docket_tasks.settings.max_iterations", 50),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            await process_agent_turn(
+                thread_id="thread-123",
+                message="Use your redis-cluster-health-check skill on that package",
+                task_id="provided-task-123",
+            )
+
+        _, kwargs = mock_chat_agent.process_query.call_args
+        assert kwargs["max_iterations"] == 30
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_approval_result_returns_awaiting_approval(self):
