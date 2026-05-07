@@ -11,9 +11,9 @@ from redis_sre_agent.agent.chat_agent import (
     CHAT_SYSTEM_PROMPT,
     ChatAgent,
     ChatAgentState,
-    _extract_final_response,
     get_chat_agent,
 )
+from redis_sre_agent.agent.helpers import extract_last_ai_response
 from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 from redis_sre_agent.core.clusters import RedisCluster, RedisClusterType
 from redis_sre_agent.core.instances import RedisInstance
@@ -296,7 +296,7 @@ class TestChatAgentResponseExtraction:
             SystemMessage(content="hidden system prompt"),
         ]
 
-        assert _extract_final_response(messages) == ""
+        assert extract_last_ai_response(messages, terminal_only=True) == ""
 
     def test_extract_final_response_does_not_reuse_prior_turn_ai_message(self):
         messages = [
@@ -306,7 +306,7 @@ class TestChatAgentResponseExtraction:
             AIMessage(content=""),
         ]
 
-        assert _extract_final_response(messages) == ""
+        assert extract_last_ai_response(messages, terminal_only=True) == ""
 
 
 class TestChatAgentWorkflowBuild:

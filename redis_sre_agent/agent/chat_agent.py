@@ -69,13 +69,6 @@ def _format_exception_message(exc: Exception) -> str:
     return type(exc).__name__
 
 
-def _extract_final_response(messages: List[BaseMessage]) -> str:
-    if not messages:
-        return ""
-
-    return extract_last_ai_response(messages, terminal_only=True)
-
-
 CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.
 
 ## Your Approach - ITERATIVE INVESTIGATION
@@ -893,7 +886,7 @@ User Query: {query}"""
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state.get("messages", [])
-                    response_text = _extract_final_response(messages)
+                    response_text = extract_last_ai_response(messages, terminal_only=True)
                     if response_text:
                         response = AgentResponse(
                             response=response_text,
@@ -994,7 +987,7 @@ User Query: {query}"""
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    response_text = _extract_final_response(messages)
+                    response_text = extract_last_ai_response(messages, terminal_only=True)
                     if response_text:
                         return AgentResponse(
                             response=response_text,
