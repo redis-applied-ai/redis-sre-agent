@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
@@ -19,7 +19,9 @@ except ModuleNotFoundError:  # pragma: no cover - runtime image fallback
 from redis_sre_agent.core.config import Settings
 
 
-def _first_non_empty(config: Settings, names: tuple[tuple[str, str], ...], default: str = "") -> str:
+def _first_non_empty(
+    config: Settings, names: tuple[tuple[str, str], ...], default: str = ""
+) -> str:
     for attr_name, env_name in names:
         value = _env_or_attr(config, attr_name, env_name)
         if value:
@@ -31,6 +33,8 @@ def _env_or_attr(config: Settings, attr_name: str, env_name: str, default: str =
     value = getattr(config, attr_name, "")
     if isinstance(value, str) and value.strip():
         return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
     return os.environ.get(env_name, default).strip()
 
 
@@ -41,9 +45,10 @@ def _slug_fragment(value: str) -> str:
 
 
 def _build_skills_workspace_id(*, tenant_id: str, project_id: str, agent_id: str) -> str:
-    readable = "-".join(
-        _slug_fragment(value) for value in (project_id, agent_id) if value.strip()
-    ) or "workspace"
+    readable = (
+        "-".join(_slug_fragment(value) for value in (project_id, agent_id) if value.strip())
+        or "workspace"
+    )
     digest = hashlib.sha1(f"{tenant_id}:{project_id}:{agent_id}".encode("utf-8")).hexdigest()[:12]
     return f"skills-{readable[:36]}-{digest}"
 
@@ -141,13 +146,12 @@ class AFSWorkspaceSkillBackend:
             raise ValueError("skills API timeout must be numeric") from exc
         gateway_url = os.environ.get("RAR_RUNTIME_AFS_MCP_URL", "").strip() or None
         gateway_token = os.environ.get("RAR_RUNTIME_AFS_MCP_TOKEN", "").strip() or None
-        workspace_id = (
-            os.environ.get("RAR_SKILLS_WORKSPACE_ID", "").strip()
-            or _build_skills_workspace_id(
-                tenant_id=tenant_id,
-                project_id=project_id,
-                agent_id=agent_id,
-            )
+        workspace_id = os.environ.get(
+            "RAR_SKILLS_WORKSPACE_ID", ""
+        ).strip() or _build_skills_workspace_id(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            agent_id=agent_id,
         )
         return cls(
             base_url=base_url.rstrip("/"),
@@ -177,7 +181,9 @@ class AFSWorkspaceSkillBackend:
             if query:
                 query_text = query.strip().lower()
                 raw_skills = [
-                    skill for skill in raw_skills if query_text in json.dumps(skill, sort_keys=True).lower()
+                    skill
+                    for skill in raw_skills
+                    if query_text in json.dumps(skill, sort_keys=True).lower()
                 ]
             paged = raw_skills[offset : offset + limit]
             normalized_skills = [
@@ -203,25 +209,30 @@ class AFSWorkspaceSkillBackend:
             params["offset"] = offset
         payload = await self._request_json("GET", path, params=params)
         data = self._data_payload(payload)
-        raw_skills = []
-        if query:
-            raw_skills = data.get("skills", [])
-        else:
-            raw_skills = data.get("skills", [])
+        raw_skills = data.get("skills", [])
         if not isinstance(raw_skills, list):
             raw_skills = []
-        normalized_skills = [
-            self._normalize_skill_summary(skill, matched_path=None)
-            for skill in raw_skills[offset : offset + limit] if isinstance(skill, Mapping)
-        ] if query else [
-            self._normalize_skill_summary(skill, matched_path=None)
-            for skill in raw_skills if isinstance(skill, Mapping)
-        ]
+        normalized_skills = (
+            [
+                self._normalize_skill_summary(skill, matched_path=None)
+                for skill in raw_skills[offset : offset + limit]
+                if isinstance(skill, Mapping)
+            ]
+            if query
+            else [
+                self._normalize_skill_summary(skill, matched_path=None)
+                for skill in raw_skills
+                if isinstance(skill, Mapping)
+            ]
+        )
         if query:
             matches = data.get("matches", [])
             if isinstance(matches, list):
                 by_identity = {
-                    (str(item.get("skillSlug", "")).strip(), str(item.get("version", "")).strip()): item
+                    (
+                        str(item.get("skillSlug", "")).strip(),
+                        str(item.get("version", "")).strip(),
+                    ): item
                     for item in matches
                     if isinstance(item, Mapping)
                 }
@@ -361,7 +372,10 @@ class AFSWorkspaceSkillBackend:
                 for item in skill.get("resources", [])
                 if isinstance(item, Mapping)
             }
-            if normalized_resource_path not in allowed_paths and normalized_resource_path != "SKILL.md":
+            if (
+                normalized_resource_path not in allowed_paths
+                and normalized_resource_path != "SKILL.md"
+            ):
                 return {
                     "skill_name": skill_name,
                     "resource_path": resource_path,
@@ -501,7 +515,9 @@ class AFSWorkspaceSkillBackend:
             return []
         entries = [entry for entry in raw_entries if isinstance(entry, Mapping)]
         if version and version != "latest":
-            entries = [entry for entry in entries if str(entry.get("version", "")).strip() == version]
+            entries = [
+                entry for entry in entries if str(entry.get("version", "")).strip() == version
+            ]
         return entries
 
     async def _gateway_skill_metadata(
@@ -512,9 +528,7 @@ class AFSWorkspaceSkillBackend:
     ) -> Mapping[str, Any] | None:
         entries = await self._gateway_catalog_entries(version=version)
         matches = [
-            entry
-            for entry in entries
-            if str(entry.get("skillSlug", "")).strip() == skill_name
+            entry for entry in entries if str(entry.get("skillSlug", "")).strip() == skill_name
         ]
         if not matches:
             return None
@@ -669,7 +683,11 @@ class AFSWorkspaceSkillBackend:
                 response.raise_for_status()
                 payload = response.json()
         else:
-            query = f"?{urlencode({k: v for k, v in (params or {}).items() if v is not None})}" if params else ""
+            query = (
+                f"?{urlencode({k: v for k, v in (params or {}).items() if v is not None})}"
+                if params
+                else ""
+            )
             payload = self._stdlib_request_json(
                 method,
                 f"{self.base_url.rstrip('/')}{path}{query}",

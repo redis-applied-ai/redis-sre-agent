@@ -21,7 +21,9 @@ class _FakeResponse:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise httpx.HTTPStatusError("bad status", request=self.request, response=httpx.Response(self.status_code))
+            raise httpx.HTTPStatusError(
+                "bad status", request=self.request, response=httpx.Response(self.status_code)
+            )
 
     def json(self) -> object:
         return self._payload
@@ -169,7 +171,9 @@ async def test_afs_workspace_skill_backend_query_and_error_paths() -> None:
     assert missing_resource["error"] == "Skill resource not found"
 
 
-def test_afs_workspace_skill_backend_from_settings_uses_env_fallbacks(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_afs_workspace_skill_backend_from_settings_uses_env_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("RAR_SKILLS_API_BASE_URL", "https://skills.internal")
     monkeypatch.setenv("RAR_SKILLS_API_TENANT_ID", "tenant_a")
     monkeypatch.setenv("RAR_SKILLS_API_PROJECT_ID", "proj_1")
@@ -236,9 +240,7 @@ def test_afs_workspace_skill_backend_gateway_endpoint_adds_missing_suffix() -> N
 
 def test_parse_event_stream_payload_extracts_jsonrpc_object() -> None:
     payload = _parse_event_stream_payload(
-        'event: message\n'
-        'data: {"jsonrpc":"2.0","id":"1","result":{"ok":true}}\n'
-        "\n"
+        'event: message\ndata: {"jsonrpc":"2.0","id":"1","result":{"ok":true}}\n\n'
     )
 
     assert payload["result"]["ok"] is True
