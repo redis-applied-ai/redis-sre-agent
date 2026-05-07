@@ -37,52 +37,6 @@ mcp_servers:
       analyzer_get_package_topology: *analyzer_read_tool
       analyzer_get_package_time_series: *analyzer_read_tool
       analyzer_export_package_json: *analyzer_read_tool
-  afs_gateway:
-    url: ${RAR_RUNTIME_AFS_MCP_URL}
-    transport: streamable_http
-    headers:
-      Authorization: "Bearer ${RAR_RUNTIME_AFS_MCP_TOKEN}"
-      x-rar-workspace-id: "${RAR_RUNTIME_AFS_WORKSPACE_ID}"
-      X-AFS-Agent-Id: redis-sre-agent
-      X-AFS-Client-Kind: mcp
-    tools:
-      workspace_current:
-        capability: utilities
-        action_kind: read
-      checkpoint_list:
-        capability: utilities
-        action_kind: read
-      checkpoint_create:
-        capability: utilities
-        action_kind: write
-      checkpoint_restore:
-        capability: utilities
-        action_kind: write
-      file_read:
-        capability: utilities
-        action_kind: read
-      file_lines:
-        capability: utilities
-        action_kind: read
-      file_list:
-        capability: utilities
-        action_kind: read
-      file_write:
-        capability: utilities
-        action_kind: write
-      file_create_exclusive:
-        capability: utilities
-        action_kind: write
-      file_replace:
-        capability: utilities
-        action_kind: write
-      file_insert:
-        capability: utilities
-        action_kind: write
-      file_delete_lines:
-        capability: utilities
-        action_kind: write
-
 # Runtime deployments rely on runner-provided RAK_* identity and auth env vars.
 # Skills are fetched through the runtime-owned Skills facade, not directly from AFS.
 skill_backend_kind: custom
