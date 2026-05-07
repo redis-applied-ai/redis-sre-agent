@@ -19,6 +19,7 @@ _REDIS_BOOTSTRAP_COMPLETE = False
 RESULT_MARKER = "__RAR_RESULT_JSON__:"
 TRACE_MARKER = "__RAR_TRACE_JSON__:"
 PROGRESS_PREFIX = "progress: "
+INTERNAL_MCP_CAPABILITIES_TOOL = "__rar_runtime_capabilities__"
 
 
 class TaskEmitter(Protocol):
@@ -571,6 +572,13 @@ async def _dispatch_mcp_tool(task_input: Mapping[str, Any]) -> dict[str, Any]:
     arguments = task_input.get("arguments", {})
     if not isinstance(arguments, Mapping):
         raise RuntimeError("mcp arguments must be an object")
+    if tool_name == INTERNAL_MCP_CAPABILITIES_TOOL:
+        return {
+            "ok": True,
+            "mode": "mcp",
+            "tool": tool_name,
+            "result": _build_mcp_capabilities(),
+        }
 
     registry = _load_mcp_tool_registry()
     tool = registry.get(tool_name)
