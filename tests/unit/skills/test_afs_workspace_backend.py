@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -204,6 +205,166 @@ def test_afs_workspace_skill_backend_from_settings_uses_runtime_env_fallbacks(
     assert backend.project_id == "proj_runtime"
     assert backend.agent_id == "agent_runtime"
     assert backend.bearer_token == "runtime-token"
+
+
+def test_afs_workspace_skill_backend_from_settings_uses_generic_skills_api_env_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKILLS_API_BASE_URL", "https://skills.internal")
+    monkeypatch.setenv("SKILLS_API_TENANT_ID", "tenant_generic")
+    monkeypatch.setenv("SKILLS_API_PROJECT_ID", "proj_generic")
+    monkeypatch.setenv("SKILLS_API_AGENT_ID", "agent_generic")
+    monkeypatch.setenv("SKILLS_API_TOKEN", "generic-token")
+    monkeypatch.setenv("SKILLS_API_TIMEOUT_SECONDS", "8.0")
+
+    backend = AFSWorkspaceSkillBackend.from_settings(
+        SimpleNamespace(skill_reference_char_budget=42)
+    )
+
+    assert backend.base_url == "https://skills.internal"
+    assert backend.tenant_id == "tenant_generic"
+    assert backend.project_id == "proj_generic"
+    assert backend.agent_id == "agent_generic"
+    assert backend.bearer_token == "generic-token"
+    assert backend.timeout_seconds == 8.0
+
+
+@pytest.mark.asyncio
+async def test_afs_workspace_skill_backend_list_prefers_api_when_gateway_catalog_is_empty() -> None:
+    responses = [
+        _FakeResponse(
+            {
+                "data": {
+                    "skills": [
+                        {
+                            "skillSlug": "redis-maintenance-triage",
+                            "displayName": "Redis Maintenance Triage",
+                            "description": "Check maintenance mode first.",
+                            "version": "v1",
+                            "resources": [{"path": "references/checklist.md"}],
+                        }
+                    ],
+                    "total": 1,
+                }
+            }
+        )
+    ]
+    client = _FakeAsyncClient(responses=responses)
+    backend = AFSWorkspaceSkillBackend(
+        base_url="https://skills.internal",
+        tenant_id="tenant_a",
+        project_id="proj_1",
+        agent_id="agent_1",
+        gateway_url="https://gateway.internal/mcp",
+        gateway_token="secret",
+        workspace_id="skills-proj-1-agent-1",
+        client_factory=lambda **kwargs: client,  # type: ignore[arg-type]
+    )
+    gateway_catalog = AsyncMock(return_value=[])
+    backend._gateway_catalog_entries = gateway_catalog  # type: ignore[method-assign]
+
+    result = await backend.list_skills(query=None, limit=10, offset=0, version="latest")
+
+    assert result["results_count"] == 1
+    assert result["skills"][0]["name"] == "redis-maintenance-triage"
+    gateway_catalog.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_afs_workspace_skill_backend_list_falls_back_to_gateway_when_api_is_empty() -> None:
+    responses = [
+        _FakeResponse(
+            {
+                "data": {
+                    "skills": [],
+                    "total": 0,
+                }
+            }
+        )
+    ]
+    client = _FakeAsyncClient(responses=responses)
+    backend = AFSWorkspaceSkillBackend(
+        base_url="https://skills.internal",
+        tenant_id="tenant_a",
+        project_id="proj_1",
+        agent_id="agent_1",
+        gateway_url="https://gateway.internal/mcp",
+        gateway_token="secret",
+        workspace_id="skills-proj-1-agent-1",
+        client_factory=lambda **kwargs: client,  # type: ignore[arg-type]
+    )
+    backend._gateway_catalog_entries = AsyncMock(  # type: ignore[method-assign]
+        return_value=[
+            {
+                "skillSlug": "redis-maintenance-triage",
+                "displayName": "Redis Maintenance Triage",
+                "description": "Check maintenance mode first.",
+                "version": "v1",
+                "resources": [{"path": "references/checklist.md"}],
+            }
+        ]
+    )
+
+    result = await backend.list_skills(query=None, limit=10, offset=0, version="latest")
+
+    assert result["results_count"] == 1
+    assert result["skills"][0]["name"] == "redis-maintenance-triage"
+    assert result["skills"][0]["backend_kind"] == "afs_workspace"
+
+
+@pytest.mark.asyncio
+async def test_afs_workspace_skill_backend_get_skill_and_resource_prefer_api_when_gateway_missing() -> None:
+    responses = [
+        _FakeResponse(
+            {
+                "data": {
+                    "skill": {
+                        "skillSlug": "redis-maintenance-triage",
+                        "displayName": "Redis Maintenance Triage",
+                        "description": "Check maintenance mode first.",
+                        "version": "v1",
+                        "entrypoint": {"path": "SKILL.md", "content": "# Triage\n"},
+                        "resources": [{"path": "references/checklist.md", "kind": "reference"}],
+                    }
+                }
+            }
+        ),
+        _FakeResponse(
+            {
+                "data": {
+                    "resource": {
+                        "path": "references/checklist.md",
+                        "version": "v1",
+                        "content": "Checklist guidance\n",
+                    }
+                }
+            }
+        ),
+    ]
+    client = _FakeAsyncClient(responses=responses)
+    backend = AFSWorkspaceSkillBackend(
+        base_url="https://skills.internal",
+        tenant_id="tenant_a",
+        project_id="proj_1",
+        agent_id="agent_1",
+        gateway_url="https://gateway.internal/mcp",
+        gateway_token="secret",
+        workspace_id="skills-proj-1-agent-1",
+        client_factory=lambda **kwargs: client,  # type: ignore[arg-type]
+    )
+    gateway_skill = AsyncMock(return_value=None)
+    backend._gateway_skill_metadata = gateway_skill  # type: ignore[method-assign]
+
+    skill = await backend.get_skill(skill_name="redis-maintenance-triage", version="latest")
+    resource = await backend.get_skill_resource(
+        skill_name="redis-maintenance-triage",
+        resource_path="references/checklist.md",
+        version="latest",
+    )
+
+    assert skill["content"] == "# Triage\n"
+    assert resource["content"] == "Checklist guidance\n"
+    gateway_skill.assert_not_awaited()
 
 
 def test_afs_workspace_skill_backend_gateway_endpoint_appends_mcp_once() -> None:
