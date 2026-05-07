@@ -54,7 +54,13 @@ def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
     if not skills:
         return []
 
-    lines = ["Skills you know:"]
+    lines = [
+        "Skills you know:",
+        "Skill inventory rules:",
+        "- This startup skill list is inventory only, not proof that you retrieved or followed a skill.",
+        "- If a listed skill matches the request, retrieve it with `get_skill` before claiming that you used, followed, or executed it.",
+        "- If you do not retrieve the skill, label any answer as general guidance instead of skill-backed execution.",
+    ]
     for skill in skills:
         name = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
         summary = str(skill.get("summary", "")).strip() or str(skill.get("description", "")).strip()

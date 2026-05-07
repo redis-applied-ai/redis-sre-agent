@@ -63,6 +63,9 @@ async def test_startup_context_memorizes_pinned_skills_and_tickets():
     assert "Memorize this pinned support ticket by heart" in context
     assert "Ticket finding: cluster-a had memory pressure" in context
     assert "Skills you know:" in context
+    assert "Skill inventory rules:" in context
+    assert "inventory only" in context
+    assert "`get_skill`" in context
     assert "General Memory Investigation: Use diagnostics then confirm workload." in context
 
 
