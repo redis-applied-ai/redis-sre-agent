@@ -77,7 +77,8 @@ jobs:
             ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag }}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_latest == 'true' }}
             type=sha,prefix=sha-
 
       - name: Free Disk Space (Ubuntu)
@@ -145,7 +146,8 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/redis-sre-agent-ui
           tags: |
             type=raw,value=${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag }}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_latest == 'true' }}
             type=sha,prefix=sha-
 
       - name: Build and push UI Docker image
@@ -237,7 +239,8 @@ jobs:
             ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ (github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag) }}-airgap
-            type=raw,value=airgap,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
+            type=raw,value=airgap,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=airgap,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_latest == 'true' }}
 
       - name: Build and push air-gap Docker image
         uses: docker/build-push-action@v5
@@ -294,7 +297,8 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/redis-sre-agent-ui
           tags: |
             type=raw,value=${{ (github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag) }}-airgap
-            type=raw,value=airgap,enable=${{ github.event_name == 'release' && !github.event.release.prerelease || github.event.inputs.push_latest }}
+            type=raw,value=airgap,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=airgap,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_latest == 'true' }}
 
       - name: Build and push air-gap UI Docker image
         uses: docker/build-push-action@v5
