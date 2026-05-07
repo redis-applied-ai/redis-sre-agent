@@ -59,6 +59,8 @@ def _env_or_attr(config: Settings, attr_name: str, env_name: str, default: str =
     value = getattr(config, attr_name, "")
     if isinstance(value, str) and value.strip():
         return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
     return os.environ.get(env_name, default).strip()
 
 
