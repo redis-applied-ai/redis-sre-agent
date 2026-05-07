@@ -19,7 +19,6 @@ except ModuleNotFoundError:  # pragma: no cover - runtime image fallback
 
 from redis_sre_agent.core.config import Settings
 
-
 _GATEWAY_QUERY_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _GATEWAY_QUERY_STOPWORDS = {
     "a",
@@ -47,20 +46,38 @@ _GATEWAY_QUERY_STOPWORDS = {
 }
 
 
-def _first_non_empty(config: Settings, names: tuple[tuple[str, str], ...], default: str = "") -> str:
+def _first_non_empty(
+    config: Settings,
+    names: tuple[tuple[str, str], ...],
+    default: str = "",
+    numeric_default: float | None = None,
+) -> str:
     for attr_name, env_name in names:
-        value = _env_or_attr(config, attr_name, env_name)
+        value = _env_or_attr(
+            config,
+            attr_name,
+            env_name,
+            numeric_default=numeric_default,
+        )
         if value:
             return value
     return default
 
 
-def _env_or_attr(config: Settings, attr_name: str, env_name: str, default: str = "") -> str:
+def _env_or_attr(
+    config: Settings,
+    attr_name: str,
+    env_name: str,
+    default: str = "",
+    numeric_default: float | None = None,
+) -> str:
     value = getattr(config, attr_name, "")
     if isinstance(value, str) and value.strip():
         return value.strip()
     if isinstance(value, (int, float)):
-        return str(value)
+        model_fields_set = getattr(config, "model_fields_set", set())
+        if attr_name in model_fields_set or numeric_default is None or value != numeric_default:
+            return str(value)
     return os.environ.get(env_name, default).strip()
 
 
@@ -71,9 +88,10 @@ def _slug_fragment(value: str) -> str:
 
 
 def _build_skills_workspace_id(*, tenant_id: str, project_id: str, agent_id: str) -> str:
-    readable = "-".join(
-        _slug_fragment(value) for value in (project_id, agent_id) if value.strip()
-    ) or "workspace"
+    readable = (
+        "-".join(_slug_fragment(value) for value in (project_id, agent_id) if value.strip())
+        or "workspace"
+    )
     digest = hashlib.sha1(f"{tenant_id}:{project_id}:{agent_id}".encode("utf-8")).hexdigest()[:12]
     return f"skills-{readable[:36]}-{digest}"
 
@@ -173,6 +191,7 @@ class AFSWorkspaceSkillBackend:
                 ("skills_api_timeout_seconds", "SKILLS_API_TIMEOUT_SECONDS"),
             ),
             default="15",
+            numeric_default=15.0,
         )
         try:
             timeout_seconds = float(timeout_raw)
@@ -198,14 +217,20 @@ class AFSWorkspaceSkillBackend:
         distance_threshold: float | None = 0.8,
     ) -> dict[str, Any]:
         del distance_threshold
+        if self._use_gateway():
+            return await self._list_skills_via_gateway(
+                query=query,
+                limit=limit,
+                offset=offset,
+                version=version,
+            )
         return await self._list_skills_via_api(
-            query=query,
-            limit=limit,
-            offset=offset,
-            version=version,
+            query=query, limit=limit, offset=offset, version=version
         )
 
     async def get_skill(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
+        if self._use_gateway():
+            return await self._get_skill_via_gateway(skill_name=skill_name, version=version)
         return await self._get_skill_via_api(skill_name=skill_name, version=version)
 
     async def get_skill_resource(
@@ -215,6 +240,12 @@ class AFSWorkspaceSkillBackend:
         resource_path: str,
         version: str | None,
     ) -> dict[str, Any]:
+        if self._use_gateway():
+            return await self._get_skill_resource_via_gateway(
+                skill_name=skill_name,
+                resource_path=resource_path,
+                version=version,
+            )
         return await self._get_skill_resource_via_api(
             skill_name=skill_name,
             resource_path=resource_path,
@@ -243,20 +274,27 @@ class AFSWorkspaceSkillBackend:
         raw_skills = data.get("skills", [])
         if not isinstance(raw_skills, list):
             raw_skills = []
-        normalized_skills = [
-            self._normalize_skill_summary(skill, matched_path=None)
-            for skill in raw_skills[offset : offset + limit]
-            if isinstance(skill, Mapping)
-        ] if query else [
-            self._normalize_skill_summary(skill, matched_path=None)
-            for skill in raw_skills
-            if isinstance(skill, Mapping)
-        ]
+        normalized_skills = (
+            [
+                self._normalize_skill_summary(skill, matched_path=None)
+                for skill in raw_skills[offset : offset + limit]
+                if isinstance(skill, Mapping)
+            ]
+            if query
+            else [
+                self._normalize_skill_summary(skill, matched_path=None)
+                for skill in raw_skills
+                if isinstance(skill, Mapping)
+            ]
+        )
         if query:
             matches = data.get("matches", [])
             if isinstance(matches, list):
                 by_identity = {
-                    (str(item.get("skillSlug", "")).strip(), str(item.get("version", "")).strip()): item
+                    (
+                        str(item.get("skillSlug", "")).strip(),
+                        str(item.get("version", "")).strip(),
+                    ): item
                     for item in matches
                     if isinstance(item, Mapping)
                 }
@@ -328,9 +366,7 @@ class AFSWorkspaceSkillBackend:
             return list(skills)
 
         direct_matches = [
-            skill
-            for skill in skills
-            if query_text in json.dumps(skill, sort_keys=True).lower()
+            skill for skill in skills if query_text in json.dumps(skill, sort_keys=True).lower()
         ]
         if direct_matches:
             return direct_matches
@@ -365,7 +401,9 @@ class AFSWorkspaceSkillBackend:
         skill = data.get("skill")
         if not isinstance(skill, Mapping):
             return {"skill_name": skill_name, "error": "Skill not found"}
-        return self._serialize_skill_payload(skill, default_skill_name=skill_name, default_version=version)
+        return self._serialize_skill_payload(
+            skill, default_skill_name=skill_name, default_version=version
+        )
 
     async def _get_skill_via_gateway(
         self,
@@ -566,8 +604,10 @@ class AFSWorkspaceSkillBackend:
             elif normalized["kind"] == "asset":
                 assets.append(normalized)
         return {
-            "skill_name": str(skill.get("skillSlug", default_skill_name)).strip() or default_skill_name,
-            "title": str(skill.get("displayName", default_skill_name)).strip() or default_skill_name,
+            "skill_name": str(skill.get("skillSlug", default_skill_name)).strip()
+            or default_skill_name,
+            "title": str(skill.get("displayName", default_skill_name)).strip()
+            or default_skill_name,
             "summary": str(skill.get("description", "")).strip(),
             "version": str(skill.get("version", default_version or "v1")).strip() or "v1",
             "content": entrypoint_content,
@@ -606,7 +646,9 @@ class AFSWorkspaceSkillBackend:
             return []
         entries = [entry for entry in raw_entries if isinstance(entry, Mapping)]
         if version and version != "latest":
-            entries = [entry for entry in entries if str(entry.get("version", "")).strip() == version]
+            entries = [
+                entry for entry in entries if str(entry.get("version", "")).strip() == version
+            ]
         return entries
 
     async def _gateway_skill_metadata(
@@ -617,9 +659,7 @@ class AFSWorkspaceSkillBackend:
     ) -> Mapping[str, Any] | None:
         entries = await self._gateway_catalog_entries(version=version)
         matches = [
-            entry
-            for entry in entries
-            if str(entry.get("skillSlug", "")).strip() == skill_name
+            entry for entry in entries if str(entry.get("skillSlug", "")).strip() == skill_name
         ]
         if not matches:
             return None
@@ -774,7 +814,11 @@ class AFSWorkspaceSkillBackend:
                 response.raise_for_status()
                 payload = response.json()
         else:
-            query = f"?{urlencode({k: v for k, v in (params or {}).items() if v is not None})}" if params else ""
+            query = (
+                f"?{urlencode({k: v for k, v in (params or {}).items() if v is not None})}"
+                if params
+                else ""
+            )
             payload = self._stdlib_request_json(
                 method,
                 f"{self.base_url.rstrip('/')}{path}{query}",
