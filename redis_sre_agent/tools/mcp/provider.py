@@ -198,6 +198,7 @@ class MCPToolProvider(ToolProvider):
                 )
             elif self._server_config.url:
                 # URL-based transport (SSE or Streamable HTTP)
+                expanded_url = os.path.expandvars(self._server_config.url)
                 # Expand environment variables in headers (e.g., ${GITHUB_TOKEN})
                 headers = None
                 if self._server_config.headers:
@@ -214,7 +215,7 @@ class MCPToolProvider(ToolProvider):
                     # Legacy SSE transport
                     logger.info(f"Using SSE transport for '{self._server_name}'")
                     read_stream, write_stream = await self._exit_stack.enter_async_context(
-                        sse_client(self._server_config.url, headers=headers)
+                        sse_client(expanded_url, headers=headers)
                     )
                 else:
                     # Streamable HTTP transport (default, works with GitHub remote MCP, etc.)
@@ -224,7 +225,7 @@ class MCPToolProvider(ToolProvider):
                         write_stream,
                         _get_session_id,
                     ) = await self._exit_stack.enter_async_context(
-                        streamablehttp_client(self._server_config.url, headers=headers)
+                        streamablehttp_client(expanded_url, headers=headers)
                     )
             else:
                 raise ValueError(

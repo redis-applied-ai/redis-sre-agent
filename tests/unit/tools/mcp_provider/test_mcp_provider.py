@@ -1,5 +1,6 @@
 """Unit tests for MCP tool provider."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -462,3 +463,58 @@ class TestMCPToolProviderAsync:
         assert tools[0].metadata.action_kind is ToolActionKind.READ
         assert result["status"] == "success"
         assert result["data"]["series"] == "memory_pressure"
+
+    @pytest.mark.asyncio
+    async def test_connect_expands_environment_variables_in_url_and_headers(self):
+        """Configured MCP URLs should expand ${VAR} placeholders before transport setup."""
+        config = MCPServerConfig(
+            url="${TEST_MCP_URL}",
+            transport="streamable_http",
+            headers={"Authorization": "Bearer ${TEST_MCP_TOKEN}"},
+        )
+        provider = MCPToolProvider(server_name="afs_gateway", server_config=config, use_pool=False)
+        seen: dict[str, object] = {}
+
+        @asynccontextmanager
+        async def _fake_streamablehttp_client(url: str, headers: dict[str, str] | None = None):
+            seen["url"] = url
+            seen["headers"] = headers
+            yield ("read-stream", "write-stream", lambda: None)
+
+        class _FakeSession:
+            async def __aenter__(self) -> "_FakeSession":
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            async def initialize(self) -> None:
+                return None
+
+            async def list_tools(self) -> SimpleNamespace:
+                return SimpleNamespace(tools=[])
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TEST_MCP_URL": "http://afs-gateway.example/mcp",
+                    "TEST_MCP_TOKEN": "secret-token",
+                },
+                clear=False,
+            ),
+            patch(
+                "redis_sre_agent.tools.mcp.provider.streamablehttp_client",
+                _fake_streamablehttp_client,
+            ),
+            patch(
+                "redis_sre_agent.tools.mcp.provider.ClientSession",
+                side_effect=lambda read_stream, write_stream: _FakeSession(),
+            ),
+        ):
+            await provider._connect()
+
+        assert seen == {
+            "url": "http://afs-gateway.example/mcp",
+            "headers": {"Authorization": "Bearer secret-token"},
+        }
