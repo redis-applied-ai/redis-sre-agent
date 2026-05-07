@@ -42,8 +42,12 @@ ENV UV_LINK_MODE=copy
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
 # Install build dependencies (no network-fetching scripts)
+# build-essential/pkg-config keep uv installs resilient when a dependency
+# falls back to building a native extension from source.
 RUN apt-get update && apt-get install -y \
+    build-essential \
     git \
+    pkg-config \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
