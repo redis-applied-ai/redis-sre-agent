@@ -61,7 +61,7 @@ def test_chat_prompt_requires_explicit_skill_retrieval_and_scope_evidence():
     assert "inventory only" in prompt
     assert "`get_skill`" in CHAT_SYSTEM_PROMPT
     assert "health check skill" in prompt
-    assert "current health is unknown" in prompt
+    assert "response as satisfying a skill" in prompt
     assert "captured package contents" in prompt
     assert "hostname mention by itself is not proof" in prompt
 
@@ -84,7 +84,7 @@ def test_sre_prompt_requires_explicit_skill_retrieval_and_scope_evidence():
     assert "inventory only" in prompt
     assert "`get_skill`" in SRE_SYSTEM_PROMPT
     assert "health-check skill" in prompt
-    assert "support-package summary as completed work" in prompt
+    assert "response as satisfying a skill" in prompt
     assert "captured evidence, not current live state" in prompt
     assert "resolve the target before making live-state claims" in prompt
 

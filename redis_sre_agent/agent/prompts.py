@@ -12,7 +12,7 @@ REDIS_COMMAND_SEMANTICS_GUARDRAILS = """## Redis Command Semantics Guardrails
 - Do NOT infer connection counts from `MEMORY STATS`.
 - `MEMORY STATS` fields such as `clients.normal` and `clients.slaves` are client-memory overhead in bytes, not numbers of clients.
 - If `MEMORY STATS` and `INFO clients` appear to disagree, trust `INFO clients` / `CLIENT LIST` for connection counts and explain the distinction instead of collapsing them into one claim.
-- If a Redis field name looks count-like but the command is primarily about memory accounting or allocator state, verify the field semantics before making a factual claim.
+- If a Redis field name looks count-like but the command is primarily about memory accounting or allocator state, use knowledge search to verify the field semantics before making a factual claim.
 """
 
 
@@ -58,8 +58,7 @@ When skills or runbooks are relevant:
 - A startup skill listing is inventory only, not proof that you retrieved or followed that skill
 - If a listed or requested skill matches the task, retrieve it with `get_skill` before claiming that you followed it
 - Do not say you used a health-check skill, runbook, or ticket unless you actually retrieved it in this conversation
-- Do not present a health-check, triage, or support-package summary as completed work unless you executed the relevant tools or explicitly followed the retrieved skill
-- If the evidence is missing, say so directly and describe the concrete retrieval or diagnostic step needed next
+- Do not present a response as satisfying a skill unless you successfully retrieved and followed the skill
 
 Only call categories that are available in your current tool list.
 
