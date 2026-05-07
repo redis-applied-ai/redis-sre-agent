@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import json
+import os
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
@@ -17,6 +18,33 @@ except ModuleNotFoundError:  # pragma: no cover - runtime image fallback
     httpx = None  # type: ignore[assignment]
 
 from redis_sre_agent.core.config import Settings
+
+
+_GATEWAY_QUERY_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+_GATEWAY_QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "available",
+    "for",
+    "from",
+    "give",
+    "in",
+    "just",
+    "me",
+    "names",
+    "now",
+    "of",
+    "right",
+    "show",
+    "skill",
+    "skills",
+    "the",
+    "to",
+    "what",
+    "you",
+}
 
 
 def _first_non_empty(config: Settings, names: tuple[tuple[str, str], ...], default: str = "") -> str:
@@ -360,10 +388,12 @@ class AFSWorkspaceSkillBackend:
     ) -> dict[str, Any]:
         raw_skills = await self._gateway_catalog_entries(version=version)
         if query:
-            query_text = query.strip().lower()
-            raw_skills = [
-                skill for skill in raw_skills if query_text in json.dumps(skill, sort_keys=True).lower()
-            ]
+            matched_skills = self._filter_gateway_skills(raw_skills, query=query)
+            # The gateway only exposes catalog reads, not semantic search. When
+            # a free-form prompt does not keyword-match the catalog, fall back to
+            # discovery instead of claiming that no skills exist.
+            if matched_skills:
+                raw_skills = matched_skills
         paged = raw_skills[offset : offset + limit]
         normalized_skills = [
             self._normalize_skill_summary(skill, matched_path=None) for skill in paged
@@ -377,6 +407,39 @@ class AFSWorkspaceSkillBackend:
             "total_fetched": len(raw_skills),
             "skills": normalized_skills,
         }
+
+    def _filter_gateway_skills(
+        self,
+        skills: list[Mapping[str, Any]],
+        *,
+        query: str,
+    ) -> list[Mapping[str, Any]]:
+        query_text = query.strip().lower()
+        if not query_text:
+            return list(skills)
+
+        direct_matches = [
+            skill
+            for skill in skills
+            if query_text in json.dumps(skill, sort_keys=True).lower()
+        ]
+        if direct_matches:
+            return direct_matches
+
+        query_tokens = [
+            token
+            for token in _GATEWAY_QUERY_TOKEN_RE.findall(query_text)
+            if len(token) >= 3 and token not in _GATEWAY_QUERY_STOPWORDS
+        ]
+        if not query_tokens:
+            return []
+
+        token_matches: list[Mapping[str, Any]] = []
+        for skill in skills:
+            haystack = json.dumps(skill, sort_keys=True).lower()
+            if any(token in haystack for token in query_tokens):
+                token_matches.append(skill)
+        return token_matches
 
     async def _get_skill_via_api(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
         try:
