@@ -12,7 +12,7 @@ from redis_sre_agent.core.agent_memory import (
     LongTermSearchResult,
     WorkingMemoryResult,
 )
-from redis_sre_agent.evaluation.scenarios import EvalMemoryFixture, EvalMemoryRecord
+from redis_sre_agent.evaluation.scenarios import EvalMemoryFixture, EvalScenario
 
 
 def _stub_working_memory(context: str | None) -> Any:
@@ -114,7 +114,7 @@ def _force_enabled_init(self) -> None:
 
 
 @contextlib.asynccontextmanager
-async def inject_memory_fixture(scenario: Any) -> AsyncIterator[None]:
+async def inject_memory_fixture(scenario: "EvalScenario") -> AsyncIterator[None]:
     """Patch AgentMemoryService to serve fixture-backed memory for a scenario.
 
     No-ops when the scenario's memory fixture is entirely empty.

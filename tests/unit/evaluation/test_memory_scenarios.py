@@ -1,7 +1,5 @@
 import pytest
 from pydantic import ValidationError
-from types import SimpleNamespace
-from unittest.mock import patch
 
 from redis_sre_agent.core.agent_memory import (
     AgentMemoryService,
