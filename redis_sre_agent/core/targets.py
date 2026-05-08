@@ -46,6 +46,9 @@ from redis_sre_agent.targets.contracts import (
 logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+_HOSTNAME_RE = re.compile(
+    r"\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\b"
+)
 _ENV_ALIASES = {
     "prod": "production",
     "production": "production",
@@ -1089,6 +1092,11 @@ def _parse_query_hints(query: str) -> Dict[str, Any]:
     if tokens & _CLUSTER_HINTS:
         preferred_kinds.add("cluster")
     target_types = {_TYPE_HINTS[token] for token in tokens if token in _TYPE_HINTS}
+    hostname_terms = {
+        _normalize(match.group(0))
+        for match in _HOSTNAME_RE.finditer(normalized)
+        if "." in match.group(0)
+    }
     return {
         "normalized": normalized,
         "tokens": tokens,
@@ -1096,7 +1104,22 @@ def _parse_query_hints(query: str) -> Dict[str, Any]:
         "usages": usages,
         "preferred_kinds": preferred_kinds,
         "target_types": target_types,
+        "hostname_terms": hostname_terms,
     }
+
+
+def _exact_target_terms(doc: TargetCatalogDoc) -> set[str]:
+    """Return exact-match-safe identifiers for high-confidence discovery."""
+    values = {
+        doc.display_name,
+        doc.name,
+        doc.resource_id,
+        doc.monitoring_identifier,
+        doc.logging_identifier,
+        doc.redis_cloud_database_name,
+    }
+    values.update(doc.search_aliases)
+    return {normalized for value in values if (normalized := _normalize(value))}
 
 
 def _score_target_doc(
@@ -1109,6 +1132,7 @@ def _score_target_doc(
     hints = hints or _parse_query_hints(query)
     normalized = hints["normalized"]
     query_tokens = hints["tokens"]
+    hostname_terms = set(hints.get("hostname_terms") or [])
     reasons: List[str] = []
     score = 0.0
 
@@ -1116,6 +1140,14 @@ def _score_target_doc(
     alias_tokens = set()
     for alias in doc.search_aliases:
         alias_tokens.update(_tokenize(alias))
+
+    if hostname_terms:
+        exact_terms = _exact_target_terms(doc)
+        exact_hostname_matches = sorted(hostname_terms & exact_terms)
+        if not exact_hostname_matches:
+            return 0.0, []
+        score += 8.5
+        reasons.append(f"matched hostname={exact_hostname_matches[0]}")
 
     if normalized and normalized in {_normalize(doc.display_name), _normalize(doc.name)}:
         score += 8.0

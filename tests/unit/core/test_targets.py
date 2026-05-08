@@ -97,7 +97,7 @@ def test_build_target_doc_from_cluster_includes_base_capabilities():
 
 
 @pytest.mark.asyncio
-async def test_resolve_target_query_ranks_matching_environment_and_detects_ambiguity():
+async def test_resolve_target_query_requires_confirmation_for_fuzzy_queries():
     prod = TargetCatalogDoc(
         target_id="instance:redis-prod-checkout-cache",
         target_kind="instance",
@@ -129,7 +129,7 @@ async def test_resolve_target_query_ranks_matching_environment_and_detects_ambig
         "redis_sre_agent.core.targets.get_target_catalog",
         new=AsyncMock(return_value=[prod, stage]),
     ):
-        resolved = await resolve_target_query(query="prod checkout cache", allow_multiple=False)
+        resolved = await resolve_target_query(query="checkout-cache-prod", allow_multiple=False)
         ambiguous = await resolve_target_query(query="checkout cache", allow_multiple=False)
 
     assert resolved.status == "resolved"
@@ -148,7 +148,7 @@ async def test_resolve_target_query_ranks_matching_environment_and_detects_ambig
 
 
 @pytest.mark.asyncio
-async def test_resolve_target_query_resolves_single_included_candidate_below_three_points():
+async def test_resolve_target_query_requires_confirmation_for_single_fuzzy_candidate():
     low_score_match = TargetCatalogDoc(
         target_id="instance:redis-prod-checkout-cache",
         target_kind="instance",
@@ -169,8 +169,8 @@ async def test_resolve_target_query_resolves_single_included_candidate_below_thr
     ):
         resolved = await resolve_target_query(query="cache", allow_multiple=False)
 
-    assert resolved.status == "resolved"
-    assert resolved.clarification_required is False
+    assert resolved.status == "clarification_required"
+    assert resolved.clarification_required is True
     assert len(resolved.selected_matches) == 1
     assert resolved.selected_matches[0].resource_id == "redis-prod-checkout-cache"
 
@@ -217,10 +217,75 @@ async def test_resolve_target_query_parses_hints_once_and_avoids_alias_substring
         resolved = await resolve_target_query(query="checkout cache", allow_multiple=False)
 
     assert parse_hints.call_count == 1
-    assert resolved.status == "resolved"
+    assert resolved.status == "clarification_required"
+    assert resolved.clarification_required is True
     assert len(resolved.selected_matches) == 1
     assert resolved.selected_matches[0].resource_id == "checkout-cache"
     assert all(match.resource_id != "alias-only" for match in resolved.matches)
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_does_not_fuzzy_match_hostname_like_queries():
+    fuzzy_candidate = TargetCatalogDoc(
+        target_id="instance:fedex-redis-cache",
+        target_kind="instance",
+        resource_id="fedex-redis-cache",
+        display_name="fedex redis bo cache",
+        name="fedex-redis-bo-cache",
+        environment="test",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis"],
+        search_text="fedex redis bo cache",
+        search_aliases=[],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[fuzzy_candidate]),
+    ):
+        resolved = await resolve_target_query(
+            query="qas12-edc-bo.redis.fedex.com",
+            allow_multiple=False,
+        )
+
+    assert resolved.status == "no_match"
+    assert resolved.clarification_required is False
+    assert resolved.matches == []
+    assert resolved.selected_matches == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_hostname_like_queries_require_exact_identifier_match():
+    exact_candidate = TargetCatalogDoc(
+        target_id="instance:fedex-node",
+        target_kind="instance",
+        resource_id="fedex-node",
+        display_name="fedex redis node",
+        name="fedex-redis-node",
+        environment="test",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        monitoring_identifier="qas12-edc-bo.redis.fedex.com",
+        search_text="fedex redis node",
+        search_aliases=[],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[exact_candidate]),
+    ):
+        resolved = await resolve_target_query(
+            query="qas12-edc-bo.redis.fedex.com",
+            allow_multiple=False,
+        )
+
+    assert resolved.status == "resolved"
+    assert resolved.clarification_required is False
+    assert len(resolved.selected_matches) == 1
+    assert resolved.selected_matches[0].resource_id == "fedex-node"
+    assert resolved.matches[0].match_reasons[0] == "matched hostname=qas12-edc-bo.redis.fedex.com"
 
 
 @pytest.mark.asyncio
@@ -277,7 +342,8 @@ async def test_resolve_target_query_excludes_hint_tokens_from_token_overlap():
             allow_multiple=False,
         )
 
-    assert resolved.status == "resolved"
+    assert resolved.status == "clarification_required"
+    assert resolved.clarification_required is True
     assert resolved.selected_matches[0].resource_id == "enterprise-cache"
     assert all(
         not reason.startswith("matched tokens=")

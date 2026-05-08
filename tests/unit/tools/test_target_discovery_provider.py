@@ -38,6 +38,7 @@ async def test_resolve_redis_targets_uses_shared_binding_contract():
     provider._manager = manager
 
     resolution = MagicMock()
+    resolution.status = "resolved"
     resolution.selected_matches = [
         ResolvedTargetMatch(
             target_kind="instance",
@@ -167,6 +168,60 @@ async def test_resolve_redis_targets_without_attachment_uses_existing_toolset_ge
     mock_bind.assert_not_awaited()
     assert payload["attached_target_handles"] == []
     assert payload["toolset_generation"] == 4
+
+
+@pytest.mark.asyncio
+async def test_resolve_redis_targets_does_not_attach_when_confirmation_is_required():
+    provider = TargetDiscoveryToolProvider()
+    manager = MagicMock()
+    manager.thread_id = "thread-1"
+    manager.task_id = "task-1"
+    manager.user_id = "user-1"
+    manager.get_toolset_generation.return_value = 6
+    provider._manager = manager
+
+    resolution = MagicMock()
+    resolution.status = "clarification_required"
+    resolution.selected_matches = [
+        ResolvedTargetMatch(
+            target_kind="instance",
+            resource_id="redis-prod-checkout-cache",
+            display_name="checkout-cache-prod",
+            environment="production",
+            target_type="oss_single",
+            capabilities=["redis", "diagnostics"],
+            confidence=0.72,
+            match_reasons=["matched tokens=checkout,cache"],
+        )
+    ]
+    resolution.model_dump.return_value = {
+        "status": "clarification_required",
+        "clarification_required": True,
+        "matches": [],
+        "attached_target_handles": [],
+        "toolset_generation": 0,
+    }
+
+    with (
+        patch(
+            "redis_sre_agent.tools.target_discovery.provider.resolve_target_query",
+            new=AsyncMock(return_value=resolution),
+        ) as mock_resolve,
+        patch(
+            "redis_sre_agent.tools.target_discovery.provider.bind_target_matches",
+            new=AsyncMock(),
+        ) as mock_bind,
+    ):
+        payload = await provider.resolve_redis_targets(
+            query="checkout cache",
+            attach_tools=True,
+        )
+
+    mock_resolve.assert_awaited_once()
+    mock_bind.assert_not_awaited()
+    assert payload["status"] == "clarification_required"
+    assert payload["attached_target_handles"] == []
+    assert payload["toolset_generation"] == 6
 
 
 @pytest.mark.asyncio
