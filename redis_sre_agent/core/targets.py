@@ -1183,13 +1183,21 @@ def _score_target_doc(
     for alias in doc.search_aliases:
         alias_tokens.update(_tokenize(alias))
 
+    exact_target_mentioned = _query_mentions_exact_target(doc, hints)
     if hostname_terms:
         exact_terms = _exact_target_terms(doc)
         exact_hostname_matches = sorted(hostname_terms & exact_terms)
-        if not exact_hostname_matches:
+        if not exact_hostname_matches and not exact_target_mentioned:
             return 0.0, []
-        score += 8.5
-        reasons.append(f"matched hostname={exact_hostname_matches[0]}")
+        if exact_hostname_matches:
+            score += 8.5
+            reasons.append(f"matched hostname={exact_hostname_matches[0]}")
+    else:
+        exact_hostname_matches = []
+
+    if exact_target_mentioned and not exact_hostname_matches:
+        score += 7.5
+        reasons.append("matched exact target reference")
 
     if normalized and normalized in {_normalize(doc.display_name), _normalize(doc.name)}:
         score += 8.0

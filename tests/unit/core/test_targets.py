@@ -409,6 +409,53 @@ async def test_resolve_target_query_allow_multiple_requires_confirmation_for_des
 
 
 @pytest.mark.asyncio
+async def test_resolve_target_query_allow_multiple_keeps_exact_non_hostname_match_with_hostname():
+    host_target = TargetCatalogDoc(
+        target_id="instance:redis-prod-router",
+        target_kind="instance",
+        resource_id="redis-prod-router",
+        display_name="router-prod",
+        name="router-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        monitoring_identifier="redis-1.prod.example.com",
+        search_text="router prod production cache",
+        search_aliases=[],
+    )
+    cache_target = TargetCatalogDoc(
+        target_id="instance:redis-prod-checkout-cache",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        name="checkout-cache-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text="checkout cache prod production cache",
+        search_aliases=["checkout"],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[host_target, cache_target]),
+    ):
+        resolved = await resolve_target_query(
+            query="compare redis-1.prod.example.com with checkout-cache-prod",
+            allow_multiple=True,
+        )
+
+    assert resolved.status == "resolved"
+    assert resolved.clarification_required is False
+    assert {match.resource_id for match in resolved.selected_matches} == {
+        "redis-prod-router",
+        "redis-prod-checkout-cache",
+    }
+
+
+@pytest.mark.asyncio
 async def test_resolve_target_query_keeps_token_overlap_from_all_aliases():
     target = TargetCatalogDoc(
         target_id="instance:prod-cache",

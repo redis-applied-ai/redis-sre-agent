@@ -8,6 +8,27 @@ from .contracts import DiscoveryCandidate, DiscoveryRequest, DiscoveryResponse
 from .registry import get_target_integration_registry
 
 
+def _select_catalog_candidates(
+    limited: List[DiscoveryCandidate],
+    exact_ranked: List[DiscoveryCandidate],
+    *,
+    allow_multiple: bool,
+    max_results: int,
+) -> tuple[List[DiscoveryCandidate], bool]:
+    selection_limit = min(3, max_results)
+
+    if exact_ranked:
+        if allow_multiple:
+            return exact_ranked[:selection_limit], False
+
+        top_exact = exact_ranked[0]
+        if len(exact_ranked) > 1 and exact_ranked[1].score >= top_exact.score - 0.75:
+            return exact_ranked[:selection_limit], True
+        return [top_exact], False
+
+    return limited[:selection_limit], True
+
+
 class RedisCatalogDiscoveryBackend:
     """Resolve Redis targets from the built-in target catalog."""
 
@@ -73,26 +94,12 @@ class RedisCatalogDiscoveryBackend:
         if not limited:
             return DiscoveryResponse(status="no_match")
 
-        selected: List[DiscoveryCandidate] = []
-        clarification_required = False
-
-        if exact_ranked:
-            top_exact = exact_ranked[0]
-            if request.allow_multiple:
-                # Auto-binding multiple live targets is only safe when each target is
-                # explicitly named in the query; descriptive comparisons stay in
-                # clarification mode to avoid silent misbinding.
-                selected = exact_ranked[: min(3, request.max_results)]
-            elif len(exact_ranked) > 1 and exact_ranked[1].score >= top_exact.score - 0.75:
-                clarification_required = True
-                selected = exact_ranked[: min(3, request.max_results)]
-            else:
-                selected = [top_exact]
-        else:
-            # Suggest the strongest candidates, but do not auto-bind live targets from
-            # fuzzy or partial text, including descriptive multi-target requests.
-            clarification_required = True
-            selected = limited[: min(3, request.max_results)]
+        selected, clarification_required = _select_catalog_candidates(
+            limited,
+            exact_ranked,
+            allow_multiple=request.allow_multiple,
+            max_results=request.max_results,
+        )
 
         return DiscoveryResponse(
             status=(
