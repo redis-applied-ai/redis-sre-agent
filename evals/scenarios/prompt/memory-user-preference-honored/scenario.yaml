@@ -6,7 +6,7 @@ description: >
 provenance:
   source_kind: synthetic
   source_pack: prompt-core
-  source_pack_version: 2026-05-08
+  source_pack_version: 2026-04-14
   derived_from:
     - redis_sre_agent.evaluation.fake_memory.FakeMemorySession
     - redis_sre_agent.evaluation.fake_memory.inject_memory_fixture
@@ -49,3 +49,6 @@ memory:
 expectations:
   required_findings:
     - remediation
+  forbidden_claims:
+    - "before remediation, let's diagnose"
+    - "first, let's look at root cause"

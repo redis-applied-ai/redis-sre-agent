@@ -1,9 +1,4 @@
 {
-  "required_tool_calls": [],
-  "forbidden_tool_calls": [],
-  "required_findings": [
-    "remediation"
-  ],
-  "forbidden_claims": [],
-  "required_sources": []
+  "required_findings": ["remediation"],
+  "forbidden_claims": ["before remediation, let's diagnose", "first, let's look at root cause"]
 }
