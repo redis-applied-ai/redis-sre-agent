@@ -79,6 +79,9 @@ class RedisCatalogDiscoveryBackend:
         if exact_ranked:
             top_exact = exact_ranked[0]
             if request.allow_multiple:
+                # Auto-binding multiple live targets is only safe when each target is
+                # explicitly named in the query; descriptive comparisons stay in
+                # clarification mode to avoid silent misbinding.
                 selected = exact_ranked[: min(3, request.max_results)]
             elif len(exact_ranked) > 1 and exact_ranked[1].score >= top_exact.score - 0.75:
                 clarification_required = True
@@ -86,6 +89,8 @@ class RedisCatalogDiscoveryBackend:
             else:
                 selected = [top_exact]
         else:
+            # Suggest the strongest candidates, but do not auto-bind live targets from
+            # fuzzy or partial text, including descriptive multi-target requests.
             clarification_required = True
             selected = limited[: min(3, request.max_results)]
 

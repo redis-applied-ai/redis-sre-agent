@@ -363,6 +363,52 @@ async def test_resolve_target_query_allow_multiple_uses_exact_mentions_inside_co
 
 
 @pytest.mark.asyncio
+async def test_resolve_target_query_allow_multiple_requires_confirmation_for_descriptive_query():
+    prod = TargetCatalogDoc(
+        target_id="instance:redis-prod-checkout-cache",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        name="checkout-cache-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text="checkout cache prod production cache",
+        search_aliases=["checkout"],
+    )
+    stage = TargetCatalogDoc(
+        target_id="instance:redis-stage-checkout-cache",
+        target_kind="instance",
+        resource_id="redis-stage-checkout-cache",
+        display_name="checkout-cache-stage",
+        name="checkout-cache-stage",
+        environment="staging",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text="checkout cache stage staging cache",
+        search_aliases=["checkout"],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[prod, stage]),
+    ):
+        resolved = await resolve_target_query(
+            query="compare prod checkout against stage checkout",
+            allow_multiple=True,
+        )
+
+    assert resolved.status == "clarification_required"
+    assert resolved.clarification_required is True
+    assert [match.resource_id for match in resolved.selected_matches] == [
+        "redis-prod-checkout-cache",
+        "redis-stage-checkout-cache",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_resolve_target_query_keeps_token_overlap_from_all_aliases():
     target = TargetCatalogDoc(
         target_id="instance:prod-cache",
