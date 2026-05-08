@@ -17,6 +17,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from opentelemetry import trace
 
+from ...core.llm_request_guard import guarded_ainvoke
 from ..helpers import log_preflight_messages, sanitize_messages_for_llm
 from ..models import CorrectionResult
 
@@ -53,7 +54,11 @@ def build_safety_fact_corrector(
         if memoize:
             resp = await memoize("corrector_llm", base_llm, messages)
         else:
-            resp = await base_llm.ainvoke(messages)
+            resp = await guarded_ainvoke(
+                base_llm,
+                messages,
+                request_kind="safety_fact_corrector.loop",
+            )
         out: CorrectorState = {
             "messages": messages + [resp],
             "budget": int(state.get("budget", max_tool_steps)),
@@ -115,7 +120,11 @@ def build_safety_fact_corrector(
         if memoize:
             rec = await memoize("corrector_synth", structured_llm, [sys, human])
         else:
-            rec = await structured_llm.ainvoke([sys, human])
+            rec = await guarded_ainvoke(
+                structured_llm,
+                [sys, human],
+                request_kind="safety_fact_corrector.synth",
+            )
         result = rec if isinstance(rec, dict) else rec.model_dump()
         return {**state, "result": result}
 

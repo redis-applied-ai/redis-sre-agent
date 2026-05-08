@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from ..core.llm_helpers import create_mini_llm
+from ..core.llm_request_guard import guarded_ainvoke
 from .scenarios import EvalScenario
 
 logger = logging.getLogger(__name__)
@@ -262,7 +263,11 @@ Be rigorous in your evaluation. Technical accuracy is paramount - any Redis misc
                 {"role": "user", "content": evaluation_prompt},
             ]
 
-            response = await self.llm.ainvoke(messages)
+            response = await guarded_ainvoke(
+                self.llm,
+                messages,
+                request_kind="evaluation.judge",
+            )
 
             # Parse judge response
             try:

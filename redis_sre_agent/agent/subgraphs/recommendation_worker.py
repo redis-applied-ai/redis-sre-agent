@@ -17,6 +17,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from opentelemetry import trace
 
+from ...core.llm_request_guard import guarded_ainvoke
 from ..helpers import log_preflight_messages, sanitize_messages_for_llm
 from ..models import Recommendation
 
@@ -65,7 +66,11 @@ def build_recommendation_worker(
         if memoize:
             resp = await memoize("rec_worker_llm", base_llm, messages)
         else:
-            resp = await base_llm.ainvoke(messages)
+            resp = await guarded_ainvoke(
+                base_llm,
+                messages,
+                request_kind="recommendation_worker.loop",
+            )
         out: RecState = {
             "messages": messages + [resp],
             "budget": int(state.get("budget", max_tool_steps)),
@@ -143,7 +148,11 @@ def build_recommendation_worker(
         if memoize:
             rec = await memoize("rec_worker_synth", structured_llm, [sys, human])
         else:
-            rec = await structured_llm.ainvoke([sys, human])
+            rec = await guarded_ainvoke(
+                structured_llm,
+                [sys, human],
+                request_kind="recommendation_worker.synth",
+            )
         # rec is already a pydantic model or compatible dict
         if isinstance(rec, dict):
             result = rec

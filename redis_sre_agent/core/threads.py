@@ -13,6 +13,7 @@ from ulid import ULID
 
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.llm_helpers import create_nano_llm
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
 from redis_sre_agent.core.redis import SRE_THREADS_INDEX, get_redis_client, get_threads_index
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,11 @@ Subject:"""
 
         try:
             llm = create_nano_llm(max_tokens=20)
-            response = await llm.ainvoke(prompt)
+            response = await guarded_ainvoke(
+                llm,
+                prompt,
+                request_kind="threads.generate_subject",
+            )
             subject = self._normalize_thread_subject(response.content)
             logger.debug(f"Generated subject: {subject}")
             return subject

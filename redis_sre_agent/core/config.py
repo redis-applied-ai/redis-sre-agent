@@ -459,6 +459,54 @@ class Settings(BaseSettings):
             "If not set, uses the default AsyncOpenAI factory."
         ),
     )
+    pii_remediation_mode: Literal["off", "detect", "redact", "block"] = Field(
+        default="off",
+        description=(
+            "Policy applied to outbound LLM request text. 'off' disables inspection, "
+            "'detect' records findings only, 'redact' masks matched text, and 'block' "
+            "rejects requests containing matched sensitive spans."
+        ),
+    )
+    pii_remediation_factory: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dot-path to a custom PII remediator factory function. The function must return "
+            "an object implementing the PIIRemediator protocol. If not set, uses the default "
+            "local Privacy Filter implementation."
+        ),
+    )
+    pii_remediation_model: str = Field(
+        default="openai/privacy-filter",
+        description="Model identifier for the default local PII remediator.",
+    )
+    pii_remediation_runtime: Literal["local"] = Field(
+        default="local",
+        description="Runtime location for the default PII remediator.",
+    )
+    pii_remediation_max_chars: int = Field(
+        default=32000,
+        description="Maximum characters to send through one PII remediation pass.",
+    )
+    pii_remediation_categories: List[str] = Field(
+        default_factory=lambda: [
+            "private_person",
+            "private_address",
+            "private_email",
+            "private_phone",
+            "private_url",
+            "private_date",
+            "account_number",
+            "secret",
+        ],
+        description="Enabled category names for outbound PII remediation.",
+    )
+    pii_remediation_fail_open_for_redact: bool = Field(
+        default=False,
+        description=(
+            "When true, redact mode will allow the original request through if remediation "
+            "fails. Default is fail-closed."
+        ),
+    )
 
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")

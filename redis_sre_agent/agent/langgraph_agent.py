@@ -38,6 +38,7 @@ from ..core.instances import (
     save_instances,
 )
 from ..core.llm_helpers import create_llm, create_mini_llm
+from ..core.llm_request_guard import guarded_ainvoke
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..core.targets import (
@@ -441,7 +442,11 @@ Your response (one word only):"""
         if memoize:
             response = await memoize("instance_type", llm, [HumanMessage(content=prompt)])
         else:
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            response = await guarded_ainvoke(
+                llm,
+                [HumanMessage(content=prompt)],
+                request_kind="langgraph_agent.instance_type_detection",
+            )
         detected_type = response.content.strip().lower()
 
         # Validate response
@@ -637,14 +642,24 @@ class SRELangGraphAgent:
 
     async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
         if not self._run_cache_active:
-            return await llm.ainvoke(messages)
+            return await guarded_ainvoke(
+                llm,
+                messages,
+                request_kind=f"langgraph_agent.{tag}",
+                metadata={"tag": tag},
+            )
         # LLM objects use different attribute names: model, model_name, or _model
         model = getattr(llm, "model", None) or getattr(llm, "model_name", None) or "unknown"
         temperature = getattr(llm, "temperature", 0.0)
         key = f"{tag}|{model}|{temperature}|{self._messages_cache_key(messages)}"
         if key in self._llm_cache:
             return self._llm_cache[key]
-        resp = await llm.ainvoke(messages)
+        resp = await guarded_ainvoke(
+            llm,
+            messages,
+            request_kind=f"langgraph_agent.{tag}",
+            metadata={"tag": tag},
+        )
         self._llm_cache[key] = resp
         return resp
 

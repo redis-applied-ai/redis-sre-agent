@@ -24,6 +24,7 @@ from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.llm_helpers import create_llm, create_mini_llm
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
 from redis_sre_agent.core.progress import (
     NullEmitter,
     ProgressEmitter,
@@ -550,7 +551,11 @@ class ChatAgent:
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             with tracer.start_as_current_span("chat_agent_node"):
-                response = await runtime["llm_with_expand"].ainvoke(messages)
+                response = await guarded_ainvoke(
+                    runtime["llm_with_expand"],
+                    messages,
+                    request_kind="chat_agent.agent_node",
+                )
 
             # Persist only the original workflow state messages plus response.
             # If we injected a SystemMessage just for this invocation, keep it ephemeral.
