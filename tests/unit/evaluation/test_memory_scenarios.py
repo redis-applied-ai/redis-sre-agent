@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from redis_sre_agent.evaluation.scenarios import EvalMemoryFixture, EvalMemoryRecord
 
 
@@ -30,6 +33,10 @@ def test_eval_memory_fixture_defaults_to_empty():
 
 
 def test_eval_memory_record_rejects_extra_fields():
-    import pytest
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         EvalMemoryRecord.model_validate({"text": "hi", "unknown_field": "bad"})
+
+
+def test_eval_memory_fixture_rejects_extra_fields():
+    with pytest.raises(ValidationError):
+        EvalMemoryFixture.model_validate({"user_context": "x", "unknown_field": "bad"})
