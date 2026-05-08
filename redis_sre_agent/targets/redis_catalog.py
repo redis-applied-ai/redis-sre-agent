@@ -62,7 +62,9 @@ class RedisCatalogDiscoveryBackend:
                 exact_ranked.append(candidate)
 
         ranked.sort(key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
-        exact_ranked.sort(key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
+        exact_ranked.sort(
+            key=lambda candidate: (candidate.score, candidate.confidence), reverse=True
+        )
         limited = ranked[: max(1, min(request.max_results, 10))]
         if not limited:
             return DiscoveryResponse(status="no_match")
