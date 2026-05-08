@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -20,8 +21,6 @@ try:
     from agent_memory_client import MemoryAPIClient, MemoryClientConfig
     from agent_memory_client.filters import Entities, Namespace, UserId
     from agent_memory_client.models import MemoryMessage, MemoryStrategyConfig, WorkingMemory
-
-    AMS_SDK_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised only when dependency is absent
 
     class _Shim:
@@ -36,51 +35,42 @@ except ImportError:  # pragma: no cover - exercised only when dependency is abse
     MemoryMessage = _Shim  # type: ignore[assignment]
     MemoryStrategyConfig = _Shim  # type: ignore[assignment]
     WorkingMemory = _Shim  # type: ignore[assignment]
-    AMS_SDK_AVAILABLE = False
 
 
-DEFAULT_CUSTOM_PROMPT = """Extract only durable Redis SRE memory from the conversation.
+DEFAULT_CUSTOM_PROMPT = """Extract only durable user-scoped Redis SRE memory.
 
-Persist only the following categories when they are explicitly supported by the conversation:
-- operator interaction preferences
-- stable Redis environment facts
-- notable episodic incidents and outcomes
-- recurring operational context that will matter in future troubleshooting
-
-When a target Redis instance or cluster is identified, include exact entity tags such as:
-- instance:<instance_id>
-- cluster:<cluster_id>
+Persist only:
+- explicit user preferences
+- reporting preferences
+- user-specific workflow habits
+- durable operating style
 
 Do not persist:
-- raw transcripts
-- raw logs
-- raw tool outputs
-- secrets or credentials
-- speculative diagnoses
-- one-off filler or casual chatter
+- asset incidents
+- asset configuration or environment facts
+- ownership or inventory facts
+- request narration
+- raw transcripts, logs, tool outputs, or secrets
+
+If content is mixed or ambiguous, do not persist it.
 
 Current datetime: {current_datetime}
 Conversation: {message}"""
 
-ASSET_CUSTOM_PROMPT = """Extract only durable shared operational memory about the Redis asset from the conversation.
+ASSET_CUSTOM_PROMPT = """Extract only durable shared operational memory about the Redis asset.
 
 Persist only:
-- stable Redis environment facts
-- notable episodic incidents and outcomes
+- asset incidents and outcomes
+- configuration or environment facts
 - recurring operational context that will matter in future troubleshooting
 
-When a target Redis instance or cluster is identified, include exact entity tags such as:
-- instance:<instance_id>
-- cluster:<cluster_id>
-
 Do not persist:
-- operator interaction preferences
-- user-personalized habits or response styles
-- raw transcripts
-- raw logs
-- raw tool outputs
-- secrets or credentials
-- speculative diagnoses
+- user preferences
+- workflow habits
+- request narration
+- raw transcripts, logs, tool outputs, or secrets
+
+If content is mixed or ambiguous, do not persist it.
 
 Current datetime: {current_datetime}
 Conversation: {message}"""
@@ -137,6 +127,49 @@ class PreparedAgentTurnMemory:
 class AgentMemoryService:
     """Thin AMS adapter for turn-scoped retrieval and persistence."""
 
+    _PREFERENCE_PATTERNS = (
+        "prefer",
+        "preference",
+        "likes ",
+        "wants ",
+        "interactive session",
+        "interactive workflow",
+        "executive-summary-first",
+        "exec-summary-first",
+        "top-line risk",
+        "metrics-first",
+        "metric-heavy",
+        "root-cause-first",
+        "remediation-first",
+        "explanation-first",
+        "summary-first",
+    )
+    _ASSET_PATTERNS = (
+        "redis",
+        "instance",
+        "cluster",
+        "service-",
+        "latency",
+        "backup",
+        "failover",
+        "replica",
+        "replication",
+        "oom",
+        "out of memory",
+        "incident",
+        "config",
+        "configuration",
+        "environment",
+        "production",
+        "development",
+        "memory",
+        "cpu",
+        "shard",
+        "cache",
+        "error",
+    )
+    _MIXED_SPLIT_MARKERS = (" when ", " while ", " during ", " after ", " before ")
+
     def __init__(self) -> None:
         self._enabled = bool(settings.agent_memory_enabled and settings.agent_memory_base_url)
 
@@ -168,21 +201,82 @@ class AgentMemoryService:
             config={"custom_prompt": ASSET_CUSTOM_PROMPT},
         )
 
-    @staticmethod
-    def _is_operator_preference_memory(text: Optional[str]) -> bool:
+    @classmethod
+    def _is_operator_preference_memory(cls, text: Optional[str]) -> bool:
         if not text:
             return False
         lowered = text.lower()
-        preference_markers = (
-            "prefers",
-            "preference",
-            "likes ",
-            "wants ",
-            "root-cause-first",
-            "remediation-first",
-            "explanation-first",
-        )
-        return any(marker in lowered for marker in preference_markers)
+        return any(marker in lowered for marker in cls._PREFERENCE_PATTERNS)
+
+    @classmethod
+    def _contains_asset_signal(cls, text: Optional[str]) -> bool:
+        if not text:
+            return False
+        lowered = text.lower()
+        return any(marker in lowered for marker in cls._ASSET_PATTERNS)
+
+    @staticmethod
+    def _split_sentences(text: Optional[str]) -> List[str]:
+        if not text:
+            return []
+        normalized = re.sub(r"\s+", " ", text.strip())
+        if not normalized:
+            return []
+        parts = re.split(r"(?<=[.!?])\s+", normalized)
+        return [part.strip() for part in parts if part.strip()]
+
+    @classmethod
+    def _scope_messages(
+        cls,
+        *,
+        user_message: str,
+        assistant_message: str,
+        include_user_scope: bool,
+        include_asset_scope: bool,
+    ) -> Dict[str, Dict[str, List[str]]]:
+        scoped: Dict[str, Dict[str, List[str]]] = {
+            "user": {"user": [], "assistant": []},
+            "asset": {"user": [], "assistant": []},
+        }
+
+        def _split_mixed_sentence(sentence: str) -> tuple[Optional[str], Optional[str]]:
+            lowered = sentence.lower()
+            for marker in cls._MIXED_SPLIT_MARKERS:
+                if marker not in lowered:
+                    continue
+                index = lowered.index(marker)
+                user_fragment = sentence[:index].strip(" ,.")
+                asset_fragment = sentence[index + len(marker) :].strip(" ,.")
+                if not user_fragment or not asset_fragment:
+                    continue
+                if not cls._is_operator_preference_memory(user_fragment):
+                    continue
+                if not cls._contains_asset_signal(asset_fragment):
+                    continue
+                return user_fragment, asset_fragment
+            return None, None
+
+        def _classify(sentences: List[str], role: str) -> None:
+            for sentence in sentences:
+                is_user = include_user_scope and cls._is_operator_preference_memory(sentence)
+                is_asset = include_asset_scope and cls._contains_asset_signal(sentence)
+
+                if is_user and is_asset:
+                    user_fragment, asset_fragment = _split_mixed_sentence(sentence)
+                    if user_fragment and asset_fragment:
+                        scoped["user"][role].append(user_fragment)
+                        scoped["asset"][role].append(asset_fragment)
+                    continue
+
+                if is_user:
+                    scoped["user"][role].append(sentence)
+                    continue
+                if is_asset:
+                    scoped["asset"][role].append(sentence)
+
+        _classify(cls._split_sentences(user_message), "user")
+        _classify(cls._split_sentences(assistant_message), "assistant")
+        return scoped
 
     @classmethod
     def _filter_asset_memories(cls, memories: List[Any]) -> List[Any]:
@@ -418,19 +512,12 @@ class AgentMemoryService:
                 turn_timestamp = datetime.now(timezone.utc)
                 recent_limit = max(2, int(settings.agent_memory_recent_message_limit))
 
-                def _message_pair() -> List[Any]:
-                    return [
-                        MemoryMessage(
-                            role="user",
-                            content=user_message,
-                            created_at=turn_timestamp,
-                        ),
-                        MemoryMessage(
-                            role="assistant",
-                            content=assistant_message,
-                            created_at=turn_timestamp,
-                        ),
-                    ]
+                scoped_payloads = self._scope_messages(
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    include_user_scope=user_scope,
+                    include_asset_scope=asset_scope,
+                )
 
                 async def _put_memory(
                     *,
@@ -442,6 +529,12 @@ class AgentMemoryService:
                     include_user_label: bool,
                 ) -> None:
                     nonlocal client
+
+                    scope_key = "user" if scope_user_id is not None else "asset"
+                    scoped_user_text = "\n".join(scoped_payloads[scope_key]["user"]).strip()
+                    scoped_assistant_text = "\n".join(scoped_payloads[scope_key]["assistant"]).strip()
+                    if not scoped_user_text and not scoped_assistant_text:
+                        return
 
                     if working_memory is None:
                         kwargs: Dict[str, Any] = {
@@ -455,7 +548,22 @@ class AgentMemoryService:
                         _, working_memory = await client.get_or_create_working_memory(**kwargs)
 
                     existing_messages = list(getattr(working_memory, "messages", []) or [])
-                    existing_messages.extend(_message_pair())
+                    if scoped_user_text:
+                        existing_messages.append(
+                            MemoryMessage(
+                                role="user",
+                                content=scoped_user_text,
+                                created_at=turn_timestamp,
+                            )
+                        )
+                    if scoped_assistant_text:
+                        existing_messages.append(
+                            MemoryMessage(
+                                role="assistant",
+                                content=scoped_assistant_text,
+                                created_at=turn_timestamp,
+                            )
+                        )
                     trimmed_messages = existing_messages[-recent_limit:]
 
                     target_context = []
