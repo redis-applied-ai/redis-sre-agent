@@ -212,6 +212,37 @@ async def test_run_agent_only_scenario_activates_memory_injection():
     assert captured_session_type["type"] == "FakeMemorySession"
 
 
+def test_memory_user_preference_honored_scenario_loads():
+    from redis_sre_agent.evaluation.runtime import load_eval_scenario
+    from redis_sre_agent.evaluation.fixture_layout import (
+        scenario_manifest_path,
+        golden_assertions_path,
+        golden_expected_response_path,
+        golden_metadata_path,
+    )
+    import json
+
+    path = scenario_manifest_path("prompt", "memory-user-preference-honored")
+    assert path.exists(), f"Scenario not found: {path}"
+
+    scenario = load_eval_scenario(path)
+    assert scenario.id == "prompt/memory-user-preference-honored"
+    assert scenario.execution.lane.value == "agent_only"
+    assert scenario.memory.user_context is not None
+    assert len(scenario.memory.user_long_term) >= 1
+
+    metadata_path = golden_metadata_path("prompt", "memory-user-preference-honored")
+    expected_path = golden_expected_response_path("prompt", "memory-user-preference-honored")
+    assertions_path = golden_assertions_path("prompt", "memory-user-preference-honored")
+    assert metadata_path.exists()
+    assert expected_path.exists()
+    assert assertions_path.exists()
+
+    assertions = json.loads(assertions_path.read_text())
+    assert len(assertions.get("required_findings", [])) >= 1
+    assert expected_path.read_text().strip()
+
+
 @pytest.mark.asyncio
 async def test_inject_memory_fixture_is_noop_for_empty_fixture():
     from redis_sre_agent.evaluation.fake_memory import inject_memory_fixture

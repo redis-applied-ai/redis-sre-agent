@@ -1,0 +1,12 @@
+scenario_id: prompt/memory-user-preference-honored
+review_status: draft
+reviewed_by: null
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-05-08"
+baseline_policy:
+  mode: deterministic
+  update_allowed: true
+notes:
+  - Response must lead with remediation steps, not root-cause analysis.
+  - Preference is seeded via the memory fixture; no live user preference store required.
