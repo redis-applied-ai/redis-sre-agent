@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -133,15 +133,16 @@ async def test_afs_workspace_skill_backend_query_and_error_paths() -> None:
                             "description": "Check maintenance mode first.",
                             "version": "v1",
                             "resources": [],
-                        }
-                    ],
-                    "matches": [
+                        },
                         {
-                            "skillSlug": "redis-maintenance-triage",
+                            "skillSlug": "redis-cluster-health-check",
+                            "displayName": "Redis Cluster Health Check",
+                            "description": "Produce Analyzer-backed cluster findings.",
                             "version": "v1",
-                            "path": "/skills/redis-maintenance-triage/versions/v1/references/checklist.md",
-                        }
+                            "resources": [],
+                        },
                     ],
+                    "total": 2,
                 }
             }
         ),
@@ -158,8 +159,24 @@ async def test_afs_workspace_skill_backend_query_and_error_paths() -> None:
         client_factory=lambda **kwargs: client,  # type: ignore[arg-type]
     )
 
-    queried = await backend.list_skills(query="checklist", limit=10, offset=0, version="v1")
-    assert queried["skills"][0]["matched_resource_kind"] == "reference"
+    vectorizer = AsyncMock()
+    vectorizer.aembed_many = AsyncMock(
+        return_value=[
+            [1.0, 0.0],
+            [0.1, 0.9],
+            [0.9, 0.1],
+        ]
+    )
+    with patch("redis_sre_agent.core.redis.get_vectorizer", return_value=vectorizer):
+        queried = await backend.list_skills(
+            query="run a health check",
+            limit=10,
+            offset=0,
+            version="v1",
+        )
+
+    assert queried["skills"][0]["name"] == "redis-cluster-health-check"
+    assert queried["skills"][0]["matched_resource_kind"] == "entrypoint"
 
     missing_skill = await backend.get_skill(skill_name="missing", version="v1")
     assert missing_skill["error"] == "Skill not found"
@@ -297,6 +314,55 @@ async def test_afs_workspace_skill_backend_list_uses_gateway_when_configured() -
 
     assert result["results_count"] == 1
     assert result["skills"][0]["name"] == "redis-maintenance-triage"
+
+
+@pytest.mark.asyncio
+async def test_afs_workspace_skill_backend_gateway_query_uses_semantic_ranking() -> None:
+    backend = AFSWorkspaceSkillBackend(
+        base_url="https://skills.internal",
+        tenant_id="tenant_a",
+        project_id="proj_1",
+        agent_id="agent_1",
+        gateway_url="https://gateway.internal/mcp",
+        gateway_token="secret",
+        workspace_id="skills-proj-1-agent-1",
+    )
+    backend._gateway_catalog_entries = AsyncMock(  # type: ignore[method-assign]
+        return_value=[
+            {
+                "skillSlug": "redis-maintenance-triage",
+                "displayName": "Redis Maintenance Triage",
+                "description": "Check maintenance mode first.",
+                "version": "v1",
+                "resources": [],
+            },
+            {
+                "skillSlug": "redis-cluster-health-check",
+                "displayName": "Redis Cluster Health Check",
+                "description": "Produce Analyzer-backed cluster findings.",
+                "version": "v1",
+                "resources": [],
+            },
+        ]
+    )
+    vectorizer = AsyncMock()
+    vectorizer.aembed_many = AsyncMock(
+        return_value=[
+            [1.0, 0.0],
+            [0.1, 0.9],
+            [0.95, 0.05],
+        ]
+    )
+
+    with patch("redis_sre_agent.core.redis.get_vectorizer", return_value=vectorizer):
+        result = await backend.list_skills(
+            query="cluster health findings",
+            limit=10,
+            offset=0,
+            version="latest",
+        )
+
+    assert result["skills"][0]["name"] == "redis-cluster-health-check"
 
 
 @pytest.mark.asyncio

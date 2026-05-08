@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
+from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.knowledge_helpers import (
     get_pinned_documents_helper,
     skills_check_helper,
@@ -254,7 +255,8 @@ async def build_startup_knowledge_context(
     version: Optional[str] = "latest",
     pinned_limit: int = 20,
     pinned_content_char_budget: int = 12000,
-    skills_limit: int = 20,
+    skills_limit: Optional[int] = None,
+    skills_query: Optional[str] = None,
     available_tools: Optional[List[Any]] = None,
     knowledge_backend: Optional[EvalKnowledgeBackend] = None,
 ) -> str:
@@ -262,6 +264,10 @@ async def build_startup_knowledge_context(
     sections: List[str] = []
     internal_tool_envelopes: List[Dict[str, Any]] = []
     effective_knowledge_backend = knowledge_backend or get_active_knowledge_backend()
+    effective_skills_limit = max(
+        int(skills_limit if skills_limit is not None else settings.startup_skills_toc_limit),
+        1,
+    )
 
     try:
         if effective_knowledge_backend is not None:
@@ -309,15 +315,15 @@ async def build_startup_knowledge_context(
     try:
         if effective_knowledge_backend is not None:
             skills_result = await effective_knowledge_backend.skills_check(
-                query=query,
-                limit=skills_limit,
+                query=skills_query,
+                limit=effective_skills_limit,
                 offset=0,
                 version=version,
             )
         else:
             skills_result = await skills_check_helper(
-                query=query,
-                limit=skills_limit,
+                query=skills_query,
+                limit=effective_skills_limit,
                 offset=0,
                 version=version,
             )
@@ -330,9 +336,9 @@ async def build_startup_knowledge_context(
         sections.append("\n".join(skills_lines))
         skills_envelope = _build_internal_startup_skills_envelope(
             skills_result.get("skills") or [],
-            query=query,
+            query=skills_query or "",
             version=version,
-            skills_limit=skills_limit,
+            skills_limit=effective_skills_limit,
         )
         if skills_envelope:
             internal_tool_envelopes.append(skills_envelope)
