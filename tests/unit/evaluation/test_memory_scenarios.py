@@ -165,7 +165,7 @@ async def test_inject_memory_fixture_patches_agent_memory_service(user_fixture):
 
 
 @pytest.mark.asyncio
-async def test_run_agent_only_scenario_activates_memory_injection(monkeypatch):
+async def test_run_agent_only_scenario_activates_memory_injection():
     """Verify inject_memory_fixture is active during run_agent_only_scenario."""
     from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
     from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
