@@ -175,7 +175,7 @@ class TargetDiscoveryToolProvider(ToolProvider):
         scope = None
         toolset_generation = manager.get_toolset_generation() if manager else 0
 
-        if attach_tools and manager and result.selected_matches:
+        if attach_tools and manager and result.status == "resolved" and result.selected_matches:
             scope = await bind_target_matches(
                 matches=result.selected_matches,
                 thread_id=thread_id,

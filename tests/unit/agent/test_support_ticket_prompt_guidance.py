@@ -63,7 +63,8 @@ def test_chat_prompt_requires_explicit_skill_retrieval_and_scope_evidence():
     assert "health check skill" in prompt
     assert "response as satisfying a skill" in prompt
     assert "captured package contents" in prompt
-    assert "hostname mention by itself is not proof" in prompt
+    assert "hostname or hostname fragment is not enough" in prompt
+    assert "exact live match" in prompt
 
 
 def test_knowledge_prompt_mentions_support_tickets():

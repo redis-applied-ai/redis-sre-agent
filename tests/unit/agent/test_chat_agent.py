@@ -251,6 +251,14 @@ class TestChatAgentSystemPrompt:
         assert "allow_multiple=true" in CHAT_SYSTEM_PROMPT
         assert "what redis targets you know about" in prompt_lower
 
+    def test_system_prompt_requires_skill_fetch_and_hostname_caution(self):
+        """Skill-backed health checks must fetch the skill and avoid hostname guessing."""
+        prompt_lower = CHAT_SYSTEM_PROMPT.lower()
+        assert "get_skill" in CHAT_SYSTEM_PROMPT
+        assert "exact live match" in prompt_lower
+        assert "hostname or hostname fragment" in prompt_lower
+        assert "analyzer-backed evidence" in prompt_lower
+
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
         assert "Enterprise" in CHAT_SYSTEM_PROMPT or "Cloud" in CHAT_SYSTEM_PROMPT
