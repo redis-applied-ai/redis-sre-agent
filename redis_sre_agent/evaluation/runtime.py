@@ -22,6 +22,7 @@ from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.core.threads import ThreadManager, _build_initial_context
 from redis_sre_agent.core.turn_scope import TurnScope
 from redis_sre_agent.evaluation.fake_mcp import build_fixture_mcp_runtime
+from redis_sre_agent.evaluation.fake_memory import inject_memory_fixture
 from redis_sre_agent.evaluation.injection import eval_injection_scope
 from redis_sre_agent.evaluation.knowledge_backend import build_fixture_knowledge_backend
 from redis_sre_agent.evaluation.runtime_overrides import (
@@ -541,78 +542,79 @@ async def run_full_turn_scenario(
     mcp_servers = effective_overrides.mcp_servers
     if mcp_servers is None:
         mcp_servers = mcp_runtime.get_server_configs() if mcp_runtime is not None else {}
-    with _target_registry_override_scope(scenario):
-        with eval_injection_scope(
-            knowledge_backend=knowledge_backend,
-            mcp_servers=mcp_servers,
-            mcp_runtime=mcp_runtime,
-            tool_runtime=tool_runtime,
-        ):
-            thread_manager = ThreadManager(redis_client=redis_client)
-            task_manager = TaskManager(redis_client=redis_client)
-            initial_context = await _build_initial_context(
-                query=scenario.execution.query,
-                base_context={
-                    **_scenario_runtime_context(scenario),
-                    **dict(context_overrides or {}),
-                },
-            )
-            thread_id = await thread_manager.create_thread(
-                user_id=user_id,
-                session_id=session_id,
-                initial_context=initial_context,
-            )
-            await thread_manager.set_thread_subject(thread_id, scenario.execution.query)
-
-            task_id = await task_manager.create_task(
-                thread_id=thread_id,
-                user_id=user_id,
-                subject=scenario.execution.query,
-            )
-            effective_session_id = session_id or thread_id
-            turn_context, _ = await build_full_turn_context(
-                scenario,
-                thread_id=thread_id,
-                task_id=task_id,
-                session_id=effective_session_id,
-                target_binding_service=target_binding_service,
-                context_overrides=initial_context,
-            )
-            await thread_manager.update_thread_context(thread_id, turn_context, merge=False)
-
-            active_turn_processor = turn_processor or _default_turn_processor
-            turn_result = await active_turn_processor(
-                thread_id=thread_id,
-                message=scenario.execution.query,
-                context=turn_context,
-                task_id=task_id,
-                redis_client=redis_client,
-            )
-            assistant_message_id = str(turn_result.get("message_id") or "").strip()
-            if assistant_message_id:
-                message_trace = await thread_manager.get_message_trace(assistant_message_id)
-                turn_result = _enrich_turn_result_from_trace(turn_result, message_trace)
-
-            task_state = await task_manager.get_task_state(task_id)
-            task_status = None
-            if task_state is not None:
-                status = getattr(task_state, "status", None)
-                task_status = (
-                    status.value if hasattr(status, "value") else str(status) if status else None
+    async with inject_memory_fixture(scenario):
+        with _target_registry_override_scope(scenario):
+            with eval_injection_scope(
+                knowledge_backend=knowledge_backend,
+                mcp_servers=mcp_servers,
+                mcp_runtime=mcp_runtime,
+                tool_runtime=tool_runtime,
+            ):
+                thread_manager = ThreadManager(redis_client=redis_client)
+                task_manager = TaskManager(redis_client=redis_client)
+                initial_context = await _build_initial_context(
+                    query=scenario.execution.query,
+                    base_context={
+                        **_scenario_runtime_context(scenario),
+                        **dict(context_overrides or {}),
+                    },
                 )
+                thread_id = await thread_manager.create_thread(
+                    user_id=user_id,
+                    session_id=session_id,
+                    initial_context=initial_context,
+                )
+                await thread_manager.set_thread_subject(thread_id, scenario.execution.query)
 
-            return EvalFullTurnResult(
-                scenario_id=scenario.id,
-                scenario_name=scenario.name,
-                scenario_provenance=scenario.provenance.model_dump(mode="json"),
-                execution_lane=scenario.execution.lane,
-                thread_id=thread_id,
-                task_id=task_id,
-                task_status=task_status,
-                initial_context=initial_context,
-                turn_context=turn_context,
-                turn_result=turn_result,
-            )
+                task_id = await task_manager.create_task(
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    subject=scenario.execution.query,
+                )
+                effective_session_id = session_id or thread_id
+                turn_context, _ = await build_full_turn_context(
+                    scenario,
+                    thread_id=thread_id,
+                    task_id=task_id,
+                    session_id=effective_session_id,
+                    target_binding_service=target_binding_service,
+                    context_overrides=initial_context,
+                )
+                await thread_manager.update_thread_context(thread_id, turn_context, merge=False)
+
+                active_turn_processor = turn_processor or _default_turn_processor
+                turn_result = await active_turn_processor(
+                    thread_id=thread_id,
+                    message=scenario.execution.query,
+                    context=turn_context,
+                    task_id=task_id,
+                    redis_client=redis_client,
+                )
+                assistant_message_id = str(turn_result.get("message_id") or "").strip()
+                if assistant_message_id:
+                    message_trace = await thread_manager.get_message_trace(assistant_message_id)
+                    turn_result = _enrich_turn_result_from_trace(turn_result, message_trace)
+
+                task_state = await task_manager.get_task_state(task_id)
+                task_status = None
+                if task_state is not None:
+                    status = getattr(task_state, "status", None)
+                    task_status = (
+                        status.value if hasattr(status, "value") else str(status) if status else None
+                    )
+
+                return EvalFullTurnResult(
+                    scenario_id=scenario.id,
+                    scenario_name=scenario.name,
+                    scenario_provenance=scenario.provenance.model_dump(mode="json"),
+                    execution_lane=scenario.execution.lane,
+                    thread_id=thread_id,
+                    task_id=task_id,
+                    task_status=task_status,
+                    initial_context=initial_context,
+                    turn_context=turn_context,
+                    turn_result=turn_result,
+                )
 
 
 class EvalRuntime:

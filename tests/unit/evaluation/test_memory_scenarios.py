@@ -165,6 +165,54 @@ async def test_inject_memory_fixture_patches_agent_memory_service(user_fixture):
 
 
 @pytest.mark.asyncio
+async def test_run_agent_only_scenario_activates_memory_injection(monkeypatch):
+    """Verify inject_memory_fixture is active during run_agent_only_scenario."""
+    from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
+    from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
+    from redis_sre_agent.evaluation.scenarios import EvalScenario
+    from redis_sre_agent.core.agent_memory import AgentMemoryService
+
+    scenario = EvalScenario.model_validate({
+        "id": "test/memory-wiring",
+        "name": "Memory wiring test",
+        "provenance": {
+            "source_kind": "synthetic",
+            "source_pack": "test",
+            "source_pack_version": "2026-05-08",
+            "golden": {"expectation_basis": "human_authored"},
+        },
+        "execution": {"lane": "agent_only", "agent": "knowledge_only", "query": "latency check"},
+        "memory": {
+            "user_context": "User prefers remediation-first answers",
+            "user_long_term": [
+                {"text": "User prefers remediation-first troubleshooting", "memory_type": "semantic"}
+            ],
+        },
+    })
+
+    captured_session_type = {}
+
+    class _FakeAgent:
+        async def process_query(self, query, session_id, user_id, max_iterations=10,
+                                context=None, progress_emitter=None, conversation_history=None):
+            from types import SimpleNamespace
+            service = AgentMemoryService()
+            assert service._enabled is True  # __init__ patched to force-enable
+            async with service.open_session() as sess:
+                captured_session_type["type"] = type(sess).__name__
+            return SimpleNamespace(response="ok", tool_envelopes=[])
+
+    await run_agent_only_scenario(
+        scenario,
+        session_id="sess-1",
+        user_id="user-1",
+        agent_factories={"knowledge_only": lambda: _FakeAgent()},
+    )
+
+    assert captured_session_type["type"] == "FakeMemorySession"
+
+
+@pytest.mark.asyncio
 async def test_inject_memory_fixture_is_noop_for_empty_fixture():
     from redis_sre_agent.evaluation.fake_memory import inject_memory_fixture
     from redis_sre_agent.evaluation.scenarios import EvalScenario
