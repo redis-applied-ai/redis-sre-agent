@@ -1,0 +1,12 @@
+scenario_id: prompt/memory-asset-incident-context
+review_status: draft
+reviewed_by: null
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - Response must reference the prior OOM incident stored in asset long-term memory.
+  - Incident context is seeded via the memory fixture; no live memory store required.

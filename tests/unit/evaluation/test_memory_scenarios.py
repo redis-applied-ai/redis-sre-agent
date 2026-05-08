@@ -243,6 +243,36 @@ def test_memory_user_preference_honored_scenario_loads():
     assert expected_path.read_text().strip()
 
 
+def test_memory_asset_incident_context_scenario_loads():
+    from redis_sre_agent.evaluation.runtime import load_eval_scenario
+    from redis_sre_agent.evaluation.fixture_layout import (
+        scenario_manifest_path,
+        golden_assertions_path,
+        golden_expected_response_path,
+        golden_metadata_path,
+    )
+    import json
+
+    path = scenario_manifest_path("prompt", "memory-asset-incident-context")
+    assert path.exists(), f"Scenario not found: {path}"
+
+    scenario = load_eval_scenario(path)
+    assert scenario.id == "prompt/memory-asset-incident-context"
+    assert scenario.execution.lane.value == "agent_only"
+    assert len(scenario.memory.asset_long_term) >= 1
+    assert scenario.memory.asset_long_term[0].memory_type == "episodic"
+
+    assertions_path = golden_assertions_path("prompt", "memory-asset-incident-context")
+    expected_path = golden_expected_response_path("prompt", "memory-asset-incident-context")
+    metadata_path = golden_metadata_path("prompt", "memory-asset-incident-context")
+    assert assertions_path.exists()
+    assert expected_path.exists()
+    assert metadata_path.exists()
+
+    assertions = json.loads(assertions_path.read_text())
+    assert len(assertions.get("required_findings", [])) >= 1
+
+
 @pytest.mark.asyncio
 async def test_inject_memory_fixture_is_noop_for_empty_fixture():
     from redis_sre_agent.evaluation.fake_memory import inject_memory_fixture
