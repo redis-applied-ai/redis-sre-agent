@@ -289,6 +289,80 @@ async def test_resolve_target_query_hostname_like_queries_require_exact_identifi
 
 
 @pytest.mark.asyncio
+async def test_resolve_target_query_dotted_version_terms_do_not_trigger_hostname_gate():
+    candidate = TargetCatalogDoc(
+        target_id="instance:checkout-cache-prod",
+        target_kind="instance",
+        resource_id="checkout-cache-prod",
+        display_name="checkout-cache-prod",
+        name="checkout-cache-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis"],
+        search_text="checkout cache prod production cache",
+        search_aliases=["checkout cache"],
+    )
+
+    hints = target_module._parse_query_hints("checkout cache prod v7.2")
+    score, reasons = target_module._score_target_doc(
+        "checkout cache prod v7.2",
+        candidate,
+        hints=hints,
+    )
+
+    assert hints["hostname_terms"] == set()
+    assert score > 0
+    assert all(not reason.startswith("matched hostname=") for reason in reasons)
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_allow_multiple_uses_exact_mentions_inside_compound_query():
+    prod = TargetCatalogDoc(
+        target_id="instance:redis-prod-checkout-cache",
+        target_kind="instance",
+        resource_id="redis-prod-checkout-cache",
+        display_name="checkout-cache-prod",
+        name="checkout-cache-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text="checkout cache prod production cache",
+        search_aliases=["checkout"],
+    )
+    stage = TargetCatalogDoc(
+        target_id="instance:redis-stage-checkout-cache",
+        target_kind="instance",
+        resource_id="redis-stage-checkout-cache",
+        display_name="checkout-cache-stage",
+        name="checkout-cache-stage",
+        environment="staging",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text="checkout cache stage staging cache",
+        search_aliases=["checkout"],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[prod, stage]),
+    ):
+        resolved = await resolve_target_query(
+            query="compare checkout-cache-prod with checkout-cache-stage",
+            allow_multiple=True,
+        )
+
+    assert resolved.status == "resolved"
+    assert resolved.clarification_required is False
+    assert [match.resource_id for match in resolved.selected_matches] == [
+        "redis-prod-checkout-cache",
+        "redis-stage-checkout-cache",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_resolve_target_query_keeps_token_overlap_from_all_aliases():
     target = TargetCatalogDoc(
         target_id="instance:prod-cache",

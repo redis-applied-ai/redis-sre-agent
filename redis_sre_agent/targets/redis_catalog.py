@@ -19,6 +19,7 @@ class RedisCatalogDiscoveryBackend:
             _exact_target_terms,
             _normalize,
             _parse_query_hints,
+            _query_mentions_exact_target,
             _score_target_doc,
             build_public_match_from_doc,
             get_target_catalog,
@@ -58,7 +59,10 @@ class RedisCatalogDiscoveryBackend:
                 confidence=public_match.confidence,
             )
             ranked.append(candidate)
-            if normalized_query and normalized_query in _exact_target_terms(doc):
+            exact_query_match = normalized_query and normalized_query in _exact_target_terms(doc)
+            if exact_query_match or (
+                request.allow_multiple and _query_mentions_exact_target(doc, hints)
+            ):
                 exact_ranked.append(candidate)
 
         ranked.sort(key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
