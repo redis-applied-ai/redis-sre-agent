@@ -261,12 +261,14 @@ def test_memory_asset_incident_context_scenario_loads():
     assert scenario.execution.lane.value == "agent_only"
     assert len(scenario.memory.asset_long_term) >= 1
     assert scenario.memory.asset_long_term[0].memory_type == "episodic"
+    assert scenario.memory.asset_context is not None
 
     assertions_path = golden_assertions_path("prompt", "memory-asset-incident-context")
     expected_path = golden_expected_response_path("prompt", "memory-asset-incident-context")
     metadata_path = golden_metadata_path("prompt", "memory-asset-incident-context")
     assert assertions_path.exists()
     assert expected_path.exists()
+    assert expected_path.read_text().strip()
     assert metadata_path.exists()
 
     assertions = json.loads(assertions_path.read_text())
