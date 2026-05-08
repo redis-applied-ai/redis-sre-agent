@@ -281,3 +281,45 @@ async def test_guard_langchain_input_preserves_tail_beyond_max_chars(monkeypatch
     result = await guard_langchain_input("alice@example.com trailing", request_kind="unit")
 
     assert result == "[PII:EMAIL:1]ple.com trailing"
+
+
+@pytest.mark.asyncio
+async def test_guard_langchain_input_supports_mixed_message_and_dict_sequences(
+    monkeypatch, guard_settings
+):
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.REDACTED,
+            blocks=[
+                PIITextBlock(
+                    block_id="lc:1",
+                    path="messages[1].content",
+                    role="user",
+                    text="reach [PII:EMAIL:1]",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="private_email",
+                    block_id="lc:1",
+                    placeholder="[PII:EMAIL:1]",
+                    text="alice@example.com",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    payload = [
+        HumanMessage(content="safe"),
+        {"role": "user", "content": "reach alice@example.com"},
+    ]
+
+    result = await guard_langchain_input(payload, request_kind="unit")
+
+    assert result[0].content == "safe"
+    assert result[1]["content"] == "reach [PII:EMAIL:1]"

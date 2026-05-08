@@ -202,16 +202,18 @@ def _restore_truncated_suffixes(
 
 
 def _render_langchain_messages(
-    messages: Sequence[BaseMessage],
+    messages: Sequence[Any],
     locations: Sequence[_BlockLocation],
     blocks_by_id: Dict[str, PIITextBlock],
-) -> List[BaseMessage]:
-    rendered: List[BaseMessage] = []
+) -> List[Any]:
+    rendered: List[Any] = []
     part_updates: Dict[tuple[int, int], str] = {}
     string_updates: Dict[int, str] = {}
 
     for location in locations:
-        block = blocks_by_id[location.block_id]
+        block = blocks_by_id.get(location.block_id)
+        if block is None:
+            continue
         if location.container == "langchain_str":
             string_updates[location.indexes[0]] = block.text
         elif location.container == "langchain_part":
@@ -219,8 +221,15 @@ def _render_langchain_messages(
 
     for idx, message in enumerate(messages):
         content = getattr(message, "content", None)
+        if isinstance(message, dict):
+            content = message.get("content")
         if idx in string_updates:
-            rendered.append(message.model_copy(update={"content": string_updates[idx]}))
+            if isinstance(message, dict):
+                new_message = copy.deepcopy(message)
+                new_message["content"] = string_updates[idx]
+                rendered.append(new_message)
+            else:
+                rendered.append(message.model_copy(update={"content": string_updates[idx]}))
             continue
         if isinstance(content, list):
             new_content = copy.deepcopy(content)
@@ -232,7 +241,12 @@ def _render_langchain_messages(
                     part["text"] = part_updates[key]
                 elif "content" in part and isinstance(part["content"], str):
                     part["content"] = part_updates[key]
-            rendered.append(message.model_copy(update={"content": new_content}))
+            if isinstance(message, dict):
+                new_message = copy.deepcopy(message)
+                new_message["content"] = new_content
+                rendered.append(new_message)
+            else:
+                rendered.append(message.model_copy(update={"content": new_content}))
             continue
         rendered.append(message)
     return rendered
@@ -245,7 +259,9 @@ def _render_openai_messages(
 ) -> List[dict[str, Any]]:
     rendered = copy.deepcopy(list(messages))
     for location in locations:
-        block = blocks_by_id[location.block_id]
+        block = blocks_by_id.get(location.block_id)
+        if block is None:
+            continue
         msg_index = location.indexes[0]
         if location.container == "openai_str":
             rendered[msg_index]["content"] = block.text
