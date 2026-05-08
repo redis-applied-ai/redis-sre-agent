@@ -61,14 +61,26 @@ def _text_part_value(part: Any) -> Optional[str]:
     return None
 
 
+def _is_dict_message_sequence(payload: Any) -> bool:
+    return (
+        isinstance(payload, Sequence)
+        and not isinstance(payload, (str, bytes))
+        and all(isinstance(message, dict) for message in payload)
+    )
+
+
 def _iter_langchain_blocks(
-    messages: Sequence[BaseMessage],
+    messages: Sequence[Any],
 ) -> tuple[List[PIITextBlock], List[_BlockLocation]]:
     blocks: List[PIITextBlock] = []
     locations: List[_BlockLocation] = []
     for idx, message in enumerate(messages):
-        role = getattr(message, "type", None) or message.__class__.__name__.lower()
-        content = getattr(message, "content", None)
+        if isinstance(message, dict):
+            role = str(message.get("role") or "user")
+            content = message.get("content")
+        else:
+            role = getattr(message, "type", None) or message.__class__.__name__.lower()
+            content = getattr(message, "content", None)
         if isinstance(content, str):
             block_id = f"lc:{idx}"
             blocks.append(
@@ -167,6 +179,28 @@ def _iter_openai_blocks(
     return blocks, locations
 
 
+def _restore_truncated_suffixes(
+    original_blocks: Sequence[PIITextBlock],
+    result_blocks: Sequence[PIITextBlock],
+    truncated_suffixes: Dict[str, str],
+) -> List[PIITextBlock]:
+    if not truncated_suffixes:
+        return list(result_blocks)
+
+    result_by_id = {block.block_id: block for block in result_blocks}
+    restored: List[PIITextBlock] = []
+    for original_block in original_blocks:
+        result_block = result_by_id.get(original_block.block_id, original_block)
+        suffix = truncated_suffixes.get(original_block.block_id, "")
+        if suffix:
+            restored.append(
+                result_block.model_copy(update={"text": f"{result_block.text}{suffix}"})
+            )
+        else:
+            restored.append(result_block)
+    return restored
+
+
 def _render_langchain_messages(
     messages: Sequence[BaseMessage],
     locations: Sequence[_BlockLocation],
@@ -233,21 +267,23 @@ def _apply_guard_failure(mode: PIIRemediationMode, exc: Exception) -> None:
     raise PIIRemediationError(str(exc)) from exc
 
 
-def _bounded_blocks(blocks: Iterable[PIITextBlock]) -> List[PIITextBlock]:
+def _bounded_blocks(blocks: Iterable[PIITextBlock]) -> tuple[List[PIITextBlock], Dict[str, str]]:
     bounded: List[PIITextBlock] = []
+    truncated_suffixes: Dict[str, str] = {}
     for block in blocks:
         text = block.text or ""
         if len(text) > settings.pii_remediation_max_chars:
+            truncated_suffixes[block.block_id] = text[settings.pii_remediation_max_chars :]
             bounded.append(
                 block.model_copy(update={"text": text[: settings.pii_remediation_max_chars]})
             )
         else:
             bounded.append(block)
-    return bounded
+    return bounded, truncated_suffixes
 
 
 async def guard_langchain_input(
-    payload: str | BaseMessage | Sequence[BaseMessage],
+    payload: str | BaseMessage | Sequence[Any],
     *,
     request_kind: str,
     metadata: Optional[Dict[str, Any]] = None,
@@ -257,6 +293,13 @@ async def guard_langchain_input(
     mode = _mode()
     if not is_pii_remediation_enabled(mode.value):
         return list(payload) if isinstance(payload, list) else payload
+
+    if _is_dict_message_sequence(payload):
+        return await guard_openai_chat_messages(
+            payload,
+            request_kind=request_kind,
+            metadata=metadata,
+        )
 
     if isinstance(payload, str):
         original_messages: List[BaseMessage] = [HumanMessage(content=payload)]
@@ -272,13 +315,14 @@ async def guard_langchain_input(
     if not blocks:
         return list(payload) if isinstance(payload, list) else payload
 
+    bounded_blocks, truncated_suffixes = _bounded_blocks(blocks)
     started = time.perf_counter()
     try:
         result = await get_pii_remediator().remediate(
             PIIRemediationRequest(
                 mode=mode,
                 request_kind=request_kind,
-                blocks=_bounded_blocks(blocks),
+                blocks=bounded_blocks,
                 categories=list(settings.pii_remediation_categories),
                 metadata=metadata or {},
             )
@@ -330,10 +374,11 @@ async def guard_langchain_input(
     if result.decision == PIIRemediationDecision.ALLOW:
         return list(payload) if isinstance(payload, list) else payload
 
+    restored_blocks = _restore_truncated_suffixes(blocks, result.blocks, truncated_suffixes)
     rendered = _render_langchain_messages(
         original_messages,
         locations,
-        {block.block_id: block for block in result.blocks},
+        {block.block_id: block for block in restored_blocks},
     )
     if restore == "string":
         return str(rendered[0].content or "")
@@ -359,13 +404,14 @@ async def guard_openai_chat_messages(
     if not blocks:
         return copy.deepcopy(original)
 
+    bounded_blocks, truncated_suffixes = _bounded_blocks(blocks)
     started = time.perf_counter()
     try:
         result = await get_pii_remediator().remediate(
             PIIRemediationRequest(
                 mode=mode,
                 request_kind=request_kind,
-                blocks=_bounded_blocks(blocks),
+                blocks=bounded_blocks,
                 categories=list(settings.pii_remediation_categories),
                 metadata=metadata or {},
             )
@@ -417,8 +463,9 @@ async def guard_openai_chat_messages(
     if result.decision == PIIRemediationDecision.ALLOW:
         return copy.deepcopy(original)
 
+    restored_blocks = _restore_truncated_suffixes(blocks, result.blocks, truncated_suffixes)
     return _render_openai_messages(
-        original, locations, {block.block_id: block for block in result.blocks}
+        original, locations, {block.block_id: block for block in restored_blocks}
     )
 
 

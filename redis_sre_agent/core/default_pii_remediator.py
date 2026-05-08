@@ -184,11 +184,8 @@ class DefaultPrivacyFilterPIIRemediator:
                 )
 
         if request.mode == PIIRemediationMode.DETECT or not findings:
-            decision = (
-                PIIRemediationDecision.ALLOW if not findings else PIIRemediationDecision.ALLOW
-            )
             return PIIRemediationResult(
-                decision=decision,
+                decision=PIIRemediationDecision.ALLOW,
                 blocks=request.blocks,
                 findings=findings,
                 detector_name=self.detector_name,

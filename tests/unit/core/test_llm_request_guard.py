@@ -207,3 +207,77 @@ async def test_guarded_ainvoke_passes_redacted_payload(monkeypatch, guard_settin
     llm.ainvoke.assert_awaited_once()
     sent_payload = llm.ainvoke.await_args.args[0]
     assert sent_payload[0].content == "redacted"
+
+
+@pytest.mark.asyncio
+async def test_guarded_ainvoke_supports_openai_style_dict_messages(monkeypatch, guard_settings):
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value="ok"))
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.REDACTED,
+            blocks=[
+                PIITextBlock(
+                    block_id="oa:0",
+                    path="messages[0].content",
+                    role="user",
+                    text="reach [PII:EMAIL:1]",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="private_email",
+                    block_id="oa:0",
+                    placeholder="[PII:EMAIL:1]",
+                    text="alice@example.com",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    payload = [{"role": "user", "content": "reach alice@example.com"}]
+
+    result = await guarded_ainvoke(llm, payload, request_kind="unit")
+
+    assert result == "ok"
+    sent_payload = llm.ainvoke.await_args.args[0]
+    assert sent_payload[0]["content"] == "reach [PII:EMAIL:1]"
+
+
+@pytest.mark.asyncio
+async def test_guard_langchain_input_preserves_tail_beyond_max_chars(monkeypatch, guard_settings):
+    guard_settings.pii_remediation_max_chars = 10
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.REDACTED,
+            blocks=[
+                PIITextBlock(
+                    block_id="lc:0",
+                    path="messages[0].content",
+                    role="human",
+                    text="[PII:EMAIL:1]",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="private_email",
+                    block_id="lc:0",
+                    placeholder="[PII:EMAIL:1]",
+                    text="alice@exam",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    result = await guard_langchain_input("alice@example.com trailing", request_kind="unit")
+
+    assert result == "[PII:EMAIL:1]ple.com trailing"
