@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from redis_sre_agent.agent import knowledge_context as knowledge_context_module
 from redis_sre_agent.agent.knowledge_context import (
     _build_internal_pinned_context_envelope,
     _build_internal_startup_skills_envelope,
@@ -298,8 +299,8 @@ async def test_startup_context_carries_internal_skill_discovery_envelope():
     assert envelope["tool_key"] == "knowledge.startup_skills_check"
     assert envelope["name"] == "skills_check"
     assert envelope["args"] == {
-        "query": "memory issue",
-        "limit": 20,
+        "query": "",
+        "limit": 25,
         "offset": 0,
         "version": "latest",
     }
@@ -379,7 +380,8 @@ async def test_startup_context_uses_eval_scoped_knowledge_backend():
             }
 
         async def skills_check(self, **kwargs):
-            assert kwargs["query"] == "memory issue"
+            assert kwargs["query"] is None
+            assert kwargs["limit"] == 25
             return {
                 "skills": [
                     {
@@ -437,3 +439,34 @@ async def test_startup_context_keeps_skill_listing_compact():
     assert "Redis Maintenance Triage: Investigate maintenance mode before failover." in context
     assert "references/maintenance-checklist.md" not in context
     assert "Scripts:" not in context
+
+
+@pytest.mark.asyncio
+async def test_startup_context_uses_unfiltered_skills_toc_limit_from_settings():
+    skills_check = AsyncMock(
+        return_value={
+            "skills": [
+                {
+                    "name": "Redis Maintenance Triage",
+                    "description": "Investigate maintenance mode before failover.",
+                }
+            ]
+        }
+    )
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=skills_check,
+        ),
+        patch.object(knowledge_context_module.settings, "startup_skills_toc_limit", 7),
+    ):
+        context = await build_startup_knowledge_context(
+            query="run a health check", version="latest"
+        )
+
+    assert "Redis Maintenance Triage: Investigate maintenance mode before failover." in context
+    skills_check.assert_awaited_once_with(query=None, limit=7, offset=0, version="latest")

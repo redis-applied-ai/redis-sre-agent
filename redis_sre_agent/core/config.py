@@ -562,6 +562,10 @@ class Settings(BaseSettings):
         default=12000,
         description="Character budget for explicit skill resource retrieval responses.",
     )
+    startup_skills_toc_limit: int = Field(
+        default=25,
+        description="Maximum number of skills to inject into the startup prompt TOC.",
+    )
 
     target_integrations: TargetIntegrationsConfig = Field(
         default_factory=TargetIntegrationsConfig,
