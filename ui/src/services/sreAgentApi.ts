@@ -340,6 +340,56 @@ export interface AgentStatus {
   status?: string;
 }
 
+export interface ThreadMemoryItem {
+  id: string | null;
+  text: string | null;
+  memory_type: string | null;
+  created_at: string | null;
+  last_accessed: string | null;
+  topics: string[];
+  entities: string[];
+}
+
+export interface ThreadMemorySectionList {
+  items: ThreadMemoryItem[];
+  total: number;
+  next_offset: number | null;
+}
+
+export interface ThreadMemorySection {
+  long_term: ThreadMemorySectionList;
+  working_memory_context: string | null;
+}
+
+export interface ThreadMemoryScope {
+  user_id: string | null;
+  instance_id: string | null;
+  cluster_id: string | null;
+}
+
+export type ThreadMemoryStatus =
+  | "loaded"
+  | "disabled"
+  | "unavailable"
+  | "missing_scope"
+  | "error";
+
+export interface ThreadMemoryResponse {
+  enabled: boolean;
+  status: ThreadMemoryStatus;
+  error: string | null;
+  scope: ThreadMemoryScope;
+  user_scope: ThreadMemorySection | null;
+  asset_scope: ThreadMemorySection | null;
+}
+
+export interface ThreadMemoryParams {
+  userLimit?: number;
+  userOffset?: number;
+  assetLimit?: number;
+  assetOffset?: number;
+}
+
 class SREAgentAPI {
   private tasksBaseUrl: string;
 
@@ -1473,6 +1523,28 @@ class SREAgentAPI {
       throw new Error(
         `Failed to update knowledge settings: ${response.statusText}`,
       );
+    }
+    return response.json();
+  }
+
+  async getThreadMemory(
+    threadId: string,
+    params?: ThreadMemoryParams,
+  ): Promise<ThreadMemoryResponse> {
+    const query = new URLSearchParams();
+    if (params?.userLimit != null)
+      query.set("user_limit", String(params.userLimit));
+    if (params?.userOffset != null)
+      query.set("user_offset", String(params.userOffset));
+    if (params?.assetLimit != null)
+      query.set("asset_limit", String(params.assetLimit));
+    if (params?.assetOffset != null)
+      query.set("asset_offset", String(params.assetOffset));
+    const qs = query.toString();
+    const url = `${this.tasksBaseUrl}/memory/thread/${threadId}${qs ? `?${qs}` : ""}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch thread memory: ${response.statusText}`);
     }
     return response.json();
   }
