@@ -1,8 +1,8 @@
 """Read-only API for surfacing Agent Memory Server memories tied to a thread.
 
-Powers the Memory side panel in the SRE Agent UI. Reuses the same AMS client
-the agent uses internally; never exposes credentials or working-memory
-message streams.
+Powers the Memory side panel in the SRE Agent UI. Composes the same
+MemorySession primitives the agent uses internally so retrieval logic,
+namespace selection, and asset/user scope filtering stay in one place.
 """
 
 from __future__ import annotations
@@ -12,7 +12,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from redis_sre_agent.core.agent_memory import AgentMemoryService
+from redis_sre_agent.core.agent_memory import (
+    AgentMemoryService,
+    LongTermSearchResult,
+    MemorySession,
+    WorkingMemoryResult,
+)
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.threads import ThreadManager
@@ -21,20 +26,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-try:
-    from agent_memory_client import MemoryAPIClient, MemoryClientConfig
-    from agent_memory_client.exceptions import MemoryNotFoundError
-    from agent_memory_client.filters import Entities, Namespace, UserId
-
-    AMS_SDK_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    MemoryAPIClient = None  # type: ignore[assignment]
-    MemoryClientConfig = None  # type: ignore[assignment]
-    MemoryNotFoundError = Exception  # type: ignore[misc,assignment]
-    Entities = None  # type: ignore[assignment]
-    Namespace = None  # type: ignore[assignment]
-    UserId = None  # type: ignore[assignment]
-    AMS_SDK_AVAILABLE = False
+# Broad-text fallbacks tried in order. AMS search requires a text query;
+# entity / user_id filters narrow results, but text drives semantic ranking.
+# Each phrase is generic enough that any in-scope memory should match at
+# least one of them.
+_LIST_QUERY_FALLBACKS = (
+    "redis sre operational context",
+    "redis",
+    "memory",
+)
 
 
 def _serialize_memory(memory: Any) -> Dict[str, Any]:
@@ -74,99 +74,84 @@ def _disabled_response(reason: str = "disabled") -> Dict[str, Any]:
     }
 
 
-def _empty_section() -> Dict[str, Any]:
+def _serialize_section(
+    *,
+    long_term: LongTermSearchResult,
+    working: WorkingMemoryResult,
+) -> Dict[str, Any]:
     return {
-        "long_term": {"items": [], "total": 0, "next_offset": None},
-        "working_memory_context": None,
+        "long_term": {
+            "items": [_serialize_memory(m) for m in long_term.memories],
+            "total": long_term.total,
+            "next_offset": long_term.next_offset,
+        },
+        "working_memory_context": getattr(working.memory, "context", None),
     }
 
 
-def _ams_client_config() -> Any:
-    return MemoryClientConfig(
-        base_url=settings.agent_memory_base_url or "",
-        timeout=settings.agent_memory_timeout,
-        default_namespace=settings.agent_memory_namespace,
-        default_model_name=settings.agent_memory_model_name,
-    )
-
-
-async def _fetch_long_term(
-    client: Any,
+async def _list_user_long_term(
+    session: MemorySession,
     *,
-    namespace: str,
-    user_id: Optional[str],
-    entities: Optional[List[str]],
+    user_id: str,
     limit: int,
     offset: int,
-) -> Dict[str, Any]:
-    """List filter-matching memories. Uses a broad text query to satisfy AMS
-    semantic search; relies on user_id/entities filters for correctness.
-    """
-
-    base_kwargs: Dict[str, Any] = {
-        "namespace": Namespace(eq=namespace),
-        "limit": limit,
-        "offset": offset,
-        "distance_threshold": 1.5,
-    }
-    if user_id:
-        base_kwargs["user_id"] = UserId(eq=user_id)
-    if entities:
-        base_kwargs["entities"] = Entities(any=entities)
-
-    last_exc: Optional[Exception] = None
-    for query_text in (
-        "redis sre operational context",
-        "redis",
-        "memory",
-    ):
-        try:
-            result = await client.search_long_term_memory(text=query_text, **base_kwargs)
-            memories = list(getattr(result, "memories", []) or [])
-            if not memories and query_text != "memory":
-                continue
-            total = getattr(result, "total", None)
-            if total is None:
-                total = len(memories)
-            next_offset = offset + len(memories) if len(memories) >= limit else None
-            return {
-                "items": [_serialize_memory(m) for m in memories],
-                "total": total,
-                "next_offset": next_offset,
-            }
-        except Exception as exc:  # pragma: no cover - defensive across AMS versions
-            last_exc = exc
-            continue
-
-    if last_exc is not None:
-        raise last_exc
-    return {"items": [], "total": 0, "next_offset": None}
+) -> LongTermSearchResult:
+    """Try broad-text fallbacks until one returns results (or all exhaust)."""
+    last: Optional[LongTermSearchResult] = None
+    for query in _LIST_QUERY_FALLBACKS:
+        result = await session.search_user_long_term(
+            query=query, user_id=user_id, limit=limit, offset=offset
+        )
+        if result.memories:
+            return result
+        last = result
+    return last or LongTermSearchResult()
 
 
-async def _fetch_working_context(
-    client: Any,
+async def _list_asset_long_term(
+    session: MemorySession,
     *,
-    session_id: Optional[str],
-    namespace: str,
-    user_id: Optional[str] = None,
-) -> Optional[str]:
-    """Return the AMS-managed working-memory context summary, never the messages."""
-    if not session_id:
-        return None
+    instance_id: Optional[str],
+    cluster_id: Optional[str],
+    limit: int,
+    offset: int,
+) -> LongTermSearchResult:
+    """Try broad-text fallbacks until one returns results (or all exhaust)."""
+    last: Optional[LongTermSearchResult] = None
+    for query in _LIST_QUERY_FALLBACKS:
+        result = await session.search_asset_long_term(
+            query=query,
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            limit=limit,
+            offset=offset,
+            filter_preferences=True,
+        )
+        if result.memories:
+            return result
+        last = result
+    return last or LongTermSearchResult()
+
+
+def _resolve_scope(state: Any) -> Dict[str, Optional[str]]:
+    """Extract user_id, instance_id, cluster_id from a thread state."""
     try:
-        kwargs: Dict[str, Any] = {
-            "session_id": session_id,
-            "namespace": namespace,
-        }
-        if user_id:
-            kwargs["user_id"] = user_id
-        memory = await client.get_working_memory(**kwargs)
-        return getattr(memory, "context", None)
-    except MemoryNotFoundError:
-        return None
-    except Exception as exc:
-        logger.debug("get_working_memory failed for %s/%s: %s", namespace, session_id, exc)
-        return None
+        metadata = state.metadata.model_dump()
+    except Exception:
+        try:
+            metadata = dict(state.metadata)  # type: ignore[arg-type]
+        except Exception:
+            metadata = {}
+    context: Dict[str, Any] = dict(state.context or {})
+
+    raw_user = (metadata or {}).get("user_id") or context.get("user_id")
+    user_id = (str(raw_user).strip() or None) if raw_user else None
+    if not AgentMemoryService._valid_user_id(user_id):
+        user_id = None
+
+    instance_id = str(context.get("instance_id") or "").strip() or None
+    cluster_id = str(context.get("cluster_id") or "").strip() or None
+    return {"user_id": user_id, "instance_id": instance_id, "cluster_id": cluster_id}
 
 
 @router.get("/memory/thread/{thread_id}")
@@ -177,12 +162,11 @@ async def get_thread_memory(
     asset_limit: int = Query(default=50, ge=1, le=200),
     asset_offset: int = Query(default=0, ge=0),
 ) -> Dict[str, Any]:
-    """List all in-scope user and asset memories for a given thread."""
+    """List in-scope user and asset memories for a given thread."""
 
-    if not (settings.agent_memory_enabled and settings.agent_memory_base_url):
-        return _disabled_response("disabled")
-    if not AMS_SDK_AVAILABLE or MemoryAPIClient is None:
-        return _disabled_response("unavailable")
+    service = AgentMemoryService()
+    if not service.enabled:
+        return _disabled_response("disabled" if settings.agent_memory_enabled else "disabled")
 
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
@@ -190,33 +174,12 @@ async def get_thread_memory(
     if state is None:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    try:
-        metadata = state.metadata.model_dump()
-    except Exception:
-        try:
-            metadata = dict(state.metadata)  # type: ignore[arg-type]
-        except Exception:
-            metadata = {}
+    scope = _resolve_scope(state)
+    user_id = scope["user_id"]
+    instance_id = scope["instance_id"]
+    cluster_id = scope["cluster_id"]
 
-    context: Dict[str, Any] = dict(state.context or {})
-    user_id_raw = (metadata or {}).get("user_id") or context.get("user_id")
-    user_id = (str(user_id_raw).strip() or None) if user_id_raw else None
-    if not AgentMemoryService._valid_user_id(user_id):
-        user_id = None
-
-    instance_id = str(context.get("instance_id") or "").strip() or None
-    cluster_id = str(context.get("cluster_id") or "").strip() or None
-    entities = AgentMemoryService._target_entities(
-        instance_id=instance_id, cluster_id=cluster_id
-    )
-
-    scope = {
-        "user_id": user_id,
-        "instance_id": instance_id,
-        "cluster_id": cluster_id,
-    }
-
-    if not user_id and not entities:
+    if not user_id and not (instance_id or cluster_id):
         return {
             "enabled": True,
             "status": "missing_scope",
@@ -230,59 +193,39 @@ async def get_thread_memory(
     asset_section: Optional[Dict[str, Any]] = None
 
     try:
-        async with MemoryAPIClient(_ams_client_config()) as client:
+        async with service.open_session() as ams_session:
             if user_id:
-                user_long_term = await _fetch_long_term(
-                    client,
-                    namespace=settings.agent_memory_namespace,
+                user_long_term = await _list_user_long_term(
+                    ams_session,
                     user_id=user_id,
-                    entities=None,
                     limit=user_limit,
                     offset=user_offset,
                 )
-                user_working = await _fetch_working_context(
-                    client,
+                user_working = await ams_session.get_user_working_memory(
                     session_id=thread_id,
-                    namespace=settings.agent_memory_namespace,
                     user_id=user_id,
+                    create_if_missing=False,
                 )
-                user_section = {
-                    "long_term": user_long_term,
-                    "working_memory_context": user_working,
-                }
+                user_section = _serialize_section(
+                    long_term=user_long_term, working=user_working
+                )
 
-            if entities:
-                asset_long_term_raw = await _fetch_long_term(
-                    client,
-                    namespace=settings.agent_memory_asset_namespace,
-                    user_id=None,
-                    entities=entities,
+            if instance_id or cluster_id:
+                asset_long_term = await _list_asset_long_term(
+                    ams_session,
+                    instance_id=instance_id,
+                    cluster_id=cluster_id,
                     limit=asset_limit,
                     offset=asset_offset,
                 )
-                filtered_items = [
-                    item
-                    for item in asset_long_term_raw["items"]
-                    if not AgentMemoryService._is_operator_preference_memory(item.get("text"))
-                ]
-                removed = len(asset_long_term_raw["items"]) - len(filtered_items)
-                asset_long_term = {
-                    "items": filtered_items,
-                    "total": max(0, asset_long_term_raw["total"] - removed),
-                    "next_offset": asset_long_term_raw["next_offset"],
-                }
-                asset_session_id = AgentMemoryService._asset_session_id(
-                    instance_id=instance_id, cluster_id=cluster_id
+                asset_working = await ams_session.get_asset_working_memory(
+                    instance_id=instance_id,
+                    cluster_id=cluster_id,
+                    create_if_missing=False,
                 )
-                asset_working = await _fetch_working_context(
-                    client,
-                    session_id=asset_session_id,
-                    namespace=settings.agent_memory_asset_namespace,
+                asset_section = _serialize_section(
+                    long_term=asset_long_term, working=asset_working
                 )
-                asset_section = {
-                    "long_term": asset_long_term,
-                    "working_memory_context": asset_working,
-                }
     except Exception as exc:
         logger.warning("AMS memory listing failed for thread %s: %s", thread_id, exc)
         return {
@@ -290,8 +233,8 @@ async def get_thread_memory(
             "status": "error",
             "error": str(exc),
             "scope": scope,
-            "user_scope": user_section or _empty_section(),
-            "asset_scope": asset_section or _empty_section(),
+            "user_scope": user_section,
+            "asset_scope": asset_section,
         }
 
     return {
