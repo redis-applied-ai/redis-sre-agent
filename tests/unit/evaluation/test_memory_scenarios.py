@@ -194,10 +194,9 @@ async def test_inject_memory_fixture_patches_agent_memory_service(user_fixture):
 @pytest.mark.asyncio
 async def test_run_agent_only_scenario_activates_memory_injection():
     """Verify inject_memory_fixture is active during run_agent_only_scenario."""
-    from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
-    from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
-    from redis_sre_agent.evaluation.scenarios import EvalScenario
     from redis_sre_agent.core.agent_memory import AgentMemoryService
+    from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
+    from redis_sre_agent.evaluation.scenarios import EvalScenario
 
     scenario = EvalScenario.model_validate(
         {
@@ -258,14 +257,15 @@ async def test_run_agent_only_scenario_activates_memory_injection():
 
 
 def test_memory_user_preference_honored_scenario_loads():
-    from redis_sre_agent.evaluation.runtime import load_eval_scenario
+    import json
+
     from redis_sre_agent.evaluation.fixture_layout import (
-        scenario_manifest_path,
         golden_assertions_path,
         golden_expected_response_path,
         golden_metadata_path,
+        scenario_manifest_path,
     )
-    import json
+    from redis_sre_agent.evaluation.runtime import load_eval_scenario
 
     path = scenario_manifest_path("prompt", "memory-user-preference-honored")
     assert path.exists(), f"Scenario not found: {path}"
@@ -289,14 +289,15 @@ def test_memory_user_preference_honored_scenario_loads():
 
 
 def test_memory_asset_incident_context_scenario_loads():
-    from redis_sre_agent.evaluation.runtime import load_eval_scenario
+    import json
+
     from redis_sre_agent.evaluation.fixture_layout import (
-        scenario_manifest_path,
         golden_assertions_path,
         golden_expected_response_path,
         golden_metadata_path,
+        scenario_manifest_path,
     )
-    import json
+    from redis_sre_agent.evaluation.runtime import load_eval_scenario
 
     path = scenario_manifest_path("prompt", "memory-asset-incident-context")
     assert path.exists(), f"Scenario not found: {path}"
