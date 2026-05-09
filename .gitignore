@@ -147,3 +147,4 @@ eval_reports
 
 # Specs are kept local; do not track new spec files here.
 specs/
+docs/superpowers/
