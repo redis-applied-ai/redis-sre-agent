@@ -322,7 +322,7 @@ class TestPersistTurn:
         ]
 
     @pytest.mark.asyncio
-    async def test_persist_turn_drops_inseparable_mixed_sentence(self, memory_settings):
+    async def test_persist_turn_routes_inseparable_mixed_sentence_to_user_scope(self, memory_settings):
         user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
         asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
         mock_client = AsyncMock()
@@ -343,7 +343,8 @@ class TestPersistTurn:
                 thread_id="thread-1",
             )
 
-        assert mock_client.put_working_memory.await_count == 0
+        # Preference signal wins when sentence can't be split — routes to user scope, not dropped
+        assert mock_client.put_working_memory.await_count >= 1
 
     @pytest.mark.asyncio
     async def test_persist_turn_deduplicates_existing_context_lines(self, memory_settings):

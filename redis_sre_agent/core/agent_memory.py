@@ -302,6 +302,8 @@ class AgentMemoryService:
                     if user_fragment and asset_fragment:
                         scoped["user"][role].append(user_fragment)
                         scoped["asset"][role].append(asset_fragment)
+                    else:
+                        scoped["user"][role].append(sentence)
                     continue
 
                 if is_user:
