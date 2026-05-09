@@ -164,7 +164,7 @@ class AgentMemoryService:
     """Thin AMS adapter for turn-scoped retrieval and persistence."""
 
     _PREFERENCE_PATTERNS = (
-        "prefer",
+        "prefers",
         "preference",
         "likes ",
         "wants ",
