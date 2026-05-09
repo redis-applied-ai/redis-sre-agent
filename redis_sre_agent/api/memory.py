@@ -166,7 +166,7 @@ async def get_thread_memory(
 
     service = AgentMemoryService()
     if not service.enabled:
-        return _disabled_response("disabled" if settings.agent_memory_enabled else "disabled")
+        return _disabled_response("unavailable" if settings.agent_memory_enabled else "disabled")
 
     rc = get_redis_client()
     tm = ThreadManager(redis_client=rc)
