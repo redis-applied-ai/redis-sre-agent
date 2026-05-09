@@ -137,9 +137,13 @@ async def inject_memory_fixture(scenario: "EvalScenario") -> AsyncIterator[None]
         return
     with contextlib.ExitStack() as stack:
         stack.enter_context(mock.patch.object(AgentMemoryService, "__init__", _force_enabled_init))
-        stack.enter_context(mock.patch.object(AgentMemoryService, "open_session", _fake_open_session(fixture)))
+        stack.enter_context(
+            mock.patch.object(AgentMemoryService, "open_session", _fake_open_session(fixture))
+        )
         if _has_asset_memory(fixture):
-            stack.enter_context(mock.patch.object(AgentMemoryService, "_target_entities", _fake_target_entities))
+            stack.enter_context(
+                mock.patch.object(AgentMemoryService, "_target_entities", _fake_target_entities)
+            )
         yield
 
 

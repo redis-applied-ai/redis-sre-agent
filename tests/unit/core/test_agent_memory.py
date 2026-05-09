@@ -236,7 +236,7 @@ class TestPersistTurn:
         ]
         assert [message.content for message in asset_memory.messages] == [
             "investigating service-12345 latency",
-            "service-12345 had latency and replica lag during backups."
+            "service-12345 had latency and replica lag during backups.",
         ]
 
     @pytest.mark.asyncio

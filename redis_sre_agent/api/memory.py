@@ -206,9 +206,7 @@ async def get_thread_memory(
                     user_id=user_id,
                     create_if_missing=False,
                 )
-                user_section = _serialize_section(
-                    long_term=user_long_term, working=user_working
-                )
+                user_section = _serialize_section(long_term=user_long_term, working=user_working)
 
             if instance_id or cluster_id:
                 asset_long_term = await _list_asset_long_term(
@@ -223,9 +221,7 @@ async def get_thread_memory(
                     cluster_id=cluster_id,
                     create_if_missing=False,
                 )
-                asset_section = _serialize_section(
-                    long_term=asset_long_term, working=asset_working
-                )
+                asset_section = _serialize_section(long_term=asset_long_term, working=asset_working)
     except Exception as exc:
         logger.warning("AMS memory listing failed for thread %s: %s", thread_id, exc)
         return {

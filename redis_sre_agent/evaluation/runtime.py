@@ -600,7 +600,11 @@ async def run_full_turn_scenario(
                 if task_state is not None:
                     status = getattr(task_state, "status", None)
                     task_status = (
-                        status.value if hasattr(status, "value") else str(status) if status else None
+                        status.value
+                        if hasattr(status, "value")
+                        else str(status)
+                        if status
+                        else None
                     )
 
                 return EvalFullTurnResult(

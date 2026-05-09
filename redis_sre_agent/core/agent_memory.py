@@ -574,7 +574,9 @@ class AgentMemoryService:
 
                     scope_key = "user" if scope_user_id is not None else "asset"
                     scoped_user_text = "\n".join(scoped_payloads[scope_key]["user"]).strip()
-                    scoped_assistant_text = "\n".join(scoped_payloads[scope_key]["assistant"]).strip()
+                    scoped_assistant_text = "\n".join(
+                        scoped_payloads[scope_key]["assistant"]
+                    ).strip()
                     if not scoped_user_text and not scoped_assistant_text:
                         return
 
@@ -816,9 +818,7 @@ class MemorySession:
         Returns memory=None when no session id can be determined.
         """
         asset_session_id = (
-            self._service._asset_session_id(
-                instance_id=instance_id, cluster_id=cluster_id
-            )
+            self._service._asset_session_id(instance_id=instance_id, cluster_id=cluster_id)
             or fallback_session_id
         )
         if asset_session_id is None:
@@ -876,9 +876,7 @@ class MemorySession:
         asset/user scope boundary is enforced consistently across
         callers.
         """
-        entities = self._service._target_entities(
-            instance_id=instance_id, cluster_id=cluster_id
-        )
+        entities = self._service._target_entities(instance_id=instance_id, cluster_id=cluster_id)
         if not entities:
             return LongTermSearchResult(memories=[], total=0, next_offset=None)
         result = await self._client.search_long_term_memory(
@@ -900,9 +898,7 @@ class MemorySession:
         )
 
     @staticmethod
-    def _wrap_search_result(
-        result: Any, *, limit: int, offset: int
-    ) -> LongTermSearchResult:
+    def _wrap_search_result(result: Any, *, limit: int, offset: int) -> LongTermSearchResult:
         memories = list(getattr(result, "memories", []) or [])
         total = getattr(result, "total", None)
         if total is None:

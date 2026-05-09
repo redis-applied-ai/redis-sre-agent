@@ -10,16 +10,21 @@ from redis_sre_agent.evaluation.scenarios import EvalMemoryFixture, EvalMemoryRe
 
 
 def test_eval_memory_fixture_parses_user_and_asset_fields():
-    fixture = EvalMemoryFixture.model_validate({
-        "user_context": "User prefers remediation-first answers",
-        "user_long_term": [
-            {"text": "User prefers remediation-first troubleshooting", "memory_type": "semantic"}
-        ],
-        "asset_context": "Cluster had failover during backup window",
-        "asset_long_term": [
-            {"text": "Redis cluster had an OOM incident last week", "memory_type": "episodic"}
-        ],
-    })
+    fixture = EvalMemoryFixture.model_validate(
+        {
+            "user_context": "User prefers remediation-first answers",
+            "user_long_term": [
+                {
+                    "text": "User prefers remediation-first troubleshooting",
+                    "memory_type": "semantic",
+                }
+            ],
+            "asset_context": "Cluster had failover during backup window",
+            "asset_long_term": [
+                {"text": "Redis cluster had an OOM incident last week", "memory_type": "episodic"}
+            ],
+        }
+    )
     assert fixture.user_context == "User prefers remediation-first answers"
     assert len(fixture.user_long_term) == 1
     assert fixture.user_long_term[0].text == "User prefers remediation-first troubleshooting"
@@ -52,7 +57,9 @@ def user_fixture():
     return EvalMemoryFixture(
         user_context="User prefers remediation-first answers",
         user_long_term=[
-            EvalMemoryRecord(text="User prefers remediation-first troubleshooting", memory_type="semantic"),
+            EvalMemoryRecord(
+                text="User prefers remediation-first troubleshooting", memory_type="semantic"
+            ),
         ],
     )
 
@@ -62,7 +69,9 @@ def asset_fixture():
     return EvalMemoryFixture(
         asset_context="Cluster had failover last week",
         asset_long_term=[
-            EvalMemoryRecord(text="Redis cluster had OOM incident during backup", memory_type="episodic"),
+            EvalMemoryRecord(
+                text="Redis cluster had OOM incident during backup", memory_type="episodic"
+            ),
             EvalMemoryRecord(text="Operator prefers concise replies", memory_type="semantic"),
         ],
     )
@@ -71,6 +80,7 @@ def asset_fixture():
 @pytest.mark.asyncio
 async def test_fake_memory_session_returns_user_working_memory(user_fixture):
     from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
+
     session = FakeMemorySession(user_fixture)
     result = await session.get_user_working_memory(session_id="s1", user_id="u1")
     assert isinstance(result, WorkingMemoryResult)
@@ -82,6 +92,7 @@ async def test_fake_memory_session_returns_user_working_memory(user_fixture):
 @pytest.mark.asyncio
 async def test_fake_memory_session_returns_user_long_term(user_fixture):
     from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
+
     session = FakeMemorySession(user_fixture)
     result = await session.search_user_long_term(query="latency", user_id="u1", limit=10, offset=0)
     assert isinstance(result, LongTermSearchResult)
@@ -92,6 +103,7 @@ async def test_fake_memory_session_returns_user_long_term(user_fixture):
 @pytest.mark.asyncio
 async def test_fake_memory_session_search_user_long_term_respects_limit(user_fixture):
     from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
+
     fixture = EvalMemoryFixture(
         user_long_term=[
             EvalMemoryRecord(text="Memory A", memory_type="semantic"),
@@ -109,10 +121,15 @@ async def test_fake_memory_session_search_user_long_term_respects_limit(user_fix
 @pytest.mark.asyncio
 async def test_fake_memory_session_filters_preferences_from_asset_scope(asset_fixture):
     from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
+
     session = FakeMemorySession(asset_fixture)
     result = await session.search_asset_long_term(
-        query="oom", instance_id="i1", cluster_id=None,
-        limit=10, offset=0, filter_preferences=True,
+        query="oom",
+        instance_id="i1",
+        cluster_id=None,
+        limit=10,
+        offset=0,
+        filter_preferences=True,
     )
     texts = [m.text for m in result.memories]
     assert "Redis cluster had OOM incident during backup" in texts
@@ -122,10 +139,15 @@ async def test_fake_memory_session_filters_preferences_from_asset_scope(asset_fi
 @pytest.mark.asyncio
 async def test_fake_memory_session_skips_filter_when_flag_false(asset_fixture):
     from redis_sre_agent.evaluation.fake_memory import FakeMemorySession
+
     session = FakeMemorySession(asset_fixture)
     result = await session.search_asset_long_term(
-        query="oom", instance_id="i1", cluster_id=None,
-        limit=10, offset=0, filter_preferences=False,
+        query="oom",
+        instance_id="i1",
+        cluster_id=None,
+        limit=10,
+        offset=0,
+        filter_preferences=False,
     )
     assert len(result.memories) == 2
 
@@ -135,23 +157,28 @@ async def test_inject_memory_fixture_patches_agent_memory_service(user_fixture):
     from redis_sre_agent.evaluation.fake_memory import FakeMemorySession, inject_memory_fixture
     from redis_sre_agent.evaluation.scenarios import EvalScenario
 
-    scenario = EvalScenario.model_validate({
-        "id": "test/memory-injection",
-        "name": "Memory injection test",
-        "provenance": {
-            "source_kind": "synthetic",
-            "source_pack": "test",
-            "source_pack_version": "2026-05-08",
-            "golden": {"expectation_basis": "human_authored"},
-        },
-        "execution": {"lane": "agent_only", "agent": "knowledge_only", "query": "test"},
-        "memory": {
-            "user_context": "User prefers remediation-first answers",
-            "user_long_term": [
-                {"text": "User prefers remediation-first troubleshooting", "memory_type": "semantic"}
-            ],
-        },
-    })
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "test/memory-injection",
+            "name": "Memory injection test",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "test",
+                "source_pack_version": "2026-05-08",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "agent_only", "agent": "knowledge_only", "query": "test"},
+            "memory": {
+                "user_context": "User prefers remediation-first answers",
+                "user_long_term": [
+                    {
+                        "text": "User prefers remediation-first troubleshooting",
+                        "memory_type": "semantic",
+                    }
+                ],
+            },
+        }
+    )
 
     captured = {}
 
@@ -172,30 +199,48 @@ async def test_run_agent_only_scenario_activates_memory_injection():
     from redis_sre_agent.evaluation.scenarios import EvalScenario
     from redis_sre_agent.core.agent_memory import AgentMemoryService
 
-    scenario = EvalScenario.model_validate({
-        "id": "test/memory-wiring",
-        "name": "Memory wiring test",
-        "provenance": {
-            "source_kind": "synthetic",
-            "source_pack": "test",
-            "source_pack_version": "2026-05-08",
-            "golden": {"expectation_basis": "human_authored"},
-        },
-        "execution": {"lane": "agent_only", "agent": "knowledge_only", "query": "latency check"},
-        "memory": {
-            "user_context": "User prefers remediation-first answers",
-            "user_long_term": [
-                {"text": "User prefers remediation-first troubleshooting", "memory_type": "semantic"}
-            ],
-        },
-    })
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "test/memory-wiring",
+            "name": "Memory wiring test",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "test",
+                "source_pack_version": "2026-05-08",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {
+                "lane": "agent_only",
+                "agent": "knowledge_only",
+                "query": "latency check",
+            },
+            "memory": {
+                "user_context": "User prefers remediation-first answers",
+                "user_long_term": [
+                    {
+                        "text": "User prefers remediation-first troubleshooting",
+                        "memory_type": "semantic",
+                    }
+                ],
+            },
+        }
+    )
 
     captured_session_type = {}
 
     class _FakeAgent:
-        async def process_query(self, query, session_id, user_id, max_iterations=10,
-                                context=None, progress_emitter=None, conversation_history=None):
+        async def process_query(
+            self,
+            query,
+            session_id,
+            user_id,
+            max_iterations=10,
+            context=None,
+            progress_emitter=None,
+            conversation_history=None,
+        ):
             from types import SimpleNamespace
+
             service = AgentMemoryService()
             assert service._enabled is True  # __init__ patched to force-enable
             async with service.open_session() as sess:
@@ -280,17 +325,19 @@ async def test_inject_memory_fixture_is_noop_for_empty_fixture():
     from redis_sre_agent.evaluation.fake_memory import inject_memory_fixture
     from redis_sre_agent.evaluation.scenarios import EvalScenario
 
-    scenario = EvalScenario.model_validate({
-        "id": "test/no-memory",
-        "name": "No memory",
-        "provenance": {
-            "source_kind": "synthetic",
-            "source_pack": "test",
-            "source_pack_version": "2026-05-08",
-            "golden": {"expectation_basis": "human_authored"},
-        },
-        "execution": {"lane": "agent_only", "agent": "knowledge_only", "query": "test"},
-    })
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "test/no-memory",
+            "name": "No memory",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "test",
+                "source_pack_version": "2026-05-08",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "agent_only", "agent": "knowledge_only", "query": "test"},
+        }
+    )
 
     service_before_enabled = AgentMemoryService()._enabled
 
