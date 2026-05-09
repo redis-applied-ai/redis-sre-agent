@@ -131,7 +131,6 @@ class TestKnowledgeAgent:
         assert "STARTUP_CONTEXT" in (initial_state["startup_system_prompt"] or "")
         assert initial_state["tool_call_budget_override"] == 7
         mock_build_startup_context.assert_awaited_once_with(
-            query="who runs AOP?",
             version="latest",
             available_tools=[],
         )
@@ -594,7 +593,6 @@ class TestKnowledgeAgentMethods:
         assert isinstance(sent_messages[0], SystemMessage)
         assert "STARTUP_CONTEXT" in sent_messages[0].content
         mock_build_startup_context.assert_awaited_once_with(
-            query="follow-up question",
             version="latest",
             available_tools=[],
         )
@@ -790,7 +788,6 @@ class TestKnowledgeAgentMethods:
         assert "FRESH_CONTEXT" in sent_messages[0].content
         assert "STALE_CONTEXT" not in sent_messages[0].content
         mock_build_startup_context.assert_awaited_once_with(
-            query="new question",
             version="latest",
             available_tools=[],
         )

@@ -709,7 +709,7 @@ class TestChatAgentStartupContext:
 
         mock_startup_context.assert_awaited_once()
         startup_kwargs = mock_startup_context.await_args.kwargs
-        assert startup_kwargs["query"] == "Who runs AOP?"
+        assert startup_kwargs["version"] == "latest"
         assert startup_kwargs["available_tools"] == [mock_tool]
 
     @pytest.mark.asyncio
@@ -2046,7 +2046,6 @@ class TestChatAgentStartupContext:
         assert isinstance(sent_messages[0], SystemMessage)
         assert "STARTUP_CONTEXT" in sent_messages[0].content
         mock_build_startup_context.assert_awaited_once_with(
-            query="follow-up question",
             version="latest",
             available_tools=[],
         )
