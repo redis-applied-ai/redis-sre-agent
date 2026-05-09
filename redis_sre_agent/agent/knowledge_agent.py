@@ -167,13 +167,7 @@ class KnowledgeOnlyAgent:
                 if startup_system_prompt is None or (
                     iteration_count == 0 and not startup_prompt_initialized
                 ):
-                    context_query = ""
-                    for message in reversed(messages):
-                        if isinstance(message, HumanMessage):
-                            context_query = str(message.content or "")
-                            break
                     startup_context = await build_startup_knowledge_context(
-                        query=context_query,
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
                     )
@@ -555,7 +549,6 @@ class KnowledgeOnlyAgent:
 
             # Build startup context once per query and seed initial SystemMessage.
             startup_context = await build_startup_knowledge_context(
-                query=query,
                 version="latest",
                 available_tools=tools,
             )

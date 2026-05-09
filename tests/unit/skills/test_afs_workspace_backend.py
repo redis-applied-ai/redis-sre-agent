@@ -189,6 +189,34 @@ async def test_afs_workspace_skill_backend_query_and_error_paths() -> None:
     assert missing_resource["error"] == "Skill resource not found"
 
 
+@pytest.mark.asyncio
+async def test_afs_workspace_skill_backend_omits_none_version_from_api_params() -> None:
+    responses = [
+        _FakeResponse({"data": {"skills": [], "total": 0}}),
+        _FakeResponse({"data": {"skills": [], "total": 0}}),
+    ]
+    client = _FakeAsyncClient(responses=responses)
+    backend = AFSWorkspaceSkillBackend(
+        base_url="https://skills.internal",
+        tenant_id="tenant_a",
+        project_id="proj_1",
+        agent_id="agent_1",
+        client_factory=lambda **kwargs: client,  # type: ignore[arg-type]
+    )
+
+    listed = await backend.list_skills(query=None, limit=10, offset=0, version=None)
+    assert listed["skills"] == []
+    assert client.calls[0][2] == {"limit": 10, "offset": 0}
+
+    vectorizer = AsyncMock()
+    vectorizer.aembed_many = AsyncMock(return_value=[[1.0, 0.0]])
+    with patch("redis_sre_agent.core.redis.get_vectorizer", return_value=vectorizer):
+        queried = await backend.list_skills(query="health check", limit=10, offset=0, version=None)
+
+    assert queried["skills"] == []
+    assert client.calls[1][2] == {"limit": 100, "offset": 0}
+
+
 def test_afs_workspace_skill_backend_from_settings_uses_env_fallbacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

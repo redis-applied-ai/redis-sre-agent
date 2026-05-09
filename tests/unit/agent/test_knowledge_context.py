@@ -54,7 +54,7 @@ async def test_startup_context_memorizes_pinned_skills_and_tickets():
             ),
         ),
     ):
-        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     assert "Pinned documents:" in context
     assert "Pinned Skill" in context
@@ -82,7 +82,7 @@ async def test_startup_context_is_empty_without_pinned_docs_or_skills():
             new=AsyncMock(return_value={"skills": []}),
         ),
     ):
-        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     assert context == ""
 
@@ -100,7 +100,6 @@ async def test_startup_context_includes_tool_instructions_without_pinned_or_skil
         ),
     ):
         context = await build_startup_knowledge_context(
-            query="memory issue",
             version="latest",
             available_tools=[
                 ToolDefinition(
@@ -152,7 +151,6 @@ async def test_startup_context_extracts_capability_from_tool_definition():
             invoke=AsyncMock(return_value={}),
         )
         context = await build_startup_knowledge_context(
-            query="memory issue",
             version="latest",
             available_tools=[wrapped_tool],
         )
@@ -179,7 +177,6 @@ async def test_startup_context_extracts_capability_from_tool_metadata_only():
         )
         ignored_tool = SimpleNamespace(metadata=SimpleNamespace(), definition=None, capability=None)
         context = await build_startup_knowledge_context(
-            query="memory issue",
             version="latest",
             available_tools=[metadata_only_tool, ignored_tool],
         )
@@ -250,7 +247,7 @@ async def test_startup_context_carries_internal_pinned_context_envelope():
             new=AsyncMock(return_value={"skills": []}),
         ),
     ):
-        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     envelopes = getattr(context, "internal_tool_envelopes", [])
     assert len(envelopes) == 1
@@ -291,7 +288,7 @@ async def test_startup_context_carries_internal_skill_discovery_envelope():
             ),
         ),
     ):
-        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     envelopes = getattr(context, "internal_tool_envelopes", [])
     assert len(envelopes) == 1
@@ -328,7 +325,7 @@ async def test_startup_context_continues_when_pinned_document_load_fails():
             ),
         ),
     ):
-        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     assert "Pinned documents:" not in context
     assert "Iterative Memory Check: Use INFO memory first." in context
@@ -357,7 +354,7 @@ async def test_startup_context_continues_when_skills_check_fails():
             new=AsyncMock(side_effect=RuntimeError("skills index unavailable")),
         ),
     ):
-        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     assert "Pinned Runbook" in context
     assert "Skills you know:" not in context
@@ -402,7 +399,7 @@ async def test_startup_context_uses_eval_scoped_knowledge_backend():
             new=AsyncMock(side_effect=AssertionError("global skills helper should not run")),
         ),
     ):
-        context = await build_startup_knowledge_context(query="memory issue", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     assert "Scoped Pinned Doc" in context
     assert "Pinned eval content" in context
@@ -434,7 +431,7 @@ async def test_startup_context_keeps_skill_listing_compact():
             ),
         ),
     ):
-        context = await build_startup_knowledge_context(query="maintenance", version="latest")
+        context = await build_startup_knowledge_context(version="latest")
 
     assert "Redis Maintenance Triage: Investigate maintenance mode before failover." in context
     assert "references/maintenance-checklist.md" not in context
@@ -464,9 +461,7 @@ async def test_startup_context_uses_unfiltered_skills_toc_limit_from_settings():
         ),
         patch.object(knowledge_context_module.settings, "startup_skills_toc_limit", 7),
     ):
-        context = await build_startup_knowledge_context(
-            query="run a health check", version="latest"
-        )
+        context = await build_startup_knowledge_context(version="latest")
 
     assert "Redis Maintenance Triage: Investigate maintenance mode before failover." in context
     skills_check.assert_awaited_once_with(query=None, limit=7, offset=0, version="latest")

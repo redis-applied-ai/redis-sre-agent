@@ -251,7 +251,6 @@ def _build_internal_startup_skills_envelope(
 
 
 async def build_startup_knowledge_context(
-    query: str,
     version: Optional[str] = "latest",
     pinned_limit: int = 20,
     pinned_content_char_budget: int = 12000,

@@ -288,9 +288,9 @@ class AFSWorkspaceSkillBackend:
             "GET",
             self._base_path(),
             params={
-                "version": version,
                 "limit": limit,
                 "offset": offset,
+                **({"version": version} if version else {}),
             },
         )
         data = self._data_payload(payload)
@@ -348,9 +348,9 @@ class AFSWorkspaceSkillBackend:
             "GET",
             self._base_path(),
             params={
-                "version": version,
                 "limit": initial_limit,
                 "offset": 0,
+                **({"version": version} if version else {}),
             },
         )
         data = self._data_payload(payload)
@@ -365,9 +365,9 @@ class AFSWorkspaceSkillBackend:
                 "GET",
                 self._base_path(),
                 params={
-                    "version": version,
                     "limit": expanded_limit,
                     "offset": 0,
+                    **({"version": version} if version else {}),
                 },
             )
             data = self._data_payload(payload)

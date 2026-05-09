@@ -1128,13 +1128,7 @@ Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new s
                 if startup_system_prompt is None or (
                     iteration_count == 0 and not startup_prompt_initialized
                 ):
-                    context_query = ""
-                    for message in reversed(messages):
-                        if isinstance(message, HumanMessage):
-                            context_query = str(message.content or "")
-                            break
                     startup_context = await build_startup_knowledge_context(
-                        query=context_query,
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
                     )
@@ -2364,7 +2358,6 @@ For now, I can still perform basic Redis diagnostics using the database connecti
                 logger.debug(f"  - {tool.name}")
 
             startup_context = await build_startup_knowledge_context(
-                query=enhanced_query,
                 version="latest",
                 available_tools=tools,
             )
