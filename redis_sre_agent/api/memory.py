@@ -8,7 +8,7 @@ namespace selection, and asset/user scope filtering stay in one place.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -70,7 +70,7 @@ def _disabled_response(reason: str = "disabled") -> Dict[str, Any]:
         "error": None,
         "scope": {"user_id": None, "instance_id": None, "cluster_id": None},
         "user_scope": None,
-        "asset_scope": None,
+        "asset_scopes": [],
     }
 
 
@@ -133,8 +133,40 @@ async def _list_asset_long_term(
     return last or LongTermSearchResult()
 
 
-def _resolve_scope(state: Any) -> Dict[str, Optional[str]]:
-    """Extract user_id, instance_id, cluster_id from a thread state."""
+async def _load_asset_scope_entry(
+    session: MemorySession,
+    *,
+    label: str,
+    instance_id: Optional[str],
+    cluster_id: Optional[str],
+    thread_id: str,
+    limit: int,
+    offset: int,
+) -> Dict[str, Any]:
+    """Fetch long-term and working memory for one asset and return a labelled section."""
+    long_term = await _list_asset_long_term(
+        session,
+        instance_id=instance_id,
+        cluster_id=cluster_id,
+        limit=limit,
+        offset=offset,
+    )
+    working = await session.get_asset_working_memory(
+        instance_id=instance_id,
+        cluster_id=cluster_id,
+        create_if_missing=False,
+    )
+    section = _serialize_section(long_term=long_term, working=working)
+    return {
+        "label": label,
+        "instance_id": instance_id,
+        "cluster_id": cluster_id,
+        **section,
+    }
+
+
+def _resolve_scope(state: Any) -> Dict[str, Any]:
+    """Extract user_id, instance_id, cluster_id, and referenced_assets from thread state."""
     try:
         metadata = state.metadata.model_dump()
     except Exception:
@@ -151,7 +183,40 @@ def _resolve_scope(state: Any) -> Dict[str, Optional[str]]:
 
     instance_id = str(context.get("instance_id") or "").strip() or None
     cluster_id = str(context.get("cluster_id") or "").strip() or None
-    return {"user_id": user_id, "instance_id": instance_id, "cluster_id": cluster_id}
+
+    raw_refs = context.get("referenced_assets")
+    referenced_assets: List[Dict[str, Any]] = []
+    if isinstance(raw_refs, list):
+        for entry in raw_refs:
+            if isinstance(entry, dict) and (entry.get("instance_id") or entry.get("cluster_id") or entry.get("target_handle")):
+                referenced_assets.append(entry)
+
+    return {
+        "user_id": user_id,
+        "instance_id": instance_id,
+        "cluster_id": cluster_id,
+        "referenced_assets": referenced_assets,
+    }
+
+
+async def _resolve_handle_to_ids(target_handle: str) -> tuple[Optional[str], Optional[str]]:
+    """Look up instance_id/cluster_id for a target_handle via the handle store."""
+    try:
+        from redis_sre_agent.core.targets import get_target_handle_store
+        store = get_target_handle_store()
+        record = await store.get_record(target_handle)
+        if record is None:
+            return None, None
+        subject = record.binding_subject or ""
+        kind = (record.private_binding_ref or {}).get("target_kind", "")
+        if kind == "instance":
+            return subject or None, None
+        if kind == "cluster":
+            return None, subject or None
+        return None, None
+    except Exception:
+        logger.debug("Could not resolve target_handle %s to IDs", target_handle)
+        return None, None
 
 
 @router.get("/memory/thread/{thread_id}")
@@ -178,19 +243,23 @@ async def get_thread_memory(
     user_id = scope["user_id"]
     instance_id = scope["instance_id"]
     cluster_id = scope["cluster_id"]
+    referenced_assets: List[Dict[str, Any]] = scope["referenced_assets"]
 
-    if not user_id and not (instance_id or cluster_id):
+    has_declared_asset = bool(instance_id or cluster_id)
+    has_referenced_assets = bool(referenced_assets)
+
+    if not user_id and not has_declared_asset and not has_referenced_assets:
         return {
             "enabled": True,
             "status": "missing_scope",
             "error": None,
-            "scope": scope,
+            "scope": {k: v for k, v in scope.items() if k != "referenced_assets"},
             "user_scope": None,
-            "asset_scope": None,
+            "asset_scopes": [],
         }
 
     user_section: Optional[Dict[str, Any]] = None
-    asset_section: Optional[Dict[str, Any]] = None
+    asset_scopes: List[Dict[str, Any]] = []
 
     try:
         async with service.open_session() as ams_session:
@@ -208,36 +277,67 @@ async def get_thread_memory(
                 )
                 user_section = _serialize_section(long_term=user_long_term, working=user_working)
 
-            if instance_id or cluster_id:
-                asset_long_term = await _list_asset_long_term(
+            if has_declared_asset:
+                label = instance_id or cluster_id or "asset"
+                entry = await _load_asset_scope_entry(
                     ams_session,
+                    label=label,
                     instance_id=instance_id,
                     cluster_id=cluster_id,
+                    thread_id=thread_id,
                     limit=asset_limit,
                     offset=asset_offset,
                 )
-                asset_working = await ams_session.get_asset_working_memory(
-                    instance_id=instance_id,
-                    cluster_id=cluster_id,
-                    create_if_missing=False,
+                asset_scopes.append(entry)
+
+            # Deduplicate referenced assets against the declared scope.
+            declared_key = (instance_id, cluster_id)
+            seen_keys = {declared_key} if has_declared_asset else set()
+
+            for ref in referenced_assets:
+                ref_instance = ref.get("instance_id") or None
+                ref_cluster = ref.get("cluster_id") or None
+                handle = ref.get("target_handle")
+
+                if not ref_instance and not ref_cluster and handle:
+                    ref_instance, ref_cluster = await _resolve_handle_to_ids(handle)
+
+                if not ref_instance and not ref_cluster:
+                    continue
+
+                key = (ref_instance, ref_cluster)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                label = ref.get("label") or ref_instance or ref_cluster or "asset"
+                entry = await _load_asset_scope_entry(
+                    ams_session,
+                    label=label,
+                    instance_id=ref_instance,
+                    cluster_id=ref_cluster,
+                    thread_id=thread_id,
+                    limit=asset_limit,
+                    offset=asset_offset,
                 )
-                asset_section = _serialize_section(long_term=asset_long_term, working=asset_working)
+                asset_scopes.append(entry)
+
     except Exception as exc:
         logger.warning("AMS memory listing failed for thread %s: %s", thread_id, exc)
         return {
             "enabled": True,
             "status": "error",
             "error": "Failed to load memory context",
-            "scope": scope,
+            "scope": {k: v for k, v in scope.items() if k != "referenced_assets"},
             "user_scope": user_section,
-            "asset_scope": asset_section,
+            "asset_scopes": asset_scopes,
         }
 
     return {
         "enabled": True,
         "status": "loaded",
         "error": None,
-        "scope": scope,
+        "scope": {k: v for k, v in scope.items() if k != "referenced_assets"},
         "user_scope": user_section,
-        "asset_scope": asset_section,
+        "asset_scopes": asset_scopes,
     }

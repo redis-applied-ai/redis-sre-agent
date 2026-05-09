@@ -1767,6 +1767,28 @@ async def _process_agent_turn_impl(
                             },
                         )
                         current_scope = _materialize_turn_scope(routing_context)
+                        # Append newly resolved assets to referenced_assets so the
+                        # memory panel can surface per-asset memory without
+                        # overwriting the session's declared scope.
+                        existing_refs = routing_context.get("referenced_assets") or []
+                        existing_handles = {a["target_handle"] for a in existing_refs}
+                        new_refs = [
+                            {
+                                "label": b.display_name,
+                                "target_handle": b.target_handle,
+                                "target_kind": b.target_kind,
+                            }
+                            for b in bound_scope.selected_bindings
+                            if b.target_handle not in existing_handles
+                        ]
+                        if new_refs:
+                            updated_refs = existing_refs + new_refs
+                            routing_context["referenced_assets"] = updated_refs
+                            await thread_manager.update_thread_context(
+                                thread_id,
+                                {"referenced_assets": updated_refs},
+                                merge=True,
+                            )
             except Exception:
                 logger.exception("Failed to pre-resolve target scope for deep triage")
 

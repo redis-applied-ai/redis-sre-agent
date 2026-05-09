@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
 import sreAgentApi, {
+  AssetMemoryScope,
   ThreadMemoryItem,
   ThreadMemoryResponse,
   ThreadMemorySection,
@@ -147,7 +148,8 @@ const MemoryPanel = ({ threadId, onClose, refreshKey }: MemoryPanelProps) => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMoreUser, setLoadingMoreUser] = useState(false);
-  const [loadingMoreAsset, setLoadingMoreAsset] = useState(false);
+  // Per-asset-section loading state, keyed by array index.
+  const [loadingMoreAsset, setLoadingMoreAsset] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     if (!threadId) {
@@ -212,37 +214,34 @@ const MemoryPanel = ({ threadId, onClose, refreshKey }: MemoryPanelProps) => {
     }
   };
 
-  const loadMoreAsset = async () => {
-    if (!threadId || !data?.asset_scope) return;
-    const offset = data.asset_scope.long_term.next_offset;
+  const loadMoreAssetAt = (idx: number) => async () => {
+    if (!threadId || !data?.asset_scopes?.[idx]) return;
+    const offset = data.asset_scopes[idx].long_term.next_offset;
     if (offset == null) return;
-    setLoadingMoreAsset(true);
+    setLoadingMoreAsset((prev) => ({ ...prev, [idx]: true }));
     try {
       const next = await sreAgentApi.getThreadMemory(threadId, {
         assetLimit: PAGE_SIZE,
         assetOffset: offset,
       });
+      const nextSection = next.asset_scopes?.[idx];
       setData((prev) => {
-        if (!prev || !prev.asset_scope || !next.asset_scope) return prev;
-        return {
-          ...prev,
-          asset_scope: {
-            ...prev.asset_scope,
-            long_term: {
-              items: [
-                ...prev.asset_scope.long_term.items,
-                ...next.asset_scope.long_term.items,
-              ],
-              total: next.asset_scope.long_term.total,
-              next_offset: next.asset_scope.long_term.next_offset,
-            },
+        if (!prev || !nextSection) return prev;
+        const updated = [...prev.asset_scopes];
+        updated[idx] = {
+          ...updated[idx],
+          long_term: {
+            items: [...updated[idx].long_term.items, ...nextSection.long_term.items],
+            total: nextSection.long_term.total,
+            next_offset: nextSection.long_term.next_offset,
           },
         };
+        return { ...prev, asset_scopes: updated };
       });
     } catch (err: any) {
       setError(err?.message ?? "Failed to load more memories");
     } finally {
-      setLoadingMoreAsset(false);
+      setLoadingMoreAsset((prev) => ({ ...prev, [idx]: false }));
     }
   };
 
@@ -310,7 +309,6 @@ const MemoryPanel = ({ threadId, onClose, refreshKey }: MemoryPanelProps) => {
     }
 
     const userTotal = data.user_scope?.long_term.total ?? 0;
-    const assetTotal = data.asset_scope?.long_term.total ?? 0;
     const scopeBits: string[] = [];
     if (data.scope.user_id) scopeBits.push(`user · ${data.scope.user_id}`);
     if (data.scope.instance_id)
@@ -341,15 +339,16 @@ const MemoryPanel = ({ threadId, onClose, refreshKey }: MemoryPanelProps) => {
             onLoadMore={loadMoreUser}
           />
         )}
-        {data.asset_scope && (
+        {(data.asset_scopes ?? []).map((assetSection, idx) => (
           <SectionView
-            label="Asset-scoped memory"
-            count={assetTotal}
-            section={data.asset_scope}
-            loadingMore={loadingMoreAsset}
-            onLoadMore={loadMoreAsset}
+            key={`${assetSection.instance_id ?? ""}:${assetSection.cluster_id ?? ""}:${idx}`}
+            label={assetSection.label || assetSection.instance_id || assetSection.cluster_id || "Asset memory"}
+            count={assetSection.long_term.total}
+            section={assetSection}
+            loadingMore={loadingMoreAsset[idx] ?? false}
+            onLoadMore={loadMoreAssetAt(idx)}
           />
-        )}
+        ))}
       </>
     );
   };

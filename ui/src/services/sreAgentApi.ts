@@ -361,6 +361,12 @@ export interface ThreadMemorySection {
   working_memory_context: string | null;
 }
 
+export interface AssetMemoryScope extends ThreadMemorySection {
+  label: string;
+  instance_id: string | null;
+  cluster_id: string | null;
+}
+
 export interface ThreadMemoryScope {
   user_id: string | null;
   instance_id: string | null;
@@ -380,7 +386,7 @@ export interface ThreadMemoryResponse {
   error: string | null;
   scope: ThreadMemoryScope;
   user_scope: ThreadMemorySection | null;
-  asset_scope: ThreadMemorySection | null;
+  asset_scopes: AssetMemoryScope[];
 }
 
 export interface ThreadMemoryParams {
