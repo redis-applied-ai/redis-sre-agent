@@ -227,7 +227,7 @@ async def get_thread_memory(
         return {
             "enabled": True,
             "status": "error",
-            "error": str(exc),
+            "error": "Failed to load memory context",
             "scope": scope,
             "user_scope": user_section,
             "asset_scope": asset_section,

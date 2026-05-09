@@ -187,8 +187,6 @@ const MemoryPanel = ({ threadId, onClose, refreshKey }: MemoryPanelProps) => {
       const next = await sreAgentApi.getThreadMemory(threadId, {
         userLimit: PAGE_SIZE,
         userOffset: offset,
-        assetLimit: 0,
-        assetOffset: 0,
       });
       setData((prev) => {
         if (!prev || !prev.user_scope || !next.user_scope) return prev;
@@ -221,8 +219,6 @@ const MemoryPanel = ({ threadId, onClose, refreshKey }: MemoryPanelProps) => {
     setLoadingMoreAsset(true);
     try {
       const next = await sreAgentApi.getThreadMemory(threadId, {
-        userLimit: 0,
-        userOffset: 0,
         assetLimit: PAGE_SIZE,
         assetOffset: offset,
       });
