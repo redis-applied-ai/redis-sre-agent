@@ -24,7 +24,7 @@ def _stub_working_memory(context: str | None) -> Any:
     )
 
 
-def _record_to_namespace(record: EvalMemoryRecord) -> Any:
+def _record_to_namespace(record: Any) -> Any:
     return SimpleNamespace(
         text=record.text,
         memory_type=record.memory_type,
@@ -101,6 +101,10 @@ def _has_memory(fixture: EvalMemoryFixture) -> bool:
     )
 
 
+def _has_asset_memory(fixture: EvalMemoryFixture) -> bool:
+    return bool(fixture.asset_context or fixture.asset_long_term)
+
+
 def _fake_open_session(fixture: EvalMemoryFixture):
     @contextlib.asynccontextmanager
     async def _patched(self) -> AsyncIterator[FakeMemorySession]:
@@ -113,20 +117,29 @@ def _force_enabled_init(self) -> None:
     self._enabled = True
 
 
+def _fake_target_entities(self, instance_id: Any = None, cluster_id: Any = None) -> list:
+    # Return a synthetic entity so prepare_turn_context sets asset_scope=True
+    # even when the scenario has no real Redis instance attached.
+    return ["instance:eval-fixture"]
+
+
 @contextlib.asynccontextmanager
 async def inject_memory_fixture(scenario: "EvalScenario") -> AsyncIterator[None]:
     """Patch AgentMemoryService to serve fixture-backed memory for a scenario.
 
     No-ops when the scenario's memory fixture is entirely empty.
+    When the fixture has asset content, also patches _target_entities so
+    prepare_turn_context enables the asset memory path without a real instance.
     """
     fixture = scenario.memory
     if not _has_memory(fixture):
         yield
         return
-    with (
-        mock.patch.object(AgentMemoryService, "__init__", _force_enabled_init),
-        mock.patch.object(AgentMemoryService, "open_session", _fake_open_session(fixture)),
-    ):
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch.object(AgentMemoryService, "__init__", _force_enabled_init))
+        stack.enter_context(mock.patch.object(AgentMemoryService, "open_session", _fake_open_session(fixture)))
+        if _has_asset_memory(fixture):
+            stack.enter_context(mock.patch.object(AgentMemoryService, "_target_entities", _fake_target_entities))
         yield
 
 
