@@ -1,4 +1,5 @@
 from typing import Any, List
+from unittest.mock import AsyncMock
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -80,3 +81,47 @@ async def test_rec_worker_sanitizes_tool_first_messages():
     # Ensure first message sent to LLM is not a ToolMessage (if any messages were sent)
     if llm.last_messages:
         assert not isinstance(llm.last_messages[0], ToolMessage)
+
+
+@pytest.mark.asyncio
+async def test_rec_worker_memoize_still_uses_guarded_ainvoke():
+    llm = FakeLLM()
+
+    async def naive_memoize(tag, memo_llm, messages):
+        return await memo_llm.ainvoke(messages)
+
+    worker = build_recommendation_worker(
+        llm,
+        knowledge_tool_adapters=[],
+        max_tool_steps=1,
+        memoize=naive_memoize,
+    )
+
+    state = {
+        "messages": [],
+        "budget": 1,
+        "topic": {
+            "id": "T1",
+            "title": "Connectivity",
+            "category": "Networking",
+            "scope": "cluster",
+            "evidence_keys": [],
+        },
+        "evidence": [],
+        "instance": {"instance_type": "redis_enterprise", "name": "test"},
+    }
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        from redis_sre_agent.agent.subgraphs import recommendation_worker as module
+
+        guarded = AsyncMock(
+            side_effect=[
+                AIMessage(content="ok"),
+                Recommendation(topic_id="T1", title="Test", steps=[]),
+            ]
+        )
+        monkeypatch.setattr(module, "guarded_ainvoke", guarded)
+        out = await worker.ainvoke(state)
+
+    assert out["result"]["topic_id"] == "T1"
+    assert guarded.await_count == 2

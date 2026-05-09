@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 from redis_sre_agent.agent.models import AgentResponse
@@ -86,6 +87,44 @@ class TestBuildSafetyFactCorrector:
         graph = build_safety_fact_corrector(mock_llm, [], memoize=mock_memoize)
 
         assert graph is not None
+
+
+@pytest.mark.asyncio
+async def test_corrector_memoize_still_uses_guarded_ainvoke(monkeypatch):
+    mock_llm = MagicMock()
+    mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+    mock_structured = MagicMock()
+    mock_llm.with_structured_output = MagicMock(return_value=mock_structured)
+
+    async def naive_memoize(tag, memo_llm, messages):
+        return await memo_llm.ainvoke(messages)
+
+    graph = build_safety_fact_corrector(mock_llm, [], memoize=naive_memoize)
+
+    from redis_sre_agent.agent.subgraphs import safety_fact_corrector as module
+
+    guarded = AsyncMock(
+        side_effect=[
+            AIMessage(content="ok", tool_calls=[]),
+            {
+                "edited_response": "EDITED",
+                "edits_applied": ["fixed"],
+            },
+        ]
+    )
+    monkeypatch.setattr(module, "guarded_ainvoke", guarded)
+
+    out = await graph.ainvoke(
+        {
+            "messages": [],
+            "budget": 1,
+            "response_text": "Original response",
+            "instance": {},
+        }
+    )
+
+    assert out["result"]["edited_response"] == "EDITED"
+    assert guarded.await_count == 2
 
 
 @pytest.mark.asyncio

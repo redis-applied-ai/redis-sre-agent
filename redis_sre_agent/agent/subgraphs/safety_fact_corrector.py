@@ -33,6 +33,22 @@ class CorrectorState(TypedDict, total=False):
     result: Dict[str, Any]
 
 
+class _GuardedMemoizeLLM:
+    def __init__(self, inner_llm: Any, *, request_kind: str):
+        self._inner_llm = inner_llm
+        self._request_kind = request_kind
+
+    async def ainvoke(self, messages):
+        return await guarded_ainvoke(
+            self._inner_llm,
+            messages,
+            request_kind=self._request_kind,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner_llm, name)
+
+
 def build_safety_fact_corrector(
     base_llm,
     tool_adapters: List[Any],
@@ -52,7 +68,14 @@ def build_safety_fact_corrector(
         messages = sanitize_messages_for_llm(state.get("messages", []))
         log_preflight_messages(messages, label="Corrector preflight LLM", logger=logger)
         if memoize:
-            resp = await memoize("corrector_llm", base_llm, messages)
+            resp = await memoize(
+                "corrector_llm",
+                _GuardedMemoizeLLM(
+                    base_llm,
+                    request_kind="safety_fact_corrector.loop",
+                ),
+                messages,
+            )
         else:
             resp = await guarded_ainvoke(
                 base_llm,
@@ -118,7 +141,14 @@ def build_safety_fact_corrector(
             )
         )
         if memoize:
-            rec = await memoize("corrector_synth", structured_llm, [sys, human])
+            rec = await memoize(
+                "corrector_synth",
+                _GuardedMemoizeLLM(
+                    structured_llm,
+                    request_kind="safety_fact_corrector.synth",
+                ),
+                [sys, human],
+            )
         else:
             rec = await guarded_ainvoke(
                 structured_llm,

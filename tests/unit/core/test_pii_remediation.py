@@ -4,7 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import redis_sre_agent.core.pii_remediation as pii_module
-from redis_sre_agent.core.default_pii_remediator import DefaultPrivacyFilterPIIRemediator
+from redis_sre_agent.core.default_pii_remediator import (
+    DefaultPrivacyFilterPIIRemediator,
+    _normalize_category,
+)
 from redis_sre_agent.core.pii_remediation import (
     PIIRemediationDecision,
     PIIRemediationMode,
@@ -48,6 +51,12 @@ class TestPIIRemediatorLoading:
 
         assert remediator is fake_remediator
         module.custom_factory.assert_called_once_with()
+
+
+def test_normalize_category_only_strips_bio_prefixes():
+    assert _normalize_category("B-private_email") == "private_email"
+    assert _normalize_category("I-private_email") == "private_email"
+    assert _normalize_category("SEMI-PRIVATE") == "semi-private"
 
 
 @pytest.mark.asyncio

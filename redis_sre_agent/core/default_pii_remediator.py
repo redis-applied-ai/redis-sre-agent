@@ -35,7 +35,10 @@ def _normalize_category(raw: Optional[str]) -> str:
     value = str(raw or "").strip()
     if not value:
         return ""
-    value = value.replace("B-", "").replace("I-", "").replace("b-", "").replace("i-", "")
+    for prefix in ("B-", "I-", "b-", "i-"):
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+            break
     return value.lower()
 
 
