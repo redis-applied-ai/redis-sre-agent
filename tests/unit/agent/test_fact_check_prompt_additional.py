@@ -9,6 +9,7 @@ from redis_sre_agent.agent.subgraphs.safety_fact_corrector import (
     CorrectorState,
     build_safety_fact_corrector,
 )
+from redis_sre_agent.core.llm_request_guard import GuardedMemoizeLLMProxy
 
 
 class TestCorrectorState:
@@ -101,7 +102,7 @@ async def test_corrector_memoize_still_uses_guarded_ainvoke(monkeypatch):
 
     graph = build_safety_fact_corrector(mock_llm, [], memoize=naive_memoize)
 
-    from redis_sre_agent.agent.subgraphs import safety_fact_corrector as module
+    from redis_sre_agent.core import llm_request_guard as guard_module
 
     guarded = AsyncMock(
         side_effect=[
@@ -112,7 +113,7 @@ async def test_corrector_memoize_still_uses_guarded_ainvoke(monkeypatch):
             },
         ]
     )
-    monkeypatch.setattr(module, "guarded_ainvoke", guarded)
+    monkeypatch.setattr(guard_module, "guarded_ainvoke", guarded)
 
     out = await graph.ainvoke(
         {
@@ -125,6 +126,47 @@ async def test_corrector_memoize_still_uses_guarded_ainvoke(monkeypatch):
 
     assert out["result"]["edited_response"] == "EDITED"
     assert guarded.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cache_active", [False, True])
+async def test_ainvoke_memo_avoids_double_guard_for_guarded_proxy(monkeypatch, cache_active):
+    agent = SRELangGraphAgent()
+    agent._run_cache_active = cache_active
+    agent._llm_cache = {}
+
+    class FakeLLM:
+        model = "fake"
+        temperature = 0.0
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="ok")
+
+    proxy = GuardedMemoizeLLMProxy(FakeLLM(), request_kind="unit.proxy")
+
+    outer_guard_calls = []
+    inner_guard_calls = []
+
+    async def outer_guarded_ainvoke(llm, messages, request_kind, metadata=None):
+        outer_guard_calls.append((request_kind, metadata or {}))
+        return AIMessage(content="outer")
+
+    async def inner_guarded_ainvoke(llm, messages, request_kind, metadata=None):
+        inner_guard_calls.append((request_kind, metadata or {}))
+        return AIMessage(content="inner")
+
+    monkeypatch.setattr(
+        "redis_sre_agent.agent.langgraph_agent.guarded_ainvoke", outer_guarded_ainvoke
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.core.llm_request_guard.guarded_ainvoke", inner_guarded_ainvoke
+    )
+
+    result = await agent._ainvoke_memo("tag", proxy, [])
+
+    assert result.content == "inner"
+    assert outer_guard_calls == []
+    assert inner_guard_calls == [("unit.proxy", {})]
 
 
 @pytest.mark.asyncio

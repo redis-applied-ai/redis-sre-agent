@@ -17,7 +17,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from opentelemetry import trace
 
-from ...core.llm_request_guard import guarded_ainvoke
+from ...core.llm_request_guard import GuardedMemoizeLLMProxy, guarded_ainvoke
 from ..helpers import log_preflight_messages, sanitize_messages_for_llm
 from ..models import Recommendation
 
@@ -32,22 +32,6 @@ class RecState(TypedDict, total=False):
     evidence: List[Dict[str, Any]]
     instance: Dict[str, Any]
     result: Dict[str, Any]
-
-
-class _GuardedMemoizeLLM:
-    def __init__(self, inner_llm: Any, *, request_kind: str):
-        self._inner_llm = inner_llm
-        self._request_kind = request_kind
-
-    async def ainvoke(self, messages):
-        return await guarded_ainvoke(
-            self._inner_llm,
-            messages,
-            request_kind=self._request_kind,
-        )
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner_llm, name)
 
 
 def build_recommendation_worker(
@@ -82,7 +66,7 @@ def build_recommendation_worker(
         if memoize:
             resp = await memoize(
                 "rec_worker_llm",
-                _GuardedMemoizeLLM(
+                GuardedMemoizeLLMProxy(
                     base_llm,
                     request_kind="recommendation_worker.loop",
                 ),
@@ -171,7 +155,7 @@ def build_recommendation_worker(
         if memoize:
             rec = await memoize(
                 "rec_worker_synth",
-                _GuardedMemoizeLLM(
+                GuardedMemoizeLLMProxy(
                     structured_llm,
                     request_kind="recommendation_worker.synth",
                 ),

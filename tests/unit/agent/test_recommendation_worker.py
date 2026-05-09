@@ -112,7 +112,7 @@ async def test_rec_worker_memoize_still_uses_guarded_ainvoke():
     }
 
     with pytest.MonkeyPatch.context() as monkeypatch:
-        from redis_sre_agent.agent.subgraphs import recommendation_worker as module
+        from redis_sre_agent.core import llm_request_guard as guard_module
 
         guarded = AsyncMock(
             side_effect=[
@@ -120,7 +120,7 @@ async def test_rec_worker_memoize_still_uses_guarded_ainvoke():
                 Recommendation(topic_id="T1", title="Test", steps=[]),
             ]
         )
-        monkeypatch.setattr(module, "guarded_ainvoke", guarded)
+        monkeypatch.setattr(guard_module, "guarded_ainvoke", guarded)
         out = await worker.ainvoke(state)
 
     assert out["result"]["topic_id"] == "T1"

@@ -641,25 +641,27 @@ class SRELangGraphAgent:
             return str(id(messages))
 
     async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
+        if getattr(llm, "_sre_guarded_memoize_proxy", False):
+            invoke = llm.ainvoke
+        else:
+
+            async def invoke(payload):
+                return await guarded_ainvoke(
+                    llm,
+                    payload,
+                    request_kind=f"langgraph_agent.{tag}",
+                    metadata={"tag": tag},
+                )
+
         if not self._run_cache_active:
-            return await guarded_ainvoke(
-                llm,
-                messages,
-                request_kind=f"langgraph_agent.{tag}",
-                metadata={"tag": tag},
-            )
+            return await invoke(messages)
         # LLM objects use different attribute names: model, model_name, or _model
         model = getattr(llm, "model", None) or getattr(llm, "model_name", None) or "unknown"
         temperature = getattr(llm, "temperature", 0.0)
         key = f"{tag}|{model}|{temperature}|{self._messages_cache_key(messages)}"
         if key in self._llm_cache:
             return self._llm_cache[key]
-        resp = await guarded_ainvoke(
-            llm,
-            messages,
-            request_kind=f"langgraph_agent.{tag}",
-            metadata={"tag": tag},
-        )
+        resp = await invoke(messages)
         self._llm_cache[key] = resp
         return resp
 

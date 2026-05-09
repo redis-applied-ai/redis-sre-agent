@@ -17,7 +17,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from opentelemetry import trace
 
-from ...core.llm_request_guard import guarded_ainvoke
+from ...core.llm_request_guard import GuardedMemoizeLLMProxy, guarded_ainvoke
 from ..helpers import log_preflight_messages, sanitize_messages_for_llm
 from ..models import CorrectionResult
 
@@ -31,22 +31,6 @@ class CorrectorState(TypedDict, total=False):
     response_text: str
     instance: Dict[str, Any]
     result: Dict[str, Any]
-
-
-class _GuardedMemoizeLLM:
-    def __init__(self, inner_llm: Any, *, request_kind: str):
-        self._inner_llm = inner_llm
-        self._request_kind = request_kind
-
-    async def ainvoke(self, messages):
-        return await guarded_ainvoke(
-            self._inner_llm,
-            messages,
-            request_kind=self._request_kind,
-        )
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner_llm, name)
 
 
 def build_safety_fact_corrector(
@@ -70,7 +54,7 @@ def build_safety_fact_corrector(
         if memoize:
             resp = await memoize(
                 "corrector_llm",
-                _GuardedMemoizeLLM(
+                GuardedMemoizeLLMProxy(
                     base_llm,
                     request_kind="safety_fact_corrector.loop",
                 ),
@@ -143,7 +127,7 @@ def build_safety_fact_corrector(
         if memoize:
             rec = await memoize(
                 "corrector_synth",
-                _GuardedMemoizeLLM(
+                GuardedMemoizeLLMProxy(
                     structured_llm,
                     request_kind="safety_fact_corrector.synth",
                 ),

@@ -35,6 +35,34 @@ class PIIRemediationBlockedError(PIIRemediationError):
     """Raised when remediation policy blocks an outbound request."""
 
 
+class GuardedMemoizeLLMProxy:
+    """Proxy that preserves guarded outbound calls when passed through memoizers."""
+
+    _sre_guarded_memoize_proxy = True
+
+    def __init__(
+        self,
+        inner_llm: Any,
+        *,
+        request_kind: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._inner_llm = inner_llm
+        self._request_kind = request_kind
+        self._metadata = metadata or {}
+
+    async def ainvoke(self, messages):
+        return await guarded_ainvoke(
+            self._inner_llm,
+            messages,
+            request_kind=self._request_kind,
+            metadata=self._metadata,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner_llm, name)
+
+
 @dataclass(frozen=True)
 class _BlockLocation:
     block_id: str
