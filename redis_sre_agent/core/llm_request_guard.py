@@ -26,6 +26,10 @@ from redis_sre_agent.observability.pii_remediation_metrics import (
 
 logger = logging.getLogger(__name__)
 
+GuardableMessage = BaseMessage | dict[str, Any]
+GuardablePayload = str | BaseMessage | Sequence[GuardableMessage]
+GuardedPayload = str | BaseMessage | List[GuardableMessage]
+
 
 class PIIRemediationError(RuntimeError):
     """Base exception for request-guard failures."""
@@ -91,7 +95,8 @@ def _text_part_value(part: Any) -> Optional[str]:
 
 def _is_dict_message_sequence(payload: Any) -> bool:
     return (
-        isinstance(payload, Sequence)
+        bool(payload)
+        and isinstance(payload, Sequence)
         and not isinstance(payload, (str, bytes))
         and all(isinstance(message, dict) for message in payload)
     )
@@ -327,11 +332,11 @@ def _bounded_blocks(blocks: Iterable[PIITextBlock]) -> tuple[List[PIITextBlock],
 
 
 async def guard_langchain_input(
-    payload: str | BaseMessage | Sequence[Any],
+    payload: GuardablePayload,
     *,
     request_kind: str,
     metadata: Optional[Dict[str, Any]] = None,
-) -> str | BaseMessage | List[BaseMessage]:
+) -> GuardedPayload:
     """Return a guarded LangChain payload with PII remediation applied."""
 
     mode = _mode()
@@ -515,7 +520,7 @@ async def guard_openai_chat_messages(
 
 async def guarded_ainvoke(
     llm: Any,
-    payload: str | BaseMessage | Sequence[BaseMessage],
+    payload: GuardablePayload,
     *,
     request_kind: str,
     metadata: Optional[Dict[str, Any]] = None,

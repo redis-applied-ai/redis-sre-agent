@@ -249,6 +249,57 @@ async def test_guarded_ainvoke_supports_openai_style_dict_messages(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_guard_langchain_input_returns_dict_messages_for_openai_style_payload(
+    monkeypatch, guard_settings
+):
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.REDACTED,
+            blocks=[
+                PIITextBlock(
+                    block_id="oa:0",
+                    path="messages[0].content",
+                    role="user",
+                    text="reach [PII:EMAIL:1]",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="private_email",
+                    block_id="oa:0",
+                    placeholder="[PII:EMAIL:1]",
+                    text="alice@example.com",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    payload = [{"role": "user", "content": "reach alice@example.com"}]
+
+    result = await guard_langchain_input(payload, request_kind="unit")
+
+    assert result == [{"role": "user", "content": "reach [PII:EMAIL:1]"}]
+
+
+@pytest.mark.asyncio
+async def test_guard_langchain_input_does_not_route_empty_list_through_openai_guard(
+    monkeypatch, guard_settings
+):
+    openai_guard = AsyncMock(side_effect=AssertionError("unexpected dict guard route"))
+    monkeypatch.setattr(guard_module, "guard_openai_chat_messages", openai_guard)
+
+    result = await guard_langchain_input([], request_kind="unit")
+
+    assert result == []
+    openai_guard.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_guard_langchain_input_preserves_tail_beyond_max_chars(monkeypatch, guard_settings):
     guard_settings.pii_remediation_max_chars = 10
     remediator = AsyncMock(
