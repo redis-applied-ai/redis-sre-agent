@@ -37,6 +37,27 @@ plugins:
   - search
   - autorefs
   - section-index
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            docstring_section_style: table
+            inherited_members: true
+            filters:
+              - "!^_"
 
 extra_javascript:
   - https://unpkg.com/mermaid@10/dist/mermaid.min.js
@@ -87,3 +108,16 @@ nav:
       - REST API: api/rest_api.md
       - CLI reference: api/cli_ref.md
       - Configuration: api/configuration.md
+      - Python package:
+          - api/python/index.md
+          - Agent: api/python/agent.md
+          - Core: api/python/core.md
+          - API server: api/python/api.md
+          - CLI: api/python/cli.md
+          - MCP server: api/python/mcp_server.md
+          - Pipelines: api/python/pipelines.md
+          - Skills: api/python/skills.md
+          - Targets: api/python/targets.md
+          - Tools: api/python/tools.md
+          - Evaluation: api/python/evaluation.md
+          - Observability: api/python/observability.md
