@@ -1,12 +1,14 @@
-## REST API Reference (generated)
+---
+description: Auto-generated reference for the Redis SRE Agent FastAPI server.
+---
+
+# REST API reference
 
 This page is generated from the FastAPI route tree.
 
 For live schemas and request models, start the API and open `http://localhost:8000/docs` (local) or `http://localhost:8080/docs` (Docker Compose).
 
-
-### Start here
-
+## Start here
 
 - Health and readiness: `/`, `/api/v1/health`, `/api/v1/metrics`
 - Manage Redis targets: `/api/v1/instances`, `/api/v1/clusters`
@@ -15,10 +17,9 @@ For live schemas and request models, start the API and open `http://localhost:80
 - Schedule recurring checks: `/api/v1/schedules/*`
 - Analyze support packages: `/api/v1/support-packages/*`
 
-For copy/paste workflows, see [Using the API](../how-to/api.md).
+For copy/paste workflows, see [API workflows](../user_guide/how_to_guides/api_workflows.md).
 
-
-### Health & readiness
+## Health & readiness
 
 | Method | Path | Summary |
 |---|---|---|
@@ -28,7 +29,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `GET` | `/api/v1/metrics` | prometheus_metrics |
 | `GET` | `/api/v1/metrics/health` | metrics_health |
 
-### Clusters
+## Clusters
 
 | Method | Path | Summary |
 |---|---|---|
@@ -38,7 +39,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `GET` | `/api/v1/clusters/{cluster_id}` | get_cluster |
 | `PUT` | `/api/v1/clusters/{cluster_id}` | update_cluster |
 
-### Instances
+## Instances
 
 | Method | Path | Summary |
 |---|---|---|
@@ -51,7 +52,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `PUT` | `/api/v1/instances/{instance_id}` | update_instance |
 | `POST` | `/api/v1/instances/{instance_id}/test-connection` | test_instance_connection |
 
-### Knowledge
+## Knowledge
 
 | Method | Path | Summary |
 |---|---|---|
@@ -68,7 +69,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `POST` | `/api/v1/knowledge/settings/reset` | reset_knowledge_settings |
 | `GET` | `/api/v1/knowledge/stats` | get_knowledge_base_stats |
 
-### Schedules
+## Schedules
 
 | Method | Path | Summary |
 |---|---|---|
@@ -81,7 +82,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `GET` | `/api/v1/schedules/{schedule_id}/runs` | list_schedule_runs |
 | `POST` | `/api/v1/schedules/{schedule_id}/trigger` | trigger_schedule_now |
 
-### Support packages
+## Support packages
 
 | Method | Path | Summary |
 |---|---|---|
@@ -91,7 +92,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `GET` | `/api/v1/support-packages/{package_id}` | get_package_info |
 | `POST` | `/api/v1/support-packages/{package_id}/extract` | extract_package |
 
-### Tasks, threads, and streaming
+## Tasks, threads, and streaming
 
 | Method | Path | Summary |
 |---|---|---|
@@ -108,7 +109,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `PATCH` | `/api/v1/threads/{thread_id}` | update_thread |
 | `POST` | `/api/v1/threads/{thread_id}/append-messages` | append_messages |
 
-### OpenAPI & docs
+## OpenAPI & docs
 
 | Method | Path | Summary |
 |---|---|---|
