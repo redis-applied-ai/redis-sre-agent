@@ -1,23 +1,81 @@
 site_name: Redis SRE Agent
-site_description: Production-ready Redis SRE agent with LangGraph, FastAPI, and monitoring.
+site_description: An AI-powered SRE agent for Redis. Diagnoses, triages, and remediates incidents.
+site_url: https://ai.redis.io/sre-agent/
 repo_url: https://github.com/redis-applied-ai/redis-sre-agent
 repo_name: redis-applied-ai/redis-sre-agent
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Redis Inc.
+
+docs_dir: docs
+
+exclude_docs: |
+  _build/
+  _static/
+  _templates/
+  conf.py
+  Makefile
+  requirements.txt
+  api/python/index.rst
 
 theme:
   name: material
+  language: en
+  logo: assets/redis-logo-script.svg
+  favicon: assets/favicon.png
+  font:
+    text: Space Grotesk
+    code: Space Mono
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
   features:
     - navigation.instant
+    - navigation.instant.progress
     - navigation.tracking
     - navigation.sections
     - navigation.indexes
     - navigation.top
     - navigation.footer
     - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
     - content.code.copy
-  palette:
-    - scheme: default
-      primary: red
-      accent: deep-orange
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - content.action.view
+    - content.tooltips
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/redis-applied-ai/redis-sre-agent
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/redis-sre-agent/
+
+extra_css:
+  - stylesheets/redis-brand.css
 
 markdown_extensions:
   - admonition
