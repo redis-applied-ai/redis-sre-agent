@@ -119,6 +119,8 @@ def _write_cli_md(
     lines.append("| Command | Description |")
     lines.append("|---|---|")
     for name, help_text, top, subs in groups:
+        if not subs:
+            continue
         lines.append(f"| `redis-sre-agent {name}` | {_md_escape(help_text) or '—'} |")
     lines.append("")
 

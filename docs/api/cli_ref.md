@@ -20,13 +20,11 @@ This page is generated from the Click command tree. Run `redis-sre-agent <comman
 | `redis-sre-agent skills` | Inspect and scaffold Agent Skills packages. |
 | `redis-sre-agent pipeline` | Data pipeline commands for scraping and ingestion. |
 | `redis-sre-agent runbook` | Redis SRE runbook generation and management commands. |
-| `redis-sre-agent query` | Execute an agent query. |
 | `redis-sre-agent worker` | Manage the Docket worker. |
 | `redis-sre-agent mcp` | MCP server commands - expose agent capabilities via Model Context Protocol. |
 | `redis-sre-agent index` | RediSearch index management commands. |
 | `redis-sre-agent support-package` | Manage support packages. |
 | `redis-sre-agent eval` | Run eval scenario utilities and live suites. |
-| `redis-sre-agent version` | Show the Redis SRE Agent version. |
 
 ## cache
 
