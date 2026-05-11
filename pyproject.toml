@@ -110,7 +110,7 @@ include = [
 ]
 
 [tool.uv]
-default-groups = []
+default-groups = ["dev", "docs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
