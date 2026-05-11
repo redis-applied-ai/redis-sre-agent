@@ -58,6 +58,23 @@ def build_recommendation_worker(
     """
 
     tool_node = ToolNode(knowledge_tool_adapters)
+    memoized_loop_llm = (
+        GuardedMemoizeLLMProxy(
+            base_llm,
+            request_kind="recommendation_worker.loop",
+        )
+        if memoize
+        else None
+    )
+    structured_llm = base_llm.with_structured_output(Recommendation)
+    memoized_synth_llm = (
+        GuardedMemoizeLLMProxy(
+            structured_llm,
+            request_kind="recommendation_worker.synth",
+        )
+        if memoize
+        else None
+    )
 
     async def llm_node(state: RecState) -> RecState:
         messages = sanitize_messages_for_llm(state.get("messages", []))
@@ -66,10 +83,7 @@ def build_recommendation_worker(
         if memoize:
             resp = await memoize(
                 "rec_worker_llm",
-                GuardedMemoizeLLMProxy(
-                    base_llm,
-                    request_kind="recommendation_worker.loop",
-                ),
+                memoized_loop_llm,
                 messages,
             )
         else:
@@ -125,9 +139,6 @@ def build_recommendation_worker(
         evidence = state.get("evidence", [])
         instance = state.get("instance") or {}
 
-        # Use structured output to eliminate brittle JSON parsing
-        structured_llm = base_llm.with_structured_output(Recommendation)
-
         sys = SystemMessage(
             content=(
                 "You are producing operator-facing recommendations.\n"
@@ -155,10 +166,7 @@ def build_recommendation_worker(
         if memoize:
             rec = await memoize(
                 "rec_worker_synth",
-                GuardedMemoizeLLMProxy(
-                    structured_llm,
-                    request_kind="recommendation_worker.synth",
-                ),
+                memoized_synth_llm,
                 [sys, human],
             )
         else:
