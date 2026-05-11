@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -125,3 +128,62 @@ async def test_default_privacy_filter_blocks_when_mode_is_block():
 
     assert result.decision == PIIRemediationDecision.BLOCKED
     assert result.reason
+
+
+@pytest.mark.asyncio
+async def test_default_privacy_filter_serializes_shared_pipeline_access():
+    remediator = DefaultPrivacyFilterPIIRemediator(
+        model_name="openai/privacy-filter",
+        categories=["private_email"],
+    )
+    active = 0
+    max_active = 0
+    counter_lock = threading.Lock()
+    first_entered = threading.Event()
+    release_first = threading.Event()
+
+    def fake_classifier(text: str):
+        nonlocal active, max_active
+        with counter_lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            if not first_entered.is_set():
+                first_entered.set()
+                release_first.wait(timeout=0.5)
+            else:
+                release_first.set()
+            time.sleep(0.01)
+            return [
+                {
+                    "entity_group": "PRIVATE_EMAIL",
+                    "start": 0,
+                    "end": len(text),
+                    "score": 0.95,
+                }
+            ]
+        finally:
+            with counter_lock:
+                active -= 1
+
+    remediator._pipeline = fake_classifier
+
+    request_one = PIIRemediationRequest(
+        mode=PIIRemediationMode.DETECT,
+        request_kind="test",
+        blocks=[PIITextBlock(block_id="b1", path="prompt", role="user", text="alpha@example.com")],
+        categories=["private_email"],
+    )
+    request_two = PIIRemediationRequest(
+        mode=PIIRemediationMode.DETECT,
+        request_kind="test",
+        blocks=[PIITextBlock(block_id="b2", path="prompt", role="user", text="beta@example.com")],
+        categories=["private_email"],
+    )
+
+    await asyncio.gather(
+        remediator.remediate(request_one),
+        remediator.remediate(request_two),
+    )
+
+    assert max_active == 1

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -59,32 +60,35 @@ class DefaultPrivacyFilterPIIRemediator:
             for item in (categories or settings.pii_remediation_categories)
         }
         self._pipeline: Any = None
+        self._pipeline_lock = threading.RLock()
 
     def _get_pipeline(self) -> Any:
-        if self._pipeline is not None:
+        with self._pipeline_lock:
+            if self._pipeline is not None:
+                return self._pipeline
+
+            try:
+                from transformers import pipeline
+            except ImportError as exc:
+                raise RuntimeError(
+                    "transformers is required for the default local Privacy Filter remediator"
+                ) from exc
+
+            self._pipeline = pipeline(
+                task="token-classification",
+                model=self.model_name,
+                tokenizer=self.model_name,
+                aggregation_strategy="simple",
+            )
             return self._pipeline
-
-        try:
-            from transformers import pipeline
-        except ImportError as exc:
-            raise RuntimeError(
-                "transformers is required for the default local Privacy Filter remediator"
-            ) from exc
-
-        self._pipeline = pipeline(
-            task="token-classification",
-            model=self.model_name,
-            tokenizer=self.model_name,
-            aggregation_strategy="simple",
-        )
-        return self._pipeline
 
     def _detect_spans(self, text: str) -> List[_SpanDetection]:
         if not text:
             return []
 
-        classifier = self._get_pipeline()
-        raw_results = classifier(text)
+        with self._pipeline_lock:
+            classifier = self._get_pipeline()
+            raw_results = classifier(text)
         detections: List[_SpanDetection] = []
 
         for item in raw_results or []:
