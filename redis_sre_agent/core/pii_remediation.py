@@ -121,12 +121,6 @@ def set_pii_remediator_factory(factory: Optional[PIIRemediationFactory]) -> None
     _pii_remediator_instance = None
 
 
-def get_pii_remediator_factory() -> Optional[PIIRemediationFactory]:
-    """Return the current factory without loading from config."""
-
-    return _pii_remediator_factory
-
-
 def _load_pii_remediator_factory_from_config() -> None:
     """Load the PII remediator factory from configuration if specified."""
 
