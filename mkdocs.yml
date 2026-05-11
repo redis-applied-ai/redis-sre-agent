@@ -77,6 +77,9 @@ extra:
 extra_css:
   - stylesheets/redis-brand.css
 
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+
 plugins:
   - search
   - autorefs
