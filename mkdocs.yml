@@ -67,11 +67,13 @@ nav:
           - Scheduling: user_guide/how_to_guides/scheduling.md
           - Evals: user_guide/how_to_guides/evals.md
           - Agent memory integration: user_guide/how_to_guides/agent_memory_integration.md
+          - Web UI: user_guide/how_to_guides/ui.md
           - Operations:
               - user_guide/how_to_guides/operations/index.md
               - Docker deployment: user_guide/how_to_guides/operations/docker_deployment.md
               - Observability: user_guide/how_to_guides/operations/observability.md
               - Airgap: user_guide/how_to_guides/operations/airgap.md
+              - Secret encryption: user_guide/how_to_guides/operations/encryption.md
               - Gotchas: user_guide/how_to_guides/operations/gotchas.md
           - Release tutorials:
               - user_guide/how_to_guides/release_tutorials/index.md
