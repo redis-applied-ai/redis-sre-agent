@@ -170,6 +170,60 @@ async def test_ainvoke_memo_avoids_double_guard_for_guarded_proxy(monkeypatch, c
 
 
 @pytest.mark.asyncio
+async def test_ainvoke_memo_distinguishes_wrapped_models(monkeypatch):
+    agent = SRELangGraphAgent()
+    agent._run_cache_active = True
+    agent._llm_cache = {}
+
+    class FakeModel:
+        temperature = 0.0
+
+        def __init__(self, model_name: str, content: str):
+            self.model_name = model_name
+            self._content = content
+
+        async def ainvoke(self, messages):
+            return AIMessage(content=self._content)
+
+    class BoundWrapper:
+        def __init__(self, bound):
+            self.bound = bound
+
+        async def ainvoke(self, messages):
+            return await self.bound.ainvoke(messages)
+
+    inner_calls = []
+
+    async def inner_guarded_ainvoke(llm, messages, request_kind, metadata=None):
+        inner_calls.append((llm.bound.model_name, request_kind, metadata or {}))
+        return await llm.ainvoke(messages)
+
+    monkeypatch.setattr(
+        "redis_sre_agent.core.llm_request_guard.guarded_ainvoke", inner_guarded_ainvoke
+    )
+
+    first_proxy = GuardedMemoizeLLMProxy(
+        BoundWrapper(FakeModel("model-one", "first")),
+        request_kind="unit.proxy",
+    )
+    second_proxy = GuardedMemoizeLLMProxy(
+        BoundWrapper(FakeModel("model-two", "second")),
+        request_kind="unit.proxy",
+    )
+
+    first_result = await agent._ainvoke_memo("tag", first_proxy, [])
+    second_result = await agent._ainvoke_memo("tag", second_proxy, [])
+
+    assert first_result.content == "first"
+    assert second_result.content == "second"
+    assert inner_calls == [
+        ("model-one", "unit.proxy", {}),
+        ("model-two", "unit.proxy", {}),
+    ]
+    assert len(agent._llm_cache) == 2
+
+
+@pytest.mark.asyncio
 @patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_runs_on_risky_patterns(mock_build):
     # Corrector returns edited content

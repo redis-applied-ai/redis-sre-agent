@@ -647,6 +647,33 @@ class SRELangGraphAgent:
             # Last resort: non-stable key
             return str(id(messages))
 
+    def _resolve_llm_attr(self, llm: Any, *attr_names: str) -> Any:
+        to_visit = [llm]
+        seen: set[int] = set()
+        while to_visit:
+            current = to_visit.pop(0)
+            if current is None:
+                continue
+            current_id = id(current)
+            if current_id in seen:
+                continue
+            seen.add(current_id)
+
+            for attr_name in attr_names:
+                value = getattr(current, attr_name, None)
+                if value not in (None, ""):
+                    return value
+
+            for wrapper_attr in ("_inner_llm", "bound", "runnable", "first", "last"):
+                nested = getattr(current, wrapper_attr, None)
+                if nested is None:
+                    continue
+                if isinstance(nested, (list, tuple)):
+                    to_visit.extend(nested)
+                else:
+                    to_visit.append(nested)
+        return None
+
     async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
         if getattr(llm, "_sre_guarded_memoize_proxy", False):
             invoke = llm.ainvoke
@@ -662,9 +689,10 @@ class SRELangGraphAgent:
 
         if not self._run_cache_active:
             return await invoke(messages)
-        # LLM objects use different attribute names: model, model_name, or _model
-        model = getattr(llm, "model", None) or getattr(llm, "model_name", None) or "unknown"
-        temperature = getattr(llm, "temperature", 0.0)
+        model = self._resolve_llm_attr(llm, "model", "model_name", "_model") or repr(llm)
+        temperature = self._resolve_llm_attr(llm, "temperature")
+        if temperature is None:
+            temperature = 0.0
         key = f"{tag}|{model}|{temperature}|{self._messages_cache_key(messages)}"
         if key in self._llm_cache:
             return self._llm_cache[key]
