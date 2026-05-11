@@ -54,6 +54,7 @@ def _skills_toc_lines(
     skills: List[Dict[str, Any]],
     *,
     total_skills: Optional[int] = None,
+    displayed_limit: Optional[int] = None,
 ) -> List[str]:
     """Render the ADR skills table of contents lines."""
     if not skills:
@@ -68,7 +69,7 @@ def _skills_toc_lines(
     ]
     if total_skills is not None and total_skills > len(skills):
         remaining = total_skills - len(skills)
-        shown = len(skills)
+        shown = displayed_limit if displayed_limit is not None else len(skills)
         lines.append(
             "- This startup inventory is truncated: "
             f"{shown} skill{'s' if shown != 1 else ''} shown, {remaining} more available in the backend. "
@@ -354,6 +355,7 @@ async def build_startup_knowledge_context(
     skills_lines = _skills_toc_lines(
         skill_rows,
         total_skills=normalized_total_skills,
+        displayed_limit=effective_skills_limit,
     )
     if skills_lines:
         sections.append("\n".join(skills_lines))
