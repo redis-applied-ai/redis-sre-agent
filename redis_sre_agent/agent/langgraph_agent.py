@@ -38,7 +38,7 @@ from ..core.instances import (
     save_instances,
 )
 from ..core.llm_helpers import create_llm, create_mini_llm
-from ..core.llm_request_guard import guarded_ainvoke
+from ..core.llm_request_guard import GuardedMemoizeLLMProxy, guarded_ainvoke
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..core.targets import (
@@ -440,7 +440,14 @@ Your response (one word only):"""
 
     try:
         if memoize:
-            response = await memoize("instance_type", llm, [HumanMessage(content=prompt)])
+            response = await memoize(
+                "instance_type",
+                GuardedMemoizeLLMProxy(
+                    llm,
+                    request_kind="langgraph_agent.instance_type_detection",
+                ),
+                [HumanMessage(content=prompt)],
+            )
         else:
             response = await guarded_ainvoke(
                 llm,
