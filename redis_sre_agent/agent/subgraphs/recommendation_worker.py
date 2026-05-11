@@ -58,9 +58,14 @@ def build_recommendation_worker(
     """
 
     tool_node = ToolNode(knowledge_tool_adapters)
+    llm_with_tools = (
+        base_llm.bind_tools(knowledge_tool_adapters)
+        if knowledge_tool_adapters and hasattr(base_llm, "bind_tools")
+        else base_llm
+    )
     memoized_loop_llm = (
         GuardedMemoizeLLMProxy(
-            base_llm,
+            llm_with_tools,
             request_kind="recommendation_worker.loop",
         )
         if memoize
@@ -79,7 +84,7 @@ def build_recommendation_worker(
             )
         else:
             resp = await guarded_ainvoke(
-                base_llm,
+                llm_with_tools,
                 messages,
                 request_kind="recommendation_worker.loop",
             )

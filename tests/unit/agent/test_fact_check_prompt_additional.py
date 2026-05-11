@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage
+from langchain_core.tools import StructuredTool
 
 from redis_sre_agent.agent.langgraph_agent import SRELangGraphAgent
 from redis_sre_agent.agent.models import AgentResponse
@@ -166,6 +167,59 @@ async def test_corrector_rebuilds_structured_llm_per_invocation():
     await graph.ainvoke(state)
 
     assert structured_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_corrector_memoize_uses_bound_llm_when_tools_present(monkeypatch):
+    mock_llm = MagicMock()
+    bound_llm = MagicMock()
+    bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+    mock_llm.bind_tools = MagicMock(return_value=bound_llm)
+    mock_llm.with_structured_output = MagicMock(
+        return_value=MagicMock(
+            ainvoke=AsyncMock(
+                return_value={
+                    "edited_response": "EDITED",
+                    "edits_applied": ["fixed"],
+                }
+            )
+        )
+    )
+
+    async def direct_memoize(tag, memo_llm, messages):
+        return await memo_llm.ainvoke(messages)
+
+    def dummy_tool(query: str) -> str:
+        return query
+
+    tool = StructuredTool.from_function(
+        func=dummy_tool,
+        name="knowledge_lookup",
+        description="Dummy knowledge tool",
+    )
+
+    graph = build_safety_fact_corrector(mock_llm, [tool], memoize=direct_memoize)
+
+    from redis_sre_agent.core import llm_request_guard as guard_module
+
+    calls = []
+
+    async def fake_guarded_ainvoke(llm_obj, messages, request_kind, metadata=None):
+        calls.append(llm_obj)
+        return await llm_obj.ainvoke(messages)
+
+    monkeypatch.setattr(guard_module, "guarded_ainvoke", fake_guarded_ainvoke)
+
+    await graph.ainvoke(
+        {
+            "messages": [],
+            "budget": 1,
+            "response_text": "Original response",
+            "instance": {},
+        }
+    )
+
+    assert calls[0] is bound_llm
 
 
 @pytest.mark.asyncio

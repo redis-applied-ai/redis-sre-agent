@@ -116,7 +116,9 @@ class DefaultPrivacyFilterPIIRemediator:
                 )
             )
 
-        detections.sort(key=lambda span: (span.start, span.end))
+        # Prefer the widest same-start span so overlap filtering does not keep
+        # a shorter prefix and leave the longer sensitive suffix exposed.
+        detections.sort(key=lambda span: (span.start, -span.end))
         return self._dedupe_overlaps(detections)
 
     @staticmethod

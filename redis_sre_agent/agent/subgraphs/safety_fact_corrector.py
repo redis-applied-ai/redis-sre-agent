@@ -47,9 +47,14 @@ def build_safety_fact_corrector(
     """
 
     tool_node = ToolNode(tool_adapters)
+    llm_with_tools = (
+        base_llm.bind_tools(tool_adapters)
+        if tool_adapters and hasattr(base_llm, "bind_tools")
+        else base_llm
+    )
     memoized_loop_llm = (
         GuardedMemoizeLLMProxy(
-            base_llm,
+            llm_with_tools,
             request_kind="safety_fact_corrector.loop",
         )
         if memoize
@@ -67,7 +72,7 @@ def build_safety_fact_corrector(
             )
         else:
             resp = await guarded_ainvoke(
-                base_llm,
+                llm_with_tools,
                 messages,
                 request_kind="safety_fact_corrector.loop",
             )

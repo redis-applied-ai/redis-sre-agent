@@ -155,6 +155,47 @@ async def test_default_privacy_filter_blocks_when_mode_is_block():
 
 
 @pytest.mark.asyncio
+async def test_default_privacy_filter_prefers_longer_same_start_overlaps():
+    remediator = DefaultPrivacyFilterPIIRemediator(
+        model_name="openai/privacy-filter",
+        categories=["private_email", "private_name"],
+    )
+    remediator._pipeline = lambda text: [
+        {
+            "entity_group": "PRIVATE_NAME",
+            "start": 6,
+            "end": 11,
+            "score": 0.90,
+        },
+        {
+            "entity_group": "PRIVATE_EMAIL",
+            "start": 6,
+            "end": 23,
+            "score": 0.99,
+        },
+    ]
+    request = PIIRemediationRequest(
+        mode=PIIRemediationMode.REDACT,
+        request_kind="test",
+        blocks=[
+            PIITextBlock(
+                block_id="b1",
+                path="messages[0].content",
+                role="user",
+                text="Email alice@example.com now",
+            )
+        ],
+        categories=["private_email", "private_name"],
+    )
+
+    result = await remediator.remediate(request)
+
+    assert result.blocks[0].text == "Email [PII:EMAIL:1] now"
+    assert len(result.findings) == 1
+    assert result.findings[0].text == "alice@example.com"
+
+
+@pytest.mark.asyncio
 async def test_default_privacy_filter_serializes_shared_pipeline_access():
     remediator = DefaultPrivacyFilterPIIRemediator(
         model_name="openai/privacy-filter",
