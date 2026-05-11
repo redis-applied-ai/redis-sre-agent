@@ -71,6 +71,39 @@ async def test_startup_context_memorizes_pinned_skills_and_tickets():
 
 
 @pytest.mark.asyncio
+async def test_startup_context_mentions_truncated_skill_inventory():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(
+                return_value={
+                    "skills": [
+                        {
+                            "name": "Redis Cluster Health Check",
+                            "summary": "Run a fast health check for the cluster.",
+                        },
+                        {
+                            "name": "Redis Memory Triage",
+                            "summary": "Inspect memory pressure and fragmentation.",
+                        },
+                    ],
+                    "total_fetched": 53,
+                }
+            ),
+        ),
+    ):
+        context = await build_startup_knowledge_context(version="latest", skills_limit=2)
+
+    assert "startup inventory is truncated" in context
+    assert "2 skills shown, 51 more available" in context
+    assert "search for related skills" in context
+
+
+@pytest.mark.asyncio
 async def test_startup_context_is_empty_without_pinned_docs_or_skills():
     with (
         patch(
@@ -297,7 +330,7 @@ async def test_startup_context_carries_internal_skill_discovery_envelope():
     assert envelope["name"] == "skills_check"
     assert envelope["args"] == {
         "query": "",
-        "limit": 25,
+        "limit": 50,
         "offset": 0,
         "version": "latest",
     }
@@ -378,7 +411,7 @@ async def test_startup_context_uses_eval_scoped_knowledge_backend():
 
         async def skills_check(self, **kwargs):
             assert kwargs["query"] is None
-            assert kwargs["limit"] == 25
+            assert kwargs["limit"] == 50
             return {
                 "skills": [
                     {
