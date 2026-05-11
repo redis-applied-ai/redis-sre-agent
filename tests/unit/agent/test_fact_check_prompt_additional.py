@@ -129,6 +129,46 @@ async def test_corrector_memoize_still_uses_guarded_ainvoke(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_corrector_rebuilds_structured_llm_per_invocation():
+    mock_llm = MagicMock()
+    mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+    mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+    structured_calls = 0
+
+    class StructuredLLM:
+        async def ainvoke(self, messages):
+            return {
+                "edited_response": "EDITED",
+                "edits_applied": ["fixed"],
+            }
+
+    def make_structured(schema):
+        nonlocal structured_calls
+        structured_calls += 1
+        return StructuredLLM()
+
+    async def direct_memoize(tag, memo_llm, messages):
+        return await memo_llm.ainvoke(messages)
+
+    mock_llm.with_structured_output = MagicMock(side_effect=make_structured)
+
+    graph = build_safety_fact_corrector(mock_llm, [], memoize=direct_memoize)
+
+    state = {
+        "messages": [],
+        "budget": 1,
+        "response_text": "Original response",
+        "instance": {},
+    }
+
+    await graph.ainvoke(state)
+    await graph.ainvoke(state)
+
+    assert structured_calls == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cache_active", [False, True])
 async def test_ainvoke_memo_avoids_double_guard_for_guarded_proxy(monkeypatch, cache_active):
     agent = SRELangGraphAgent()

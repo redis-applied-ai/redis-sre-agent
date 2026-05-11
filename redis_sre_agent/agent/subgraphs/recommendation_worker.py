@@ -66,15 +66,6 @@ def build_recommendation_worker(
         if memoize
         else None
     )
-    structured_llm = base_llm.with_structured_output(Recommendation)
-    memoized_synth_llm = (
-        GuardedMemoizeLLMProxy(
-            structured_llm,
-            request_kind="recommendation_worker.synth",
-        )
-        if memoize
-        else None
-    )
 
     async def llm_node(state: RecState) -> RecState:
         messages = sanitize_messages_for_llm(state.get("messages", []))
@@ -135,6 +126,15 @@ def build_recommendation_worker(
     async def synth_node(state: RecState) -> RecState:
         # Final structured synthesis without further tool calls.
         # Build a focused prompt that includes the topic and evidence envelopes.
+        structured_llm = base_llm.with_structured_output(Recommendation)
+        memoized_synth_llm = (
+            GuardedMemoizeLLMProxy(
+                structured_llm,
+                request_kind="recommendation_worker.synth",
+            )
+            if memoize
+            else None
+        )
         topic = state.get("topic") or {}
         evidence = state.get("evidence", [])
         instance = state.get("instance") or {}

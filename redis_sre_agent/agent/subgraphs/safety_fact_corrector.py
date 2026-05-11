@@ -55,15 +55,6 @@ def build_safety_fact_corrector(
         if memoize
         else None
     )
-    structured_llm = base_llm.with_structured_output(CorrectionResult)
-    memoized_synth_llm = (
-        GuardedMemoizeLLMProxy(
-            structured_llm,
-            request_kind="safety_fact_corrector.synth",
-        )
-        if memoize
-        else None
-    )
 
     async def llm_node(state: CorrectorState) -> CorrectorState:
         messages = sanitize_messages_for_llm(state.get("messages", []))
@@ -118,6 +109,15 @@ def build_safety_fact_corrector(
 
     async def synth_node(state: CorrectorState) -> CorrectorState:
         # Final strict edit-only synthesis
+        structured_llm = base_llm.with_structured_output(CorrectionResult)
+        memoized_synth_llm = (
+            GuardedMemoizeLLMProxy(
+                structured_llm,
+                request_kind="safety_fact_corrector.synth",
+            )
+            if memoize
+            else None
+        )
         sys = SystemMessage(
             content=(
                 "You are a Redis SRE Corrector. Edit ONLY the given response to fix safety and factual errors.\n"

@@ -125,3 +125,42 @@ async def test_rec_worker_memoize_still_uses_guarded_ainvoke():
 
     assert out["result"]["topic_id"] == "T1"
     assert guarded.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_rec_worker_rebuilds_structured_llm_per_invocation():
+    class CountingLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self.structured_output_calls = 0
+
+        def with_structured_output(self, schema):
+            self.structured_output_calls += 1
+
+            class _Struct:
+                async def ainvoke(self, messages):
+                    return Recommendation(topic_id="T1", title="Test", steps=[])
+
+            return _Struct()
+
+    llm = CountingLLM()
+    worker = build_recommendation_worker(llm, knowledge_tool_adapters=[], max_tool_steps=1)
+
+    state = {
+        "messages": [],
+        "budget": 1,
+        "topic": {
+            "id": "T1",
+            "title": "Connectivity",
+            "category": "Networking",
+            "scope": "cluster",
+            "evidence_keys": [],
+        },
+        "evidence": [],
+        "instance": {"instance_type": "redis_enterprise", "name": "test"},
+    }
+
+    await worker.ainvoke(state)
+    await worker.ainvoke(state)
+
+    assert llm.structured_output_calls == 2
