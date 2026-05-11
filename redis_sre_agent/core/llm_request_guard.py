@@ -12,9 +12,11 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.pii_remediation import (
+    PIIFinding,
     PIIRemediationDecision,
     PIIRemediationMode,
     PIIRemediationRequest,
+    PIIRemediationResult,
     PIITextBlock,
     get_pii_remediator,
     is_pii_remediation_enabled,
@@ -212,28 +214,6 @@ def _iter_openai_blocks(
     return blocks, locations
 
 
-def _restore_truncated_suffixes(
-    original_blocks: Sequence[PIITextBlock],
-    result_blocks: Sequence[PIITextBlock],
-    truncated_suffixes: Dict[str, str],
-) -> List[PIITextBlock]:
-    if not truncated_suffixes:
-        return list(result_blocks)
-
-    result_by_id = {block.block_id: block for block in result_blocks}
-    restored: List[PIITextBlock] = []
-    for original_block in original_blocks:
-        result_block = result_by_id.get(original_block.block_id, original_block)
-        suffix = truncated_suffixes.get(original_block.block_id, "")
-        if suffix:
-            restored.append(
-                result_block.model_copy(update={"text": f"{result_block.text}{suffix}"})
-            )
-        else:
-            restored.append(result_block)
-    return restored
-
-
 def _render_langchain_messages(
     messages: Sequence[Any],
     locations: Sequence[_BlockLocation],
@@ -331,6 +311,129 @@ def _bounded_blocks(blocks: Iterable[PIITextBlock]) -> tuple[List[PIITextBlock],
     return bounded, truncated_suffixes
 
 
+def _truncation_findings(
+    blocks: Sequence[PIITextBlock],
+    truncated_suffixes: Dict[str, str],
+) -> List[PIIFinding]:
+    return [
+        PIIFinding(
+            category="truncated_input",
+            block_id=block.block_id,
+            metadata={"truncated_chars": len(truncated_suffixes[block.block_id])},
+        )
+        for block in blocks
+        if block.block_id in truncated_suffixes
+    ]
+
+
+async def _run_remediation(
+    blocks: Sequence[PIITextBlock],
+    *,
+    mode: PIIRemediationMode,
+    request_kind: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> PIIRemediationResult:
+    bounded_blocks, truncated_suffixes = _bounded_blocks(blocks)
+    started = time.perf_counter()
+    if truncated_suffixes:
+        findings = _truncation_findings(blocks, truncated_suffixes)
+        reason = (
+            "PII remediation skipped because one or more text blocks exceeded "
+            f"pii_remediation_max_chars={settings.pii_remediation_max_chars}"
+        )
+        allow_truncated = mode == PIIRemediationMode.DETECT or (
+            mode == PIIRemediationMode.REDACT and settings.pii_remediation_fail_open_for_redact
+        )
+        decision = (
+            PIIRemediationDecision.ALLOW if allow_truncated else PIIRemediationDecision.BLOCKED
+        )
+        record_pii_remediation_metrics(
+            request_kind=request_kind,
+            mode=mode.value,
+            decision=decision_value(decision),
+            findings=findings,
+            start_time=started,
+            detector_name="guard",
+            changed_text=False,
+            status="truncated",
+        )
+        logger.warning(
+            "%s for %s mode=%s truncated_blocks=%d",
+            reason,
+            request_kind,
+            mode.value,
+            len(truncated_suffixes),
+        )
+        if allow_truncated:
+            return PIIRemediationResult(
+                decision=PIIRemediationDecision.ALLOW,
+                blocks=list(blocks),
+                findings=findings,
+                detector_name="guard",
+                reason=reason,
+            )
+        if mode == PIIRemediationMode.BLOCK:
+            raise PIIRemediationBlockedError(reason)
+        raise PIIRemediationError(reason)
+
+    try:
+        result = await get_pii_remediator().remediate(
+            PIIRemediationRequest(
+                mode=mode,
+                request_kind=request_kind,
+                blocks=bounded_blocks,
+                categories=list(settings.pii_remediation_categories),
+                metadata=metadata or {},
+            )
+        )
+    except Exception as exc:
+        record_pii_remediation_metrics(
+            request_kind=request_kind,
+            mode=mode.value,
+            decision="error",
+            findings=[],
+            start_time=started,
+            status="error",
+        )
+        logger.warning(
+            "PII remediation failed for %s mode=%s: %s",
+            request_kind,
+            mode.value,
+            exc,
+        )
+        _apply_guard_failure(mode, exc)
+        return PIIRemediationResult(
+            decision=PIIRemediationDecision.ALLOW,
+            blocks=list(blocks),
+            detector_name="guard",
+            reason=str(exc),
+        )
+
+    changed_text = result.decision == PIIRemediationDecision.REDACTED
+    record_pii_remediation_metrics(
+        request_kind=request_kind,
+        mode=mode.value,
+        decision=decision_value(result.decision),
+        findings=result.findings,
+        start_time=started,
+        detector_name=result.detector_name,
+        detector_model=result.detector_model,
+        changed_text=changed_text,
+    )
+    logger.info(
+        "PII remediation request_kind=%s mode=%s decision=%s findings=%d categories=%s detector=%s model=%s changed_text=%s",
+        request_kind,
+        mode.value,
+        decision_value(result.decision),
+        len(result.findings),
+        sorted({finding.category for finding in result.findings}),
+        result.detector_name,
+        result.detector_model,
+        changed_text,
+    )
+    return result
+
+
 async def guard_langchain_input(
     payload: GuardablePayload,
     *,
@@ -364,57 +467,11 @@ async def guard_langchain_input(
     if not blocks:
         return list(payload) if isinstance(payload, list) else payload
 
-    bounded_blocks, truncated_suffixes = _bounded_blocks(blocks)
-    started = time.perf_counter()
-    try:
-        result = await get_pii_remediator().remediate(
-            PIIRemediationRequest(
-                mode=mode,
-                request_kind=request_kind,
-                blocks=bounded_blocks,
-                categories=list(settings.pii_remediation_categories),
-                metadata=metadata or {},
-            )
-        )
-    except Exception as exc:
-        record_pii_remediation_metrics(
-            request_kind=request_kind,
-            mode=mode.value,
-            decision="error",
-            findings=[],
-            start_time=started,
-            status="error",
-        )
-        logger.warning(
-            "PII remediation failed for %s mode=%s: %s",
-            request_kind,
-            mode.value,
-            exc,
-        )
-        _apply_guard_failure(mode, exc)
-        return list(payload) if isinstance(payload, list) else payload
-
-    changed_text = result.decision == PIIRemediationDecision.REDACTED
-    record_pii_remediation_metrics(
+    result = await _run_remediation(
+        blocks,
+        mode=mode,
         request_kind=request_kind,
-        mode=mode.value,
-        decision=decision_value(result.decision),
-        findings=result.findings,
-        start_time=started,
-        detector_name=result.detector_name,
-        detector_model=result.detector_model,
-        changed_text=changed_text,
-    )
-    logger.info(
-        "PII remediation request_kind=%s mode=%s decision=%s findings=%d categories=%s detector=%s model=%s changed_text=%s",
-        request_kind,
-        mode.value,
-        decision_value(result.decision),
-        len(result.findings),
-        sorted({finding.category for finding in result.findings}),
-        result.detector_name,
-        result.detector_model,
-        changed_text,
+        metadata=metadata,
     )
 
     if result.decision == PIIRemediationDecision.BLOCKED:
@@ -423,11 +480,10 @@ async def guard_langchain_input(
     if result.decision == PIIRemediationDecision.ALLOW:
         return list(payload) if isinstance(payload, list) else payload
 
-    restored_blocks = _restore_truncated_suffixes(blocks, result.blocks, truncated_suffixes)
     rendered = _render_langchain_messages(
         original_messages,
         locations,
-        {block.block_id: block for block in restored_blocks},
+        {block.block_id: block for block in result.blocks},
     )
     if restore == "string":
         return str(rendered[0].content or "")
@@ -453,57 +509,11 @@ async def guard_openai_chat_messages(
     if not blocks:
         return copy.deepcopy(original)
 
-    bounded_blocks, truncated_suffixes = _bounded_blocks(blocks)
-    started = time.perf_counter()
-    try:
-        result = await get_pii_remediator().remediate(
-            PIIRemediationRequest(
-                mode=mode,
-                request_kind=request_kind,
-                blocks=bounded_blocks,
-                categories=list(settings.pii_remediation_categories),
-                metadata=metadata or {},
-            )
-        )
-    except Exception as exc:
-        record_pii_remediation_metrics(
-            request_kind=request_kind,
-            mode=mode.value,
-            decision="error",
-            findings=[],
-            start_time=started,
-            status="error",
-        )
-        logger.warning(
-            "PII remediation failed for %s mode=%s: %s",
-            request_kind,
-            mode.value,
-            exc,
-        )
-        _apply_guard_failure(mode, exc)
-        return copy.deepcopy(original)
-
-    changed_text = result.decision == PIIRemediationDecision.REDACTED
-    record_pii_remediation_metrics(
+    result = await _run_remediation(
+        blocks,
+        mode=mode,
         request_kind=request_kind,
-        mode=mode.value,
-        decision=decision_value(result.decision),
-        findings=result.findings,
-        start_time=started,
-        detector_name=result.detector_name,
-        detector_model=result.detector_model,
-        changed_text=changed_text,
-    )
-    logger.info(
-        "PII remediation request_kind=%s mode=%s decision=%s findings=%d categories=%s detector=%s model=%s changed_text=%s",
-        request_kind,
-        mode.value,
-        decision_value(result.decision),
-        len(result.findings),
-        sorted({finding.category for finding in result.findings}),
-        result.detector_name,
-        result.detector_model,
-        changed_text,
+        metadata=metadata,
     )
 
     if result.decision == PIIRemediationDecision.BLOCKED:
@@ -512,9 +522,8 @@ async def guard_openai_chat_messages(
     if result.decision == PIIRemediationDecision.ALLOW:
         return copy.deepcopy(original)
 
-    restored_blocks = _restore_truncated_suffixes(blocks, result.blocks, truncated_suffixes)
     return _render_openai_messages(
-        original, locations, {block.block_id: block for block in restored_blocks}
+        original, locations, {block.block_id: block for block in result.blocks}
     )
 
 

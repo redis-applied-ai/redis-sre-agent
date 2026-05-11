@@ -300,38 +300,34 @@ async def test_guard_langchain_input_does_not_route_empty_list_through_openai_gu
 
 
 @pytest.mark.asyncio
-async def test_guard_langchain_input_preserves_tail_beyond_max_chars(monkeypatch, guard_settings):
+async def test_guard_langchain_input_fails_closed_when_text_exceeds_max_chars(
+    monkeypatch, guard_settings
+):
     guard_settings.pii_remediation_max_chars = 10
-    remediator = AsyncMock(
-        return_value=PIIRemediationResult(
-            decision=PIIRemediationDecision.REDACTED,
-            blocks=[
-                PIITextBlock(
-                    block_id="lc:0",
-                    path="messages[0].content",
-                    role="human",
-                    text="[PII:EMAIL:1]",
-                )
-            ],
-            findings=[
-                PIIFinding(
-                    category="private_email",
-                    block_id="lc:0",
-                    placeholder="[PII:EMAIL:1]",
-                    text="alice@exam",
-                )
-            ],
-            detector_name="test",
-            detector_model="local",
-        )
+    remediator = AsyncMock()
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
     )
+
+    with pytest.raises(PIIRemediationError, match="exceeded pii_remediation_max_chars"):
+        await guard_langchain_input("alice@example.com trailing", request_kind="unit")
+
+    remediator.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_guard_langchain_input_detect_mode_allows_truncated_text(monkeypatch, guard_settings):
+    guard_settings.pii_remediation_mode = "detect"
+    guard_settings.pii_remediation_max_chars = 10
+    remediator = AsyncMock()
     monkeypatch.setattr(
         guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
     )
 
     result = await guard_langchain_input("alice@example.com trailing", request_kind="unit")
 
-    assert result == "[PII:EMAIL:1]ple.com trailing"
+    assert result == "alice@example.com trailing"
+    remediator.assert_not_awaited()
 
 
 @pytest.mark.asyncio
