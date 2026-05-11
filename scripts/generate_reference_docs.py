@@ -119,9 +119,7 @@ def _write_cli_md(
     lines.append("| Command | Description |")
     lines.append("|---|---|")
     for name, help_text, top, subs in groups:
-        lines.append(
-            f"| `redis-sre-agent {name}` | {_md_escape(help_text) or '—'} |"
-        )
+        lines.append(f"| `redis-sre-agent {name}` | {_md_escape(help_text) or '—'} |")
     lines.append("")
 
     for name, help_text, top, subs in groups:
@@ -151,9 +149,7 @@ def _write_cli_md(
         lines.append("|---|---|---|")
         for name, help_text, top, _ in leaves:
             sig = _required_signature(top) or ""
-            lines.append(
-                f"| `redis-sre-agent {name}` | {sig} | {_md_escape(help_text) or '—'} |"
-            )
+            lines.append(f"| `redis-sre-agent {name}` | {sig} | {_md_escape(help_text) or '—'} |")
         lines.append("")
 
     dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
