@@ -77,20 +77,6 @@ extra:
 extra_css:
   - stylesheets/redis-brand.css
 
-markdown_extensions:
-  - admonition
-  - toc:
-      permalink: true
-      toc_depth: 3
-  - tables
-  - pymdownx.details
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-  - pymdownx.highlight
-  - pymdownx.inlinehilite
-
 plugins:
   - search
   - autorefs
@@ -133,8 +119,47 @@ plugins:
         For AI Agents:
           - for-ais-only/*.md
 
-extra_javascript:
-  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+watch:
+  - redis_sre_agent
+  - AGENTS.md
 
 nav:
   - Home: index.md
@@ -202,3 +227,4 @@ nav:
       - Failure modes: for-ais-only/FAILURE_MODES.md
       - Authoring standard: for-ais-only/AUTHORING_STANDARD.md
   - Changelog: https://github.com/redis-applied-ai/redis-sre-agent/releases
+
