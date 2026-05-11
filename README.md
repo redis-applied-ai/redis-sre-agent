@@ -62,14 +62,14 @@ docker compose exec -T sre-agent uv run redis-sre-agent \
 - Redis 8.x is the recommended default for local evaluation and new deployments.
 - Older Redis/Search deployments are supported when Redis Search / Redis Query Engine 2.4+ is available.
 
-For compatibility details and fallback behavior, see [Operational Notes](docs/operations/gotchas.md#redis-enterprise-vs-redis-oss).
+For compatibility details and fallback behavior, see [Operational Notes](docs/user_guide/how_to_guides/operations/gotchas.md#redis-enterprise-vs-redis-oss).
 
 ## Deployment Paths
 
-- Local demo: [docs/quickstarts/local.md](docs/quickstarts/local.md)
-- Full Docker walkthrough: [docs/quickstarts/end-to-end-setup.md](docs/quickstarts/end-to-end-setup.md)
-- VM deployment with Redis Enterprise: [docs/quickstarts/vm-deployment.md](docs/quickstarts/vm-deployment.md)
-- Air-gapped deployment: [docs/operations/airgap-deployment.md](docs/operations/airgap-deployment.md)
+- Local demo: [docs/user_guide/01_local_quickstart.md](docs/user_guide/01_local_quickstart.md)
+- Full Docker walkthrough: [docs/user_guide/02_end_to_end.md](docs/user_guide/02_end_to_end.md)
+- VM deployment with Redis Enterprise: [docs/user_guide/03_vm_deployment.md](docs/user_guide/03_vm_deployment.md)
+- Air-gapped deployment: [docs/user_guide/how_to_guides/operations/airgap.md](docs/user_guide/how_to_guides/operations/airgap.md)
 
 ## Architecture
 
@@ -83,10 +83,10 @@ The current release ships a production-oriented core: FastAPI API, background wo
 
 Optional integrations:
 
-- Agent Memory Server: [docs/how-to/agent-memory-server-integration.md](docs/how-to/agent-memory-server-integration.md)
+- Agent Memory Server: [docs/user_guide/how_to_guides/agent_memory_integration.md](docs/user_guide/how_to_guides/agent_memory_integration.md)
   Adds fail-open long-term memory retrieval and working-memory sync for user-scoped and asset-scoped operational context.
 
-For provider architecture and extensibility details, see [Tool Providers](docs/how-to/tool-providers.md).
+For provider architecture and extensibility details, see [Tool Providers](docs/user_guide/how_to_guides/tool_providers.md).
 
 ## License
 

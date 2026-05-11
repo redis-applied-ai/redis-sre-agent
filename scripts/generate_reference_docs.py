@@ -2,11 +2,14 @@
 Generate CLI and REST reference docs from code to reduce drift.
 
 Writes:
-- docs/reference/cli.md
-- docs/reference/api.md
+- docs/api/cli_ref.md   (CLI reference; RedisVL-style command tables)
+- docs/api/rest_api.md  (FastAPI route tables grouped by area)
 
-Notes:
-- Avoid code fences with 'redis-sre-agent' or 'curl' lines beyond a minimal curated set to keep tests stable.
+The CLI doc emits:
+- a top-level "Command groups" summary table
+- one section per group with a "Subcommand | Arguments | Description" table
+
+The REST doc emits one "Method | Path | Summary" table per area.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+import click
 
 from redis_sre_agent.api.app import app
 from redis_sre_agent.cli.main import main as cli_main
@@ -23,35 +28,54 @@ def _is_group(cmd) -> bool:
     return hasattr(cmd, "get_command")
 
 
-def _collect_click_tree() -> List[Tuple[str, str]]:
-    """Return a list of (command_path, help) for top-level and subcommands.
+def _short_help(cmd) -> str:
+    text = (getattr(cmd, "help", None) or getattr(cmd, "short_help", None) or "").strip()
+    return text.split("\n")[0].strip()
 
-    command_path examples:
-    - "query"
-    - "schedule create"
+
+def _required_signature(cmd: click.Command) -> str:
+    """Compact signature of required positional arguments and required options.
+
+    Pipes in choice metavars are escaped so the cell stays a single
+    Markdown table cell.
     """
-    import click
+    parts: List[str] = []
+    fake_ctx = click.Context(cmd)
+    for p in cmd.params:
+        if isinstance(p, click.Argument):
+            metavar = (p.make_metavar(fake_ctx) or p.name.upper()).replace("|", "\\|")
+            parts.append(f"`{metavar}`")
+        elif isinstance(p, click.Option) and p.required:
+            flag = p.opts[0]
+            metavar = (p.make_metavar(fake_ctx) or "").replace("|", "\\|")
+            if metavar and metavar != "BOOLEAN":
+                parts.append(f"`{flag} {metavar}`")
+            else:
+                parts.append(f"`{flag}`")
+    return " ".join(parts)
 
+
+def _md_escape(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _collect_groups() -> List[Tuple[str, str, click.Command, List[Tuple[str, click.Command]]]]:
+    """Return [(group_name, group_help, group_cmd, [(sub_name, sub_cmd), ...])]."""
     ctx = click.Context(cli_main)
-    items: List[Tuple[str, str]] = []
-
+    out: List[Tuple[str, str, click.Command, List[Tuple[str, click.Command]]]] = []
     for name in cli_main.list_commands(ctx):
         top = cli_main.get_command(ctx, name)
         if top is None:
             continue
-        help_text = (getattr(top, "help", None) or getattr(top, "short_help", None) or "").strip()
-        items.append((name, help_text))
+        subs: List[Tuple[str, click.Command]] = []
         if _is_group(top):
             sub_ctx = click.Context(top)
             for sub_name in top.list_commands(sub_ctx):
                 sub = top.get_command(sub_ctx, sub_name)
-                if sub is None:
-                    continue
-                sub_help = (
-                    getattr(sub, "help", None) or getattr(sub, "short_help", None) or ""
-                ).strip()
-                items.append((f"{name} {sub_name}", sub_help))
-    return items
+                if sub is not None:
+                    subs.append((sub_name, sub))
+        out.append((name, _short_help(top), top, subs))
+    return out
 
 
 def _collect_routes() -> List[Tuple[str, str, str]]:
@@ -72,16 +96,64 @@ def _collect_routes() -> List[Tuple[str, str, str]]:
     return routes
 
 
-def _write_cli_md(dest: Path, items: List[Tuple[str, str]]):
+def _write_cli_md(
+    dest: Path,
+    groups: List[Tuple[str, str, click.Command, List[Tuple[str, click.Command]]]],
+):
     lines: List[str] = []
-    lines.append("## CLI Reference (generated)\n")
-    lines.append("Generated from the Click command tree.\n\n")
-    lines.append("### Commands\n\n")
-    for path, help_text in items:
-        # Take only the first line of help text to keep the list clean
-        first_line = help_text.split("\n")[0].strip() if help_text else ""
-        lines.append(f"- {path} — {first_line}")
-    lines.append("\nSee How-to guides for examples.")
+    lines.append("---")
+    lines.append("description: Auto-generated reference for every redis-sre-agent subcommand.")
+    lines.append("---")
+    lines.append("")
+    lines.append("# CLI reference")
+    lines.append("")
+    lines.append(
+        "This page is generated from the Click command tree. Run "
+        "`redis-sre-agent <command> --help` for full flag descriptions and examples. "
+        "For end-to-end workflows, see "
+        "[CLI workflows](../user_guide/how_to_guides/cli_workflows.md)."
+    )
+    lines.append("")
+    lines.append("## Command groups")
+    lines.append("")
+    lines.append("| Command | Description |")
+    lines.append("|---|---|")
+    for name, help_text, top, subs in groups:
+        if not subs:
+            continue
+        lines.append(f"| `redis-sre-agent {name}` | {_md_escape(help_text) or '—'} |")
+    lines.append("")
+
+    for name, help_text, top, subs in groups:
+        if not subs:
+            continue
+        lines.append(f"## {name}")
+        lines.append("")
+        if help_text:
+            lines.append(_md_escape(help_text))
+            lines.append("")
+        lines.append("| Subcommand | Arguments | Description |")
+        lines.append("|---|---|---|")
+        for sub_name, sub in subs:
+            sig = _required_signature(sub) or ""
+            lines.append(
+                f"| `redis-sre-agent {name} {sub_name}` | {sig} | "
+                f"{_md_escape(_short_help(sub)) or '—'} |"
+            )
+        lines.append("")
+
+    # Top-level leaf commands (no subcommands) get a brief callout
+    leaves = [g for g in groups if not g[3]]
+    if leaves:
+        lines.append("## Top-level commands")
+        lines.append("")
+        lines.append("| Command | Arguments | Description |")
+        lines.append("|---|---|---|")
+        for name, help_text, top, _ in leaves:
+            sig = _required_signature(top) or ""
+            lines.append(f"| `redis-sre-agent {name}` | {sig} | {_md_escape(help_text) or '—'} |")
+        lines.append("")
+
     dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -127,14 +199,22 @@ def _write_api_md(dest: Path, routes: List[Tuple[str, str, str]]):
         sections[section_for_path(route[1])].append(route)
 
     lines: List[str] = []
-    lines.append("## REST API Reference (generated)\n")
+    lines.append("---")
+    lines.append("description: Auto-generated reference for the Redis SRE Agent FastAPI server.")
+    lines.append("---")
+    lines.append("")
+    lines.append("# REST API reference")
+    lines.append("")
+    lines.append("This page is generated from the FastAPI route tree.")
+    lines.append("")
     lines.append(
-        "This page is generated from the FastAPI route tree.\n\n"
         "For live schemas and request models, start the API and open "
         "`http://localhost:8000/docs` (local) or `http://localhost:8080/docs` "
-        "(Docker Compose).\n\n"
+        "(Docker Compose)."
     )
-    lines.append("### Start here\n\n")
+    lines.append("")
+    lines.append("## Start here")
+    lines.append("")
     lines.append("- Health and readiness: `/`, `/api/v1/health`, `/api/v1/metrics`")
     lines.append("- Manage Redis targets: `/api/v1/instances`, `/api/v1/clusters`")
     lines.append(
@@ -142,13 +222,19 @@ def _write_api_md(dest: Path, routes: List[Tuple[str, str, str]]):
     )
     lines.append("- Search and ingest knowledge: `/api/v1/knowledge/*`")
     lines.append("- Schedule recurring checks: `/api/v1/schedules/*`")
-    lines.append("- Analyze support packages: `/api/v1/support-packages/*`\n")
-    lines.append("For copy/paste workflows, see [Using the API](../how-to/api.md).\n")
+    lines.append("- Analyze support packages: `/api/v1/support-packages/*`")
+    lines.append("")
+    lines.append(
+        "For copy/paste workflows, see "
+        "[API workflows](../user_guide/how_to_guides/api_workflows.md)."
+    )
 
     for section, items in sections.items():
         if not items:
             continue
-        lines.append(f"\n### {section}\n")
+        lines.append("")
+        lines.append(f"## {section}")
+        lines.append("")
         lines.append("| Method | Path | Summary |")
         lines.append("|---|---|---|")
         for method, path, summary in items:
@@ -158,11 +244,11 @@ def _write_api_md(dest: Path, routes: List[Tuple[str, str, str]]):
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    cli_items = _collect_click_tree()
+    groups = _collect_groups()
     routes = _collect_routes()
 
-    _write_cli_md(root / "docs/reference/cli.md", cli_items)
-    _write_api_md(root / "docs/reference/api.md", routes)
+    _write_cli_md(root / "docs/api/cli_ref.md", groups)
+    _write_api_md(root / "docs/api/rest_api.md", routes)
 
 
 if __name__ == "__main__":

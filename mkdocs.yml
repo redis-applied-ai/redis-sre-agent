@@ -1,91 +1,233 @@
 site_name: Redis SRE Agent
-site_description: Production-ready Redis SRE agent with LangGraph, FastAPI, and monitoring.
+site_description: An AI-powered SRE agent for Redis. Diagnoses, triages, and remediates incidents.
+site_url: https://ai.redis.io/sre-agent/
 repo_url: https://github.com/redis-applied-ai/redis-sre-agent
 repo_name: redis-applied-ai/redis-sre-agent
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Redis Inc.
+
+docs_dir: docs
+
+exclude_docs: |
+  _build/
+  _static/
+  _templates/
+  conf.py
+  Makefile
+  requirements.txt
+  api/python/index.rst
 
 theme:
   name: material
+  language: en
+  logo: assets/redis-logo-script.svg
+  favicon: assets/favicon.png
+  font:
+    text: Space Grotesk
+    code: Space Mono
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
   features:
     - navigation.instant
+    - navigation.instant.progress
     - navigation.tracking
+    - navigation.sections
+    - navigation.indexes
     - navigation.top
-    - toc.integrate
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
     - content.code.copy
-  palette:
-    - scheme: default
-      primary: red
-      accent: deep-orange
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - content.action.view
+    - content.tooltips
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
 
-markdown_extensions:
-  - admonition
-  - toc:
-      permalink: true
-  - tables
-  - pymdownx.details
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-  - pymdownx.highlight
-  - pymdownx.inlinehilite
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/redis-applied-ai/redis-sre-agent
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/redis-sre-agent/
 
-plugins:
-  - search
+extra_css:
+  - stylesheets/redis-brand.css
 
 extra_javascript:
   - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 
+plugins:
+  - search
+  - autorefs
+  - section-index
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            docstring_section_style: table
+            inherited_members: true
+            filters:
+              - "!^_"
+  - llmstxt:
+      full_output: llms-full.txt
+      sections:
+        Concepts:
+          - concepts/*.md
+        User Guide:
+          - user_guide/*.md
+          - user_guide/how_to_guides/*.md
+          - user_guide/how_to_guides/operations/*.md
+          - user_guide/how_to_guides/release_tutorials/*.md
+        Examples:
+          - examples/*.md
+        API Reference:
+          - api/*.md
+        For AI Agents:
+          - for-ais-only/*.md
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+watch:
+  - redis_sre_agent
+  - AGENTS.md
+
 nav:
   - Home: index.md
-  - Quickstarts:
-      - End-to-end setup: quickstarts/end-to-end-setup.md
-      - Local Demo: quickstarts/local.md
-      - VM Deployment (Redis Enterprise): quickstarts/vm-deployment.md
-  - How-to:
-      - Agent Memory Server Integration: how-to/agent-memory-server-integration.md
-      - How to connect to Redis: how-to/connect-to-redis.md
-      - Configuration: how-to/configuration.md
-      - Eval system: how-to/evals.md
-      - Tool Providers: how-to/tool-providers.md
-      - Using the CLI & API: how-to/cli.md
-      - Using the API: how-to/api.md
-      - Local development & testing: how-to/local-dev.md
-      - Pipelines & ingestion: how-to/pipelines.md
-      - Source document features: how-to/source-document-features.md
-      - Configuration (Advanced):
-          - Encryption: how-to/configuration/encryption.md
-      - Scheduling flows: how-to/scheduling-flows.md
-      - Release tutorials:
-          - v0.2.8 release tutorial: how-to/release-tutorials/v0.2.8.md
-  - UI: ui/experimental.md
   - Concepts:
-      - Overview: concepts/core.md
-  - Operations:
-      - Docker Deployment: operations/docker-deployment.md
-      - Air-Gap Deployment: operations/airgap-deployment.md
-      - Observability & Health: operations/observability.md
-      - Operational Notes & Limitations: operations/gotchas.md
-  - Reference:
-      - CLI Reference: reference/cli.md
-      - REST API: reference/api.md
-      - Configuration: reference/configuration.md
+      - concepts/index.md
+      - Core architecture: concepts/core.md
+      - Triage loop: concepts/triage_loop.md
+      - Pipelines: concepts/pipelines.md
+      - Tool providers: concepts/tool_providers.md
+  - User Guide:
+      - user_guide/index.md
+      - Local quick start: user_guide/01_local_quickstart.md
+      - End-to-end walkthrough: user_guide/02_end_to_end.md
+      - VM deployment: user_guide/03_vm_deployment.md
+      - How-To Guides:
+          - user_guide/how_to_guides/index.md
+          - Connect to Redis: user_guide/how_to_guides/connect_to_redis.md
+          - Configuration: user_guide/how_to_guides/configuration.md
+          - Local development: user_guide/how_to_guides/local_dev.md
+          - CLI workflows: user_guide/how_to_guides/cli_workflows.md
+          - API workflows: user_guide/how_to_guides/api_workflows.md
+          - Tool providers: user_guide/how_to_guides/tool_providers.md
+          - Pipelines: user_guide/how_to_guides/pipelines.md
+          - Source documents: user_guide/how_to_guides/source_documents.md
+          - Scheduling: user_guide/how_to_guides/scheduling.md
+          - Evals: user_guide/how_to_guides/evals.md
+          - Agent memory integration: user_guide/how_to_guides/agent_memory_integration.md
+          - Web UI: user_guide/how_to_guides/ui.md
+          - Operations:
+              - user_guide/how_to_guides/operations/index.md
+              - Docker deployment: user_guide/how_to_guides/operations/docker_deployment.md
+              - Observability: user_guide/how_to_guides/operations/observability.md
+              - Airgap: user_guide/how_to_guides/operations/airgap.md
+              - Secret encryption: user_guide/how_to_guides/operations/encryption.md
+              - Gotchas: user_guide/how_to_guides/operations/gotchas.md
+          - Release tutorials:
+              - user_guide/how_to_guides/release_tutorials/index.md
+              - v0.2.8: user_guide/how_to_guides/release_tutorials/v0_2_8.md
+  - Examples:
+      - examples/index.md
+      - Incident triage: examples/incident_triage.md
+      - Custom provider: examples/custom_provider.md
+  - API Reference:
+      - api/index.md
+      - REST API: api/rest_api.md
+      - CLI reference: api/cli_ref.md
+      - Configuration: api/configuration.md
+      - Python package:
+          - api/python/index.md
+          - Agent: api/python/agent.md
+          - Core: api/python/core.md
+          - API server: api/python/api.md
+          - CLI: api/python/cli.md
+          - MCP server: api/python/mcp_server.md
+          - Pipelines: api/python/pipelines.md
+          - Skills: api/python/skills.md
+          - Targets: api/python/targets.md
+          - Tools: api/python/tools.md
+          - Evaluation: api/python/evaluation.md
+          - Observability: api/python/observability.md
+  - For AI Agents:
+      - for-ais-only/index.md
+      - Repository map: for-ais-only/REPOSITORY_MAP.md
+      - Build and test: for-ais-only/BUILD_AND_TEST.md
+      - Failure modes: for-ais-only/FAILURE_MODES.md
+      - Authoring standard: for-ais-only/AUTHORING_STANDARD.md
+  - Changelog: https://github.com/redis-applied-ai/redis-sre-agent/releases
 
-# Future sections (add as pages are created):
-# - Concepts:
-#     - Overview: concepts/core.md
-# - How-to:
-#     - Local development & testing: how-to/local-dev.md
-#     - Configuration: how-to/configuration.md
-#     - CLI: how-to/cli.md
-#     - API: how-to/api.md
-#     - Pipelines & ingestion: how-to/pipelines.md
-# - Operations:
-#     - Observability & Health: operations/observability.md
-#     - Troubleshooting: operations/troubleshooting.md
-# - Reference:
-#     - Configuration: reference/configuration.md
-#     - Metrics: reference/metrics.md
-#     - CLI Reference: reference/cli.md
-#     - REST API: reference/api.md
-# - Examples:
-#     - End-to-end triage: examples/demo-triage.md

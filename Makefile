@@ -47,7 +47,7 @@ docs-gen: sync ## Generate reference docs (CLI, REST) from code
 
 # Fails if generation produces diffs (useful in CI)
 docs-gen-check: docs-gen ## Generate reference docs and fail if files changed
-	@git diff --quiet -- docs/reference || (echo "Reference docs changed. Please run 'uv run python scripts/generate_reference_docs.py' and commit updates." && git --no-pager diff -- docs/reference && exit 1)
+	@git diff --quiet -- docs/api/cli_ref.md docs/api/rest_api.md || (echo "Reference docs changed. Please run 'uv run python scripts/generate_reference_docs.py' and commit updates." && git --no-pager diff -- docs/api/cli_ref.md docs/api/rest_api.md && exit 1)
 
 # --- Local services ---
 
