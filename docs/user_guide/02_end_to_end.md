@@ -1,6 +1,18 @@
-# Getting Started with the SRE Agent
+---
+description: Full ingest, scrape, and incident triage loop on a sample Redis target.
+---
 
-If you want the fastest seeded local demo, start with `make quick-demo` from the repository root. This guide walks through the full manual path so you can see each step of the stack and the knowledge pipeline.
+# End-to-end walkthrough
+
+This is the full manual path through the agent: stand up the stack,
+populate the knowledge base, register a Redis instance, and run a real
+triage. It exists so you can see each layer (API, worker, pipeline, UI)
+on its own before you trust the one-shot `make quick-demo` shortcut. If
+you only need a chat interface, the [Local quick
+start](01_local_quickstart.md) is faster.
+
+**Related:** [Pipelines (how-to)](how_to_guides/pipelines.md) ·
+[Incident triage walkthrough](../examples/incident_triage.md)
 
 ## Prerequisites
 
@@ -76,9 +88,9 @@ Here's what each service does:
 
 **Note:** There are **two** Redis instances. One is used by the application itself, and the other is the Redis instance that the sre-agent will monitor.
 
-### Status Checks
+### Status checks
 
-#### API
+**API:**
 
 ```bash
 # Root health (fast)
@@ -92,7 +104,7 @@ curl -fsS http://localhost:8080/api/v1/health | jq
 curl -fsS http://localhost:8080/api/v1/metrics | head -n 20
 ```
 
-#### Docker
+**Docker:**
 
 ```bash
 docker ps
@@ -100,9 +112,13 @@ docker ps
 
 ![alt text](./resources/docker.png)
 
-#### Redis
+**Redis:**
 
-Use Redis Insight or `redis-cli` to confirm that both Redis instances are running. By default, the internal SRE Redis is available at `redis://localhost:7843` and the redis-demo at `redis://localhost:7844`. The internal instance (port 7843) will have Docket workers and additional keys related to the sre-agent. The redis-demo instance will be empty.
+Use Redis Insight or `redis-cli` to confirm that both Redis instances are
+running. By default, the internal SRE Redis is available at
+`redis://localhost:7843` and the redis-demo at `redis://localhost:7844`.
+The internal instance (port 7843) will have Docket workers and additional
+keys related to the sre-agent. The redis-demo instance will be empty.
 
 ## Populating the Knowledge Base and Running the UI
 

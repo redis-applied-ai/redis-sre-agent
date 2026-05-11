@@ -1,14 +1,29 @@
-## Using the API: Core Workflows
+---
+description: End-to-end workflows for driving the Redis SRE Agent over its HTTP API.
+---
 
-This guide shows how to use the HTTP API end-to-end: check health, create clusters/instances, triage using tasks/threads, ingest and search knowledge, schedule recurring checks, and view status. It focuses on concrete workflows rather than a full reference.
+# API workflows
 
-### Prerequisites
-- Services running (Docker Compose or local uvicorn + worker)
-- If you enabled auth in your environment, include your API key header as needed
+This page shows you how to drive the agent end-to-end over the HTTP API:
+check health, create clusters and instances, triage with tasks and threads,
+ingest and search knowledge, schedule recurring checks, and watch progress
+in real time. It is workflow-oriented; for endpoint-level detail see the
+[REST API reference](../../api/rest_api.md).
 
-**Port Note**: Docker Compose exposes the API on port **8080**, while local uvicorn uses port **8000**. Examples below use port 8080 (Docker Compose). Replace with 8000 if running locally.
+**Related:** [CLI workflows](cli_workflows.md) ·
+[Scheduling](scheduling.md) · [Configuration](configuration.md)
 
-### 1) Start services (choose one)
+!!! info "Prerequisites"
+    Services running (Docker Compose or local `uvicorn` + worker). If your
+    deployment requires authentication, include the API key header on every
+    request.
+
+!!! note "Port note"
+    Docker Compose exposes the API on port **8080**, while local `uvicorn`
+    uses port **8000**. Examples below use port 8080. Replace with 8000 if
+    you are running locally.
+
+## 1) Start services (choose one)
 - Docker Compose
 ```bash
 docker compose up -d \
@@ -25,7 +40,7 @@ uv run uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
 uv run redis-sre-agent worker start
 ```
 
-### 2) Health and readiness
+## 2) Health and readiness
 ```bash
 # Root health (fast)
 # Use port 8080 for Docker Compose, port 8000 for local uvicorn
@@ -38,7 +53,7 @@ curl -fsS http://localhost:8080/api/v1/health | jq
 curl -fsS http://localhost:8080/api/v1/metrics | head -n 20
 ```
 
-### 3) Manage Redis instances (with optional cluster links)
+## 3) Manage Redis instances (with optional cluster links)
 You can create an instance without a cluster for any supported `instance_type`.
 Use `cluster_id` only when you want explicit cluster linkage (recommended for enterprise credentials/routing).
 ```bash
@@ -96,7 +111,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
   -d '{"connection_url": "redis://host:6379/0"}' | jq
 ```
 
-### Notes
+## Notes
 - The API masks credentials in returned `connection_url`
 - `cluster_id` is optional; it is only required when linking an instance to an existing cluster
 - `cluster_id` is the preferred credential path when using Redis Enterprise admin credentials
@@ -106,7 +121,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-connection-url \
 - Manual backfill is available via CLI: `uv run redis-sre-agent cluster backfill-instance-links --dry-run`
 - If backfill reports a completion marker and skips work, rerun with `--force`: `uv run redis-sre-agent cluster backfill-instance-links --force --json`
 
-### 4) Triage with tasks and threads
+## 4) Triage with tasks and threads
 Simplest: create a task with your question. The API will create a thread if you omit `thread_id`.
 
 > **Note**: Triage performs comprehensive analysis (metrics, logs, knowledge base, multi-topic recommendations) and typically takes **2-10 minutes** to complete. Poll the task status or use WebSocket for real-time updates.
@@ -150,7 +165,7 @@ wscat -c ws://localhost:8080/api/v1/ws/tasks/<thread_id>
 # You will receive an initial_state event and subsequent progress updates
 ```
 
-#### Alternative flow
+### Alternative flow
 
 Alternative flow: create a thread first, then submit a task on that thread.
 ```bash
@@ -169,7 +184,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   }' | jq
 ```
 
-#### Natural-language target discovery and comparison
+### Natural-language target discovery and comparison
 If your deployment has target discovery configured, you can omit `instance_id` and `cluster_id`
 and let the agent resolve targets from the message text.
 
@@ -201,7 +216,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   }' | jq
 ```
 
-### 5) Prepare knowledge and validate what the agent knows
+## 5) Prepare knowledge and validate what the agent knows
 Run an ingestion job, then search to confirm content is available.
 ```bash
 # Start pipeline job (ingest existing artifacts or run full if configured)
@@ -228,7 +243,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/knowledge/ingest/document \
   }' | jq
 ```
 
-### 6) Schedule recurring checks
+## 6) Schedule recurring checks
 Create a schedule to run instructions periodically, optionally bound to an instance.
 ```bash
 # Create schedule (daily)
@@ -255,12 +270,12 @@ curl -fsS -X POST http://localhost:8080/api/v1/schedules/<schedule_id>/trigger |
 curl -fsS http://localhost:8080/api/v1/schedules/<schedule_id>/runs | jq
 ```
 
-### 7) Tasks, threads, and streaming
+## 7) Tasks, threads, and streaming
 - Tasks: `GET /api/v1/tasks/{task_id}`
 - Threads: `GET /api/v1/threads`, `GET /api/v1/threads/{thread_id}`
 - WebSocket: `ws://localhost:8080/api/v1/ws/tasks/{thread_id}`
 
-#### Approval-driven tasks
+### Approval-driven tasks
 Some write actions pause a task in `awaiting_approval`. When that happens:
 
 - `GET /api/v1/tasks/<task_id>` can include `pending_approval`.
@@ -308,12 +323,19 @@ curl -fsS -X POST http://localhost:8080/api/v1/tasks/<task_id>/resume \
 The current CLI does not yet expose approvals listing or resume commands, so use the API for
 human-in-the-loop decision handling.
 
-### 8) Observability
+## 8) Observability
 - Prometheus scrape: `GET /api/v1/metrics`
 - Health: `GET /api/v1/health` (checks Redis, vector index, workers); status may be degraded when workers aren’t running
 - Grafana: http://localhost:3001 (default admin/admin)
 
-### Tips
+## Tips
 - Set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL to enable metrics/logs tools during triage
 - For Docker, prefer in-cluster addresses from within the sre-agent container when invoking the CLI
 - See How-to: Using the CLI & API for a CLI-first walkthrough of the same flows
+
+## Related
+
+- [REST API reference](../../api/rest_api.md) — full endpoint reference.
+- [CLI workflows](cli_workflows.md) — same flows from the command line.
+- [Scheduling](scheduling.md) — recurring health checks in depth.
+- [Configuration](configuration.md) — what to set on each process.

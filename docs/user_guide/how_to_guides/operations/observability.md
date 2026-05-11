@@ -1,8 +1,18 @@
-## Observability & Health
+---
+description: Prometheus metrics, Loki logs, and Grafana dashboards.
+---
 
-This guide covers how to observe the Redis SRE Agent itself: health checks, metrics, distributed tracing, and logs.
+# Observability
 
-The Docker Compose stack includes Prometheus, Grafana, Loki, and Tempo for local development and testing. These are optional in production - use your existing observability infrastructure.
+Use this guide to observe the agent itself — its health, latency,
+request rates, traces, and logs — separately from the Redis instances it
+monitors. The Docker Compose stack includes Prometheus, Grafana, Loki,
+and Tempo for local development and testing; in production you'll
+typically point the agent at your existing observability stack
+instead.
+
+**Related:** [Docker deployment](docker_deployment.md) ·
+[Gotchas](gotchas.md)
 
 ---
 
@@ -35,11 +45,11 @@ The agent exposes Prometheus metrics at `/api/v1/metrics` for scraping.
 - **Knowledge base stats**: document count
 - **Worker count**: active Docket workers
 - **LLM metrics** (from `redis_sre_agent/observability/llm_metrics.py`):
-  - `sre_agent_llm_tokens_prompt_total` - prompt tokens by model and component
-  - `sre_agent_llm_tokens_completion_total` - completion tokens by model and component
-  - `sre_agent_llm_tokens_total` - total tokens by model and component
-  - `sre_agent_llm_requests_total` - request count by model, component, and status
-  - `sre_agent_llm_duration_seconds` - latency histogram by model and component
+ - `sre_agent_llm_tokens_prompt_total` - prompt tokens by model and component
+ - `sre_agent_llm_tokens_completion_total` - completion tokens by model and component
+ - `sre_agent_llm_tokens_total` - total tokens by model and component
+ - `sre_agent_llm_requests_total` - request count by model, component, and status
+ - `sre_agent_llm_duration_seconds` - latency histogram by model and component
 
 ### Scrape the API
 ```bash
@@ -50,9 +60,9 @@ curl -fsS http://localhost:8080/api/v1/metrics | head -n 30
 Add the agent to your Prometheus scrape config:
 ```yaml
 scrape_configs:
-  - job_name: 'sre-agent'
+ - job_name: 'sre-agent'
     static_configs:
-      - targets: ['sre-agent:8000']
+     - targets: ['sre-agent:8000']
     metrics_path: /api/v1/metrics
     scrape_interval: 30s
 ```
@@ -81,8 +91,8 @@ Both the API and worker will automatically instrument and export spans when this
 - **HTTP clients** (HTTPX, AioHTTP)
 - **OpenAI API calls** (via OpenAIInstrumentor)
 - **LangGraph nodes**: Each node in the agent workflow gets a custom span with attributes:
-  - `langgraph.graph` - which graph (e.g., `sre_agent`, `knowledge`, `runbook`)
-  - `langgraph.node` - which node (e.g., `agent`, `tools`, `reasoning`)
+ - `langgraph.graph` - which graph (e.g., `sre_agent`, `knowledge`, `runbook`)
+ - `langgraph.node` - which node (e.g., `agent`, `tools`, `reasoning`)
 - **LLM calls**: Token usage and latency are added as span attributes
 
 ### Span Categories for Filtering
@@ -141,7 +151,7 @@ Access it in Grafana under Dashboards → SRE Agent Traces.
 The Docker Compose stack includes Tempo as an OTLP collector:
 ```yaml
 environment:
-  - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
+ - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318/v1/traces
 ```
 
 Query traces in Grafana (Tempo datasource at `http://tempo:3200`).

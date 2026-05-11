@@ -1,14 +1,26 @@
-## Local Quickstart (Docker Compose)
+---
+description: Bring the full local stack up with Docker Compose and chat with the agent.
+---
 
-Use this path when you want the fastest local demo with a seeded Redis target, API, worker, dashboards, and UI.
+# Local quick start
 
-### Prerequisites
+Use this path when you want the fastest local demo: a seeded Redis target,
+the API, the worker, dashboards, and the UI all running in Docker
+Compose. You will configure your environment, boot the stack, and ask
+the agent its first question — usually in under five minutes. Once
+you've finished, the [End-to-end walkthrough](02_end_to_end.md) shows
+the full ingest and triage loop.
+
+**Related:** [Docker deployment](how_to_guides/operations/docker_deployment.md) ·
+[Incident triage walkthrough](../examples/incident_triage.md)
+
+## Prerequisites
 
 - Docker with Compose v2
 - OpenAI API key or compatible endpoint
 - Optional: `curl` for quick health checks
 
-### 1) Configure environment
+## 1) Configure environment
 
 ```bash
 cp .env.example .env
@@ -17,7 +29,7 @@ cp .env.example .env
 # python3 -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
 ```
 
-### 2) Run the seeded demo
+## 2) Run the seeded demo
 
 ```bash
 make quick-demo
@@ -30,7 +42,7 @@ The helper does four things:
 - Registers a demo Redis target with the agent
 - Prints next-step commands for knowledge mode and live triage
 
-### 3) Ask your first question
+## 3) Ask your first question
 
 Start with a knowledge-only question that needs no target setup:
 
@@ -48,7 +60,7 @@ docker compose exec -T sre-agent uv run redis-sre-agent \
   query "Check memory pressure and slow ops" -r <instance_id>
 ```
 
-### 4) Verify the stack
+## 4) Verify the stack
 
 ```bash
 curl -fsS http://localhost:8080/
@@ -56,7 +68,7 @@ curl -fsS http://localhost:8080/api/v1/health | jq
 curl -fsS http://localhost:9090/-/ready
 ```
 
-### Access points
+## Access points
 
 - API: <http://localhost:8080>
 - UI: <http://localhost:3002>
@@ -65,7 +77,7 @@ curl -fsS http://localhost:9090/-/ready
 - Agent Redis: `redis://localhost:7843/0`
 - Demo Redis: `redis://localhost:7844/0`
 
-### Run the CLI on your host instead of in the container
+## Run the CLI on your host instead of in the container
 
 ```bash
 uv sync --dev
@@ -78,21 +90,21 @@ uv run redis-sre-agent instance create \
   --description "Demo Redis"
 ```
 
-### Cleanup
+## Cleanup
 
 ```bash
 docker compose down
 ```
 
-### Next steps
-- Full Docker walkthrough: [quickstarts/end-to-end-setup.md](end-to-end-setup.md)
-- VM deployment: [quickstarts/vm-deployment.md](vm-deployment.md)
-- Agent Memory Server integration: [how-to/agent-memory-server-integration.md](../how-to/agent-memory-server-integration.md)
-- UI details: [ui/experimental.md](../ui/experimental.md)
+## Next steps
+- Full Docker walkthrough: [End-to-end walkthrough](02_end_to_end.md)
+- VM deployment: [VM deployment](03_vm_deployment.md)
+- Agent Memory Server integration: [how-to/agent-memory-server-integration.md](how_to_guides/agent_memory_integration.md)
+- UI details: [ui/experimental.md](how_to_guides/ui.md)
 - Knowledge ingestion: `uv run redis-sre-agent pipeline prepare-sources` then `uv run redis-sre-agent pipeline ingest`
 
-### See also
+## See also
 
-- Configuration: [how-to/configuration.md](../how-to/configuration.md)
-- Tool Providers: [how-to/tool-providers.md](../how-to/tool-providers.md)
-- Encryption: [how-to/configuration/encryption.md](../how-to/configuration/encryption.md)
+- Configuration: [how-to/configuration.md](how_to_guides/configuration.md)
+- Tool Providers: [how-to/tool-providers.md](how_to_guides/tool_providers.md)
+- Encryption: [how-to/configuration/encryption.md](how_to_guides/operations/encryption.md)

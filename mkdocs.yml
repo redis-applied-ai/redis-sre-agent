@@ -37,55 +37,32 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Quickstarts:
-      - End-to-end setup: quickstarts/end-to-end-setup.md
-      - Local Demo: quickstarts/local.md
-      - VM Deployment (Redis Enterprise): quickstarts/vm-deployment.md
-  - How-to:
-      - Agent Memory Server Integration: how-to/agent-memory-server-integration.md
-      - How to connect to Redis: how-to/connect-to-redis.md
-      - Configuration: how-to/configuration.md
-      - Eval system: how-to/evals.md
-      - Tool Providers: how-to/tool-providers.md
-      - Using the CLI & API: how-to/cli.md
-      - Using the API: how-to/api.md
-      - Local development & testing: how-to/local-dev.md
-      - Pipelines & ingestion: how-to/pipelines.md
-      - Source document features: how-to/source-document-features.md
-      - Configuration (Advanced):
-          - Encryption: how-to/configuration/encryption.md
-      - Scheduling flows: how-to/scheduling-flows.md
-      - Release tutorials:
-          - v0.2.8 release tutorial: how-to/release-tutorials/v0.2.8.md
-  - UI: ui/experimental.md
+  - User Guide:
+      - Local quick start: user_guide/01_local_quickstart.md
+      - End-to-end setup: user_guide/02_end_to_end.md
+      - VM deployment: user_guide/03_vm_deployment.md
+      - How-to:
+          - Agent Memory Server Integration: user_guide/how_to_guides/agent_memory_integration.md
+          - How to connect to Redis: user_guide/how_to_guides/connect_to_redis.md
+          - Configuration: user_guide/how_to_guides/configuration.md
+          - Eval system: user_guide/how_to_guides/evals.md
+          - Tool Providers: user_guide/how_to_guides/tool_providers.md
+          - CLI workflows: user_guide/how_to_guides/cli_workflows.md
+          - API workflows: user_guide/how_to_guides/api_workflows.md
+          - Local development & testing: user_guide/how_to_guides/local_dev.md
+          - Pipelines & ingestion: user_guide/how_to_guides/pipelines.md
+          - Source document features: user_guide/how_to_guides/source_documents.md
+          - Scheduling flows: user_guide/how_to_guides/scheduling.md
+          - Release tutorials:
+              - v0.2.8 release tutorial: user_guide/how_to_guides/release_tutorials/v0_2_8.md
+          - Operations:
+              - Docker Deployment: user_guide/how_to_guides/operations/docker_deployment.md
+              - Air-Gap Deployment: user_guide/how_to_guides/operations/airgap.md
+              - Observability & Health: user_guide/how_to_guides/operations/observability.md
+              - Operational Notes & Limitations: user_guide/how_to_guides/operations/gotchas.md
   - Concepts:
       - Overview: concepts/core.md
-  - Operations:
-      - Docker Deployment: operations/docker-deployment.md
-      - Air-Gap Deployment: operations/airgap-deployment.md
-      - Observability & Health: operations/observability.md
-      - Operational Notes & Limitations: operations/gotchas.md
-  - Reference:
-      - CLI Reference: reference/cli.md
-      - REST API: reference/api.md
-      - Configuration: reference/configuration.md
-
-# Future sections (add as pages are created):
-# - Concepts:
-#     - Overview: concepts/core.md
-# - How-to:
-#     - Local development & testing: how-to/local-dev.md
-#     - Configuration: how-to/configuration.md
-#     - CLI: how-to/cli.md
-#     - API: how-to/api.md
-#     - Pipelines & ingestion: how-to/pipelines.md
-# - Operations:
-#     - Observability & Health: operations/observability.md
-#     - Troubleshooting: operations/troubleshooting.md
-# - Reference:
-#     - Configuration: reference/configuration.md
-#     - Metrics: reference/metrics.md
-#     - CLI Reference: reference/cli.md
-#     - REST API: reference/api.md
-# - Examples:
-#     - End-to-end triage: examples/demo-triage.md
+  - API Reference:
+      - CLI Reference: api/cli_ref.md
+      - REST API: api/rest_api.md
+      - Configuration: api/configuration.md

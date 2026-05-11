@@ -1,6 +1,20 @@
-## How to connect to Redis
+---
+description: Single, cluster, sentinel, TLS, and ACL connection patterns.
+---
 
-This guide shows how to configure Redis connections in the Redis SRE Agent for:
+# Connect to Redis
+
+Use this guide whenever you need to register a new Redis target with the
+agent — open-source single nodes, OSS clusters, Redis Cloud, or Redis
+Enterprise. It covers the required and optional fields per topology, TLS
+and ACL settings, and the two interfaces (CLI and UI) you can use to
+create or update instances. If this is your first instance, also skim
+[Configuration](configuration.md) for the precedence rules.
+
+**Related:** [Tool providers](tool_providers.md) ·
+[Configuration reference](../../api/configuration.md)
+
+Supported topologies:
 - Open Source Redis (`oss_single`, `oss_cluster`)
 - Redis Cloud (`redis_cloud`)
 - Redis Enterprise (`redis_enterprise`)
@@ -9,7 +23,7 @@ You can configure instances in two places:
 - CLI: `uv run redis-sre-agent instance ...`
 - UI: **Redis Instances** page (`Add Instance` / `Edit`)
 
-### Common fields (all Redis types)
+## Common fields (all Redis types)
 
 Required on create:
 - `name`
@@ -50,7 +64,7 @@ Note:
 - In the **Add Instance** form, **Test Connection** validates URL format.
 - For a live connectivity check, save first, then use **Test Connection** on the instance card (or edit an existing instance and test there).
 
-### Open Source Redis (`oss_single`, `oss_cluster`)
+## Open Source Redis (`oss_single`, `oss_cluster`)
 
 Use this for self-managed Redis OSS, including single-node and cluster mode.
 
@@ -80,7 +94,7 @@ UI:
 - Set **Instance Type** to `Redis OSS (Single Node)` or `Redis OSS (Cluster Mode)`
 - No extra type-specific fields are required
 
-### Redis Cloud (`redis_cloud`)
+## Redis Cloud (`redis_cloud`)
 
 Use this when your target database runs in Redis Cloud.
 
@@ -103,16 +117,16 @@ uv run redis-sre-agent instance create \
 UI:
 - Set **Instance Type** to `Redis Cloud / Managed Service`
 - Optional cloud fields:
-  - Subscription Type (`pro` or `essentials`)
-  - Subscription ID
-  - Database ID
-  - Database Name
+ - Subscription Type (`pro` or `essentials`)
+ - Subscription ID
+ - Database ID
+ - Database Name
 
 For Redis Cloud management API tooling during troubleshooting, set:
 - `TOOLS_REDIS_CLOUD_API_KEY`
 - `TOOLS_REDIS_CLOUD_API_SECRET_KEY`
 
-### Redis Enterprise (`redis_enterprise`)
+## Redis Enterprise (`redis_enterprise`)
 
 Use this when your target database runs in a Redis Enterprise cluster.
 
@@ -143,9 +157,9 @@ uv run redis-sre-agent instance create \
 UI:
 - Set **Instance Type** to `Redis Enterprise`
 - Fill:
-  - `Admin API URL` (usually `https://<cluster-host>:9443`)
-  - `Admin Username`
-  - `Admin Password`
+ - `Admin API URL` (usually `https://<cluster-host>:9443`)
+ - `Admin Username`
+ - `Admin Password`
 - Use **Test Admin API Connection** before saving
 
 To test Admin API credentials outside the UI:
@@ -160,7 +174,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/instances/test-admin-api \
   }'
 ```
 
-### Redis Enterprise Cluster Creation Defaults (API/CLI)
+## Redis Enterprise Cluster Creation Defaults (API/CLI)
 
 When creating a Redis Enterprise **cluster** (`/api/v1/clusters` or `redis-sre-agent cluster create`), you can omit `admin_url`, `admin_username`, and `admin_password` if these environment variables are set:
 
@@ -201,7 +215,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/clusters \
   }' | jq
 ```
 
-### Redis Enterprise: Checking Cluster Health
+## Redis Enterprise: Checking Cluster Health
 
 For Redis Enterprise troubleshooting, configure `admin_url` (and credentials) on the instance.
 

@@ -1,9 +1,19 @@
-# Docker Deployment Guide
+---
+description: Run the full stack with Compose, including monitoring sidecars.
+---
 
-This guide covers deploying Redis SRE Agent with Docker Compose in environments with
-internet access. Use it as the fastest evaluation path and as a reference deployment for
-containerized environments. For air-gapped environments, see
-[Air-Gapped Deployment](airgap-deployment.md).
+# Docker deployment
+
+Use Docker Compose when you want a reference deployment that mirrors
+production layout — agent, worker, Redis, monitoring sidecars — without
+provisioning bare metal. This is the same stack the [Local quick
+start](../../01_local_quickstart.md) boots, just configured for a
+shared host instead of a developer laptop. For air-gapped environments,
+see [Airgap deployment](airgap.md); for VM installs, see [VM
+deployment](../../03_vm_deployment.md).
+
+**Related:** [Observability](observability.md) ·
+[Configuration](../configuration.md)
 
 ## Overview
 
@@ -173,8 +183,8 @@ The default compose mounts source code for hot-reload:
 
 ```yaml
 volumes:
-  - ./redis_sre_agent:/app/redis_sre_agent  # Source code
-  - ./tests:/app/tests                       # Tests
+ - ./redis_sre_agent:/app/redis_sre_agent  # Source code
+ - ./tests:/app/tests                       # Tests
 ```
 
 Changes to Python files trigger automatic reload.

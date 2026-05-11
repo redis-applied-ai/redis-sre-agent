@@ -1,6 +1,20 @@
-# Agent Memory Server Integration
+---
+description: Persist agent state across sessions with Agent Memory Server.
+---
 
-This document explains why the Redis SRE Agent integrates with Redis Agent Memory Server (AMS), what the integration actually does, and how to use it effectively.
+# Agent Memory Server integration
+
+Read this when you want the agent to remember user preferences,
+operator history, and prior incident outcomes across conversations. The
+integration delegates long-term memory to [Agent Memory
+Server](https://github.com/redis-applied-ai/agent-memory-server) so the
+SRE agent can keep its in-thread state lean while still recalling
+context that spans days or weeks. This page explains why the split
+exists, what AMS handles versus what stays in the SRE agent, and how to
+configure both.
+
+**Related:** [Configuration](configuration.md) ·
+[Core architecture (concept)](../../concepts/core.md)
 
 ## Why
 

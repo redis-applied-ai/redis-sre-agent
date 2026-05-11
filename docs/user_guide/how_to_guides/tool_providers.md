@@ -1,8 +1,19 @@
-## Tool Providers: Overview & Extensibility
+---
+description: Add new diagnostic or remediation tools the agent can call.
+---
 
-The agent exposes capabilities to the LLM via a provider system managed by ToolManager.
+# Tool providers
 
-Out of the box, the agent can draw on Prometheus, Loki, Redis diagnostics, host telemetry, and optional MCP servers. The provider system is fully extensible, so you can map the agent onto your existing observability, admin, and ticketing systems without changing the core agent loop.
+This is the practical guide for wiring the agent into your observability
+and admin stack. The agent ships with built-in providers for Prometheus,
+Loki, Redis diagnostics, host telemetry, and optional MCP servers; the
+same plugin contract lets you add anything else without touching the
+core agent loop. For the conceptual model, see [Tool providers
+(concept)](../../concepts/tool_providers.md); for a full code sample, see
+[Custom tool provider](../../examples/custom_provider.md).
+
+**Related:** [Configuration](configuration.md) ·
+[Connect to Redis](connect_to_redis.md)
 
 ### What loads
 - **Without an instance**: Knowledge base and basic utilities (date conversions, calculator)
@@ -12,13 +23,13 @@ Out of the box, the agent can draw on Prometheus, Loki, Redis diagnostics, host 
 
 ### Built-in providers
 - **Prometheus metrics**: `redis_sre_agent.tools.metrics.prometheus.provider.PrometheusToolProvider`
-  - Config: `TOOLS_PROMETHEUS_URL`, `TOOLS_PROMETHEUS_DISABLE_SSL`
+ - Config: `TOOLS_PROMETHEUS_URL`, `TOOLS_PROMETHEUS_DISABLE_SSL`
 - **Loki logs**: `redis_sre_agent.tools.logs.loki.provider.LokiToolProvider`
-  - Config: `TOOLS_LOKI_URL`, `TOOLS_LOKI_TENANT_ID`, `TOOLS_LOKI_TIMEOUT`
+ - Config: `TOOLS_LOKI_URL`, `TOOLS_LOKI_TENANT_ID`, `TOOLS_LOKI_TIMEOUT`
 - **Redis command diagnostics**: `redis_sre_agent.tools.diagnostics.redis_command.provider.RedisCommandToolProvider`
-  - Runs Redis commands against target instances
+ - Runs Redis commands against target instances
 - **Host telemetry**: `redis_sre_agent.tools.host_telemetry.provider.HostTelemetryToolProvider`
-  - System-level metrics and diagnostics
+ - System-level metrics and diagnostics
 
 Configure providers (environment override)
 ```bash

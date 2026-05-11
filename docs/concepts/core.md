@@ -1,12 +1,23 @@
-## Concepts: Core
+---
+description: Architecture, the agent loop, tools, memory, and FastAPI surface.
+---
 
-This section explains the core ideas behind Redis SRE Agent and how pieces fit together.
+# Core architecture
+
+This page is the orientation map for the rest of the Concepts section.
+Read it once to understand how the LLM, the agent loop, the tool providers,
+and the FastAPI surface fit together; the other concept pages drill into
+each of those pieces. If you only have five minutes, read [The agent
+loop](#the-agent-loop) and [Agent architecture](#agent-architecture).
+
+**Related:** [Triage loop](triage_loop.md) · [Tool providers](tool_providers.md) ·
+[Pipelines](pipelines.md) · [Local quick start](../user_guide/01_local_quickstart.md)
 
 ---
 
 ## How the Agent Uses LLMs
 
-The Redis SRE Agent is powered by Large Language Models (LLMs) — AI systems that understand natural language and can reason about complex problems. If you're new to LLMs, here's what you need to know:
+The Redis SRE Agent is powered by Large Language Models (LLMs) - AI systems that understand natural language and can reason about complex problems. If you're new to LLMs, here's what you need to know:
 
 ### What is an LLM?
 
@@ -20,7 +31,7 @@ The agent uses OpenAI's GPT models, but the architecture supports other provider
 
 ### The Agent Loop
 
-When you ask the agent a question, it doesn't just generate text — it **thinks, acts, and observes** in a loop:
+When you ask the agent a question, it doesn't just generate text - it **thinks, acts, and observes** in a loop:
 
 ```mermaid
 flowchart LR

@@ -1,6 +1,19 @@
-## Source Document Features (Front Matter, Pinned Docs, Skills, Support Tickets)
+---
+description: Front matter, pinned docs, skills, and support tickets in the knowledge base.
+---
 
-This page documents the source-document features added for agent behavior customization.
+# Source documents
+
+Source documents are the runbooks, skills, pinned context, and support
+tickets you feed the agent so it answers in your team's voice with your
+team's playbooks. Each document supports YAML front matter that controls
+how the chunker treats it, whether it is auto-loaded into every
+conversation, and which agents see it. Use this guide when you are
+writing or curating those files; for the underlying mechanics, see
+[Pipelines (concept)](../../concepts/pipelines.md).
+
+**Related:** [Pipelines (how-to)](pipelines.md) ·
+[REST API reference](../../api/rest_api.md)
 
 These features work through `pipeline prepare-sources` ingestion and are used by all primary agents (`chat`, `triage`, `knowledge`) via shared startup context logic.
 
@@ -63,10 +76,10 @@ Agent Skills packages:
 
 - place a directory under a configured skill root that contains `SKILL.md`
 - optional package directories:
-  - `references/`
-  - `scripts/`
-  - `assets/`
-  - `agents/openai.yaml`
+ - `references/`
+ - `scripts/`
+ - `assets/`
+ - `agents/openai.yaml`
 - the shipped runtime uses a Redis-backed `SkillBackend`, but you can swap in a custom backend
   if you run your own central skill service
 
@@ -74,9 +87,9 @@ At startup, agents receive:
 
 - a skills TOC (name + summary) relevant to the query
 - tool instructions for skill retrieval:
-  - `skills_check("<query>")`
-  - `get_skill("<skill_name>")`
-  - `get_skill_resource("<skill_name>", "<resource_path>")`
+ - `skills_check("<query>")`
+ - `get_skill("<skill_name>")`
+ - `get_skill_resource("<skill_name>", "<resource_path>")`
 
 Legacy `get_skill` responses stay compact and return only:
 
@@ -254,5 +267,5 @@ Expected outcomes:
 ## Related Docs
 
 - [Pipelines & ingestion](./pipelines.md)
-- [CLI usage](./cli.md)
-- [CLI reference](../reference/cli.md)
+- [CLI workflows](./cli_workflows.md)
+- [CLI reference](../../api/cli_ref.md)

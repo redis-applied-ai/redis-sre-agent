@@ -1,12 +1,24 @@
-## Using the CLI: Core Workflows
+---
+description: End-to-end workflows for driving the Redis SRE Agent from the command line.
+---
 
-This guide shows how to use the agent end-to-end: start services, add an instance, triage with queries, ingest knowledge, search what the agent knows, schedule recurring checks, and view task/thread status.
+# CLI workflows
 
-### Prerequisites
-- OPENAI_API_KEY set (see How-to: Configuration)
-- Services running (Docker Compose or local API + worker)
+This page shows you how to drive the agent end-to-end from the CLI: start
+services, register a Redis instance, triage with queries, ingest knowledge,
+search what the agent knows, schedule recurring checks, and inspect task
+or thread state. It is workflow-oriented; for command-level detail see the
+[CLI reference](../../api/cli_ref.md).
 
-### 1) Start services (choose one)
+**Related:** [API workflows](api_workflows.md) ·
+[Source documents](source_documents.md) · [Pipelines](pipelines.md)
+
+!!! info "Prerequisites"
+    `OPENAI_API_KEY` set (see [Configuration](configuration.md)) and
+    services running (Docker Compose or local API + worker).
+
+
+## 1) Start services (choose one)
 - Docker Compose (recommended for full stack)
   ```bash
 docker compose up -d \
@@ -24,7 +36,7 @@ docker compose up -d \
   uv run redis-sre-agent worker start
   ```
 
-### 2) Add a Redis instance and verify
+## 2) Add a Redis instance and verify
 Tell the agent about the Redis you want to triage.
 ```bash
 # Create (adjust URL/env/usage/description)
@@ -41,7 +53,7 @@ uv run redis-sre-agent instance get <id>
 uv run redis-sre-agent instance test <id>
 ```
 
-### 3) Triage with queries
+## 3) Triage with queries
 - Without an instance: quick questions (general guidance)
   ```bash
   uv run redis-sre-agent query "Explain high memory usage signals in Redis"
@@ -56,7 +68,7 @@ uv run redis-sre-agent instance test <id>
   ```
   - For diagnostic prompts, cluster-scoped queries are auto-upgraded to triage.
 
-#### Natural-language target discovery
+### Natural-language target discovery
 When target-discovery integrations are configured, you can ask for a target in natural language
 instead of supplying `-r` or `-c` up front.
 
@@ -73,7 +85,7 @@ uv run redis-sre-agent query -t <thread_id> \
   "Use the prod checkout cache in us-east-1"
 ```
 
-#### Multi-target comparison
+### Multi-target comparison
 When the prompt clearly asks for a comparison, the agent can keep more than one discovered target
 in scope and compare them in one conversation.
 
@@ -92,7 +104,7 @@ uv run redis-sre-agent query -t <thread_id> \
 These discovery-first flows depend on your configured target catalog and bindings. If discovery is
 not configured, use explicit `-r <instance_id>` or `-c <cluster_id>` flags instead.
 
-### 4) Prepare knowledge for better answers (ingest a batch)
+## 4) Prepare knowledge for better answers (ingest a batch)
 Load docs so the agent can cite internal knowledge.
 ```bash
 # Option A: Prepare built-in sources then ingest
@@ -106,7 +118,7 @@ uv run redis-sre-agent pipeline full
 uv run redis-sre-agent pipeline status
 uv run redis-sre-agent pipeline show-batch --batch <name>
 ```
-#### Runbooks
+### Runbooks
 ```bash
 # Generate standardized runbooks for a topic
 uv run redis-sre-agent runbook generate --topic "Redis memory troubleshooting"
@@ -114,7 +126,7 @@ uv run redis-sre-agent runbook generate --topic "Redis memory troubleshooting"
 uv run redis-sre-agent runbook evaluate
 ```
 
-### 5) Search what the agent knows (and verify context)
+## 5) Search what the agent knows (and verify context)
 Use this to confirm the agent’s view of your knowledge base.
 ```bash
 uv run redis-sre-agent knowledge search "redis eviction policy"
@@ -122,7 +134,7 @@ uv run redis-sre-agent knowledge fragments --doc-hash <hash>
 uv run redis-sre-agent knowledge related --doc-hash <hash> --chunk-index 0
 ```
 
-#### Exact-match search notes
+### Exact-match search notes
 - Wrap a query in quotes to force the precise-search path for exact names, document hashes, source filenames, or literal phrases.
 - Unquoted single-token identifiers that contain digits or punctuation also trigger exact matching automatically.
 - Exact-looking queries first check identifier-style fields such as `name` and `source`, then run a literal phrase search across `title`, `summary`, and `content` before semantic results are merged in.
@@ -142,7 +154,7 @@ For support-ticket IDs such as `RET-4421`, use the ticket workflow instead of ge
 uv run redis-sre-agent query --agent chat "Find support tickets for RET-4421"
 ```
 
-### 6) Inspect Agent Skills packages
+## 6) Inspect Agent Skills packages
 Use the top-level `skills` commands to inspect Agent Skills packages without running a full agent turn.
 
 ```bash
@@ -158,7 +170,7 @@ To scaffold a package from an existing markdown skill:
 uv run redis-sre-agent skills scaffold legacy-skill.md skills/legacy-skill
 ```
 
-### 7) Schedule recurring checks
+## 7) Schedule recurring checks
 Create a schedule that enqueues a triage with optional instance context.
 ```bash
 # Create: run every 24 hours
@@ -182,7 +194,7 @@ uv run redis-sre-agent schedule update <schedule_id> --name "new-name"
 uv run redis-sre-agent schedule delete <schedule_id> -y
 ```
 
-### 8) Analyze support packages
+## 8) Analyze support packages
 Upload and analyze Redis Enterprise support packages (debuginfo archives).
 
 ```bash
@@ -202,7 +214,7 @@ uv run redis-sre-agent query -p <package_id> "What databases are in this package
 uv run redis-sre-agent query -r <instance_id> -p <package_id> "Compare current memory with the snapshot"
 ```
 
-#### Docker Compose usage
+### Docker Compose usage
 When running in Docker, use `docker compose exec` to access the CLI. For file uploads,
 you need to copy the file into the container first or mount a volume.
 
@@ -220,7 +232,7 @@ docker compose exec -T sre-agent uv run redis-sre-agent support-package list
 docker compose exec -T sre-agent uv run redis-sre-agent query -p <package_id> "Show database memory usage"
 ```
 
-### 9) See task status and thread contents
+## 9) See task status and thread contents
 Tasks track execution; threads hold the conversation + context.
 ```bash
 # Tasks
@@ -235,7 +247,7 @@ uv run redis-sre-agent thread trace <message_id_or_decision_trace_id>
 uv run redis-sre-agent thread sources <thread_id>
 ```
 
-#### Approval-driven tasks
+### Approval-driven tasks
 Some write actions can pause a task in `awaiting_approval`. The current CLI lets you inspect the
 task or thread state, but approval history and resume actions are not exposed as CLI commands.
 
@@ -244,7 +256,7 @@ task or thread state, but approval history and resume actions are not exposed as
 - Use the HTTP API or the web UI triage page to list approval records and submit `approved` or
   `rejected` decisions.
 
-#### Citations in thread history
+### Citations in thread history
 Use these commands together when you want citation-level provenance for an answer:
 
 1. Run `thread get <thread_id>` to list messages in the thread and find assistant `message_id` values.
@@ -256,7 +268,14 @@ When a response uses knowledge search, citations are also added to the chat hist
 For support-ticket workflows, provenance appears in `thread trace` and thread system messages; `thread sources` focuses on fragment retrieval from knowledge indexes.
 If a response used no tools, `thread trace` can return `No decision trace found for message ...`.
 
-### Tips
+## Tips
 - Use the Docker stack to get Prometheus/Loki; set TOOLS_PROMETHEUS_URL and TOOLS_LOKI_URL so the agent can fetch metrics/logs.
 - Prefer `docker compose exec -T sre-agent uv run ...` inside containers when running in Docker (uses in-cluster addresses).
 - Health endpoints: `curl http://localhost:8080/` (Docker Compose) or `http://localhost:8000/` (local uvicorn) and `/api/v1/health` to verify API and worker availability.
+
+## Related
+
+- [CLI reference](../../api/cli_ref.md) — full command reference.
+- [API workflows](api_workflows.md) — same flows over HTTP.
+- [Scheduling](scheduling.md) — recurring health checks in depth.
+- [Configuration](configuration.md) — what to set on each process.

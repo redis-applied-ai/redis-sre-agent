@@ -1,8 +1,18 @@
-# Air-Gapped Deployment Guide
+---
+description: Run the agent without internet access using a local model and pre-built indexes.
+---
 
-This guide covers deploying Redis SRE Agent in air-gapped environments where
-no internet access is available at runtime. This is common in banks, government
-agencies, and other high-security environments.
+# Airgap deployment
+
+Reach for this guide when the target environment has no internet access
+at runtime — common for banks, government agencies, and other
+high-security shops. The deployment uses bundled embedding models, a
+local LLM endpoint, and pre-built knowledge indexes so the agent never
+has to call out. If your environment can reach the public internet, the
+[Docker deployment](docker_deployment.md) is simpler.
+
+**Related:** [Observability](observability.md) ·
+[Configuration](../configuration.md)
 
 ## Overview
 
@@ -107,7 +117,7 @@ Bundle contents:
     (from redis.io/kb), and SRE runbooks in `/app/artifacts`. You only need to run the
     **ingest** command after deployment to index them into Redis.
 
-#### Build Options
+**Build options:**
 
 ```bash
 # Custom image tag
@@ -334,19 +344,19 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
       containers:
-        - name: sre-agent
+       - name: sre-agent
           image: your-registry.internal.com/redis-sre-agent:airgap
           ports:
-            - containerPort: 8000
+           - containerPort: 8000
           envFrom:
-            - configMapRef:
+           - configMapRef:
                 name: sre-agent-config
-            - secretRef:
+           - secretRef:
                 name: sre-agent-secrets
           volumeMounts:
-            - name: artifacts
+           - name: artifacts
               mountPath: /app/artifacts
-            - name: config
+           - name: config
               mountPath: /app/config.yaml
               subPath: config.yaml
           resources:
@@ -369,9 +379,9 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
       volumes:
-        - name: artifacts
+       - name: artifacts
           emptyDir: {}
-        - name: config
+       - name: config
           configMap:
             name: sre-agent-app-config
 ---
@@ -383,7 +393,7 @@ spec:
   selector:
     app: sre-agent
   ports:
-    - port: 8000
+   - port: 8000
       targetPort: 8000
 ```
 
@@ -409,16 +419,16 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
       containers:
-        - name: worker
+       - name: worker
           image: your-registry.internal.com/redis-sre-agent:airgap
           command: ["redis-sre-agent", "worker", "start"]
           envFrom:
-            - configMapRef:
+           - configMapRef:
                 name: sre-agent-config
-            - secretRef:
+           - secretRef:
                 name: sre-agent-secrets
           volumeMounts:
-            - name: config
+           - name: config
               mountPath: /app/config.yaml
               subPath: config.yaml
           resources:
@@ -429,7 +439,7 @@ spec:
               memory: "2Gi"
               cpu: "1000m"
       volumes:
-        - name: config
+       - name: config
           configMap:
             name: sre-agent-app-config
 ```
@@ -451,13 +461,13 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
       containers:
-        - name: init
+       - name: init
           image: your-registry.internal.com/redis-sre-agent:airgap
           command: ["redis-sre-agent", "pipeline", "ingest"]
           envFrom:
-            - configMapRef:
+           - configMapRef:
                 name: sre-agent-config
-            - secretRef:
+           - secretRef:
                 name: sre-agent-secrets
       restartPolicy: Never
   backoffLimit: 2

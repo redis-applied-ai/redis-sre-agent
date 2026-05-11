@@ -1,4 +1,18 @@
-## Pipelines & Ingestion
+---
+description: Customize the scrape and ingest pipelines for the knowledge base.
+---
+
+# Pipelines
+
+Use this guide when you need to control *what* the agent knows — adding
+a new doc source, re-chunking with a different strategy, or rebuilding
+the index after upgrading the embedding model. The pipeline splits into
+two distinct phases (scrape and ingest) so the slow part runs once and
+the fast part can rerun with different settings. For the conceptual
+overview, see [Pipelines (concept)](../../concepts/pipelines.md).
+
+**Related:** [Source documents](source_documents.md) ·
+[REST API reference](../../api/rest_api.md)
 
 The knowledge base pipeline has two distinct phases:
 
@@ -245,7 +259,7 @@ Note: this refreshes the knowledge corpus built from `source_documents/`. If a r
 
 The document will be chunked, embedded, and indexed in Redis.
 
-For front matter fields and behavior for pinned docs, skills, and support-ticket documents, see [Source document features](./source-document-features.md).
+For front matter fields and behavior for pinned docs, skills, and support-ticket documents, see [Source documents](./source_documents.md).
 
 ---
 
@@ -374,7 +388,7 @@ The chunking strategy is optimized for technical documentation with CLI commands
 - **Whole doc thresholds** keep CLI commands and API examples intact
 - **Smart boundaries** break at sentences/words, not mid-command
 
-You can adjust these via the Knowledge API (see `docs/reference/api.md`).
+You can adjust these via the Knowledge API (see [REST API reference](../../api/rest_api.md)).
 
 ### Embedding Model
 
@@ -586,6 +600,6 @@ uv run redis-sre-agent pipeline show-batch --batch-date 2025-01-15
 
 ## See Also
 
-- [Knowledge Base API](../reference/api.md) - Manage knowledge base via API
-- [Configuration](../reference/configuration.md) - Environment variables and settings
-- [Observability](../operations/observability.md) - Monitor ingestion performance
+- [REST API reference](../../api/rest_api.md) - Manage knowledge base via API
+- [Configuration reference](../../api/configuration.md) - Environment variables and settings
+- [Observability](operations/observability.md) - Monitor ingestion performance

@@ -1,8 +1,23 @@
-## Configuration
+---
+description: Environment variables, YAML config, and runtime options for the Redis SRE Agent.
+---
 
-This guide explains how the Redis SRE Agent is configured, what the required and optional settings are, and how to override tool providers. For defaults, see [`redis_sre_agent/core/config.py`](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/redis_sre_agent/core/config.py) and [`.env.example`](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/.env.example).
+# Configuration
 
-### Sources and precedence
+Reach for this guide when you need to change *how* the agent runs —
+which Redis it talks to, which model it calls, which tool providers it
+loads, and where its caches live. It covers the precedence chain
+(env vars → `.env` → config file → defaults), the required and
+optional settings, and the per-tool overrides most operators tweak. For
+the auto-generated reference of every setting, see the [Configuration
+reference](../../api/configuration.md).
+
+**Related:** [Tool providers](tool_providers.md) ·
+[Connect to Redis](connect_to_redis.md) · [Operations](operations/index.md)
+
+For defaults, see [`redis_sre_agent/core/config.py`](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/redis_sre_agent/core/config.py) and [`.env.example`](https://github.com/redis-applied-ai/redis-sre-agent/blob/main/.env.example).
+
+## Sources and precedence
 
 Configuration values are loaded from these sources (highest precedence first):
 
@@ -33,7 +48,7 @@ flowchart TB
 
 For example, if `REDIS_URL` is set in both `.env` and as an environment variable, the environment variable wins.
 
-### File-based configuration
+## File-based configuration
 
 The agent can load settings from YAML, TOML, or JSON config files. YAML is usually the easiest choice for complex nested settings like `mcp_servers`, while TOML and JSON are useful when your deployment tooling already emits those formats.
 
@@ -98,11 +113,11 @@ recursion_limit = 64
 export SRE_AGENT_CONFIG=/path/to/my-config.toml
 ```
 
-### Required
+## Required
 
 - `OPENAI_API_KEY`: Your OpenAI API key
 
-### Common optional settings
+## Common optional settings
 
 - `REDIS_URL`: Agent operational Redis (default: `redis://localhost:7843/0`)
 - `PROMETHEUS_URL` / `GRAFANA_URL`: Optional app-level URLs for integrations
@@ -120,11 +135,11 @@ TOOLS_PROMETHEUS_URL=http://localhost:9090
 TOOLS_LOKI_URL=http://localhost:3100
 ```
 
-### Tool caching
+## Tool caching
 
 The agent caches tool call outputs in Redis to avoid repeated calls with the same arguments. Caching is enabled by default and can be configured globally or per-tool.
 
-#### Configuration options
+### Configuration options
 
 | Setting | Environment Variable | Default | Description |
 |---------|---------------------|---------|-------------|
@@ -132,7 +147,7 @@ The agent caches tool call outputs in Redis to avoid repeated calls with the sam
 | `tool_cache_default_ttl` | `TOOL_CACHE_DEFAULT_TTL` | `60` | Default TTL in seconds for tools without specific TTLs |
 | `tool_cache_ttl_overrides` | `TOOL_CACHE_TTL_OVERRIDES` | `{}` | Per-tool TTL overrides |
 
-#### Per-tool TTL overrides
+### Per-tool TTL overrides
 
 Override cache TTLs for specific tools by mapping tool name patterns to TTL values in seconds.
 
@@ -156,7 +171,7 @@ tool_cache_ttl_overrides:
 
 **Partial matching:** Tool names are matched using substring search. For example, `"info"` matches any tool containing "info" in its name, such as `redis_command_abc123_info` or `cluster_info`. This is necessary because tool names include instance-specific hashes (e.g., `redis_command_abc123_info`) that vary per Redis instance.
 
-#### Built-in TTL defaults
+### Built-in TTL defaults
 
 Some tools have sensible defaults defined in `DEFAULT_TOOL_TTLS`:
 
@@ -170,13 +185,13 @@ Some tools have sensible defaults defined in `DEFAULT_TOOL_TTLS`:
 | `knowledge_search` | 300 | Knowledge base content |
 | `prometheus_query` | 30 | Metrics |
 
-#### TTL resolution priority
+### TTL resolution priority
 
 1. User-defined overrides (`tool_cache_ttl_overrides`)
 2. Built-in defaults (`DEFAULT_TOOL_TTLS`)
 3. Global default (`tool_cache_default_ttl`)
 
-### Tool providers
+## Tool providers
 
 Providers are loaded by the `ToolManager` based on:
 
@@ -194,12 +209,12 @@ export TOOL_PROVIDERS='[
 ]'
 ```
 
-#### Per-instance configuration for providers
+### Per-instance configuration for providers
 
 - Use `RedisInstance.extension_data` and `extension_secrets` to pass namespaced config to providers.
-- See the [Tool Providers guide](tool-providers.md) for details.
+- See the [Tool Providers guide](tool_providers.md) for details.
 
-### Skill backend settings
+## Skill backend settings
 
 Agent Skills retrieval is controlled through the skill backend configuration.
 
@@ -217,6 +232,12 @@ Common settings:
 | `skills_api_token` | `SKILLS_API_TOKEN` | `null` | Optional bearer token for the runtime-owned Skills facade |
 | `skills_api_timeout_seconds` | `SKILLS_API_TIMEOUT_SECONDS` | `15.0` | HTTP timeout for the runtime-owned Skills facade |
 | `skill_reference_char_budget` | `SKILL_REFERENCE_CHAR_BUDGET` | `12000` | Maximum characters returned by `get_skill_resource` before truncation |
+| `skills_api_base_url` | `SKILLS_API_BASE_URL` | `null` | Base URL for the runtime-owned Skills facade used by the proxy-backed workspace backend |
+| `skills_api_tenant_id` | `SKILLS_API_TENANT_ID` | `null` | Tenant id to send to the runtime-owned Skills facade |
+| `skills_api_project_id` | `SKILLS_API_PROJECT_ID` | `null` | Project id to send to the runtime-owned Skills facade |
+| `skills_api_agent_id` | `SKILLS_API_AGENT_ID` | `null` | Agent app id to send to the runtime-owned Skills facade |
+| `skills_api_token` | `SKILLS_API_TOKEN` | `null` | Optional bearer token for the runtime-owned Skills facade |
+| `skills_api_timeout_seconds` | `SKILLS_API_TIMEOUT_SECONDS` | `15.0` | HTTP timeout for the runtime-owned Skills facade |
 
 Example YAML:
 
@@ -270,11 +291,45 @@ Notes:
 The shipped runtime keeps execution separate from retrieval. Even with a custom backend, Agent Skills
 skill scripts are not executed by this agent in v1.
 
-### Custom LLM providers
+### Proxy-backed workspace backend
+
+To use the shipped proxy-backed workspace backend so the runtime sees the same skills the
+Agent Workspace UI writes into AFS, point the runtime at the control-plane Skills facade
+rather than at AFS directly:
+
+```yaml
+skill_backend_kind: custom
+skill_backend_class: redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend
+skills_api_base_url: https://rar-api.example.internal
+skills_api_tenant_id: tenant_123
+skills_api_project_id: proj_123
+skills_api_agent_id: redis-sre-agent
+skills_api_timeout_seconds: 15
+```
+
+Authentication is required:
+
+```yaml
+skills_api_token: ${RAR_SKILLS_API_TOKEN}
+```
+
+Notes:
+
+- `skills_api_base_url` must point at the runtime-owned Skills facade in `apps/api`, not at the
+  AFS gateway directly.
+- The facade itself is responsible for talking to the AFS gateway and keeping the runtime aligned
+  with the Skills page storage model. The worker does not read skills directly from AFS.
+- For compatibility with existing deployments, the shipped backend also honors
+  `RAR_SKILLS_API_BASE_URL`, `RAR_SKILLS_API_TENANT_ID`, `RAR_SKILLS_API_PROJECT_ID`,
+  `RAR_SKILLS_API_AGENT_ID`, `RAR_SKILLS_API_TOKEN`, and `RAR_SKILLS_API_TIMEOUT_SECONDS`.
+- In runtime-managed deployments the preferred wiring is to provide a valid runtime API key via
+  `RAR_RUNTIME_SERVICE_TOKEN`, which the runner maps into `RAK_API_TOKEN` for the worker.
+
+## Custom LLM providers
 
 By default, the agent uses OpenAI models via `ChatOpenAI`. You can replace this with any LangChain-compatible chat model (Anthropic, Azure OpenAI, Bedrock, Vertex AI, etc.) by configuring a custom factory function.
 
-#### Configuration via environment variable
+### Configuration via environment variable
 
 Set `LLM_FACTORY` to a dot-path import string pointing to your factory function:
 
@@ -288,9 +343,9 @@ Or in a config file (YAML shown):
 llm_factory: mypackage.llm.anthropic_factory
 ```
 
-The factory is automatically loaded on first LLM creation—no code changes required.
+The factory is automatically loaded on first LLM creation - no code changes required.
 
-#### Writing a factory function
+### Writing a factory function
 
 Create a factory function that returns a LangChain `BaseChatModel`:
 
@@ -312,7 +367,7 @@ def anthropic_factory(tier: str, model: str | None, timeout: float | None, **kwa
     )
 ```
 
-#### Factory function signature
+### Factory function signature
 
 Your factory receives these arguments:
 
@@ -325,7 +380,7 @@ Your factory receives these arguments:
 
 The factory must return a LangChain `BaseChatModel` instance.
 
-#### Model tiers
+### Model tiers
 
 The agent uses three tiers of models for different tasks:
 
@@ -343,7 +398,7 @@ OPENAI_MODEL_MINI=gpt-5-mini
 OPENAI_MODEL_NANO=gpt-5-nano
 ```
 
-#### Programmatic registration (advanced)
+### Programmatic registration (advanced)
 
 For advanced use cases, you can register a factory programmatically using `set_llm_factory()`. This overrides any `LLM_FACTORY` configuration:
 
@@ -359,11 +414,11 @@ To reset to the default OpenAI factory:
 set_llm_factory(None)
 ```
 
-### Embedding models
+## Embedding models
 
 The agent uses embeddings for the knowledge base vector search. You can configure the embedding provider and model to match your deployment requirements.
 
-#### Configuration options
+### Configuration options
 
 | Setting | Environment Variable | Default | Description |
 |---------|---------------------|---------|-------------|
@@ -372,7 +427,7 @@ The agent uses embeddings for the knowledge base vector search. You can configur
 | `vector_dim` | `VECTOR_DIM` | `1536` | Vector dimensions (must match model) |
 | `embeddings_cache_ttl` | `EMBEDDINGS_CACHE_TTL` | `604800` (7 days) | Cache TTL in seconds |
 
-#### OpenAI embeddings (default)
+### OpenAI embeddings (default)
 
 Uses OpenAI's embedding API. Requires `OPENAI_API_KEY`.
 
@@ -389,9 +444,9 @@ Available OpenAI models:
 | `text-embedding-3-small` | 1536 | Default, good balance of quality and cost |
 | `text-embedding-3-large` | 3072 | Higher quality, more expensive |
 
-#### Local embeddings (air-gap compatible)
+### Local embeddings (air-gap compatible)
 
-Uses HuggingFace sentence-transformers models locally. No API key required—ideal for air-gapped environments.
+Uses HuggingFace sentence-transformers models locally. No API key required - ideal for air-gapped environments.
 
 ```bash
 EMBEDDING_PROVIDER=local
@@ -409,7 +464,7 @@ Available local models:
 !!! warning "Vector dimensions must match"
     The `VECTOR_DIM` setting must match the output dimensions of your chosen model. Mismatched dimensions will cause indexing and search failures.
 
-#### Switching providers
+### Switching providers
 
 When switching embedding providers, you must re-ingest the knowledge base since embeddings are not compatible across providers:
 
@@ -427,8 +482,8 @@ redis-sre-agent pipeline prepare-sources \
 
 Use the same re-ingestion flow after upgrades that change indexed metadata or schema. The index is not auto-migrated at startup.
 
-### Advanced: Encryption of secrets
+## Advanced: Encryption of secrets
 
 Secrets (e.g., connection URLs, admin passwords) are encrypted at rest using envelope encryption. See the advanced guide:
 
-- [Advanced: Encryption of secrets](configuration/encryption.md)
+- [Advanced: Encryption of secrets](operations/encryption.md)

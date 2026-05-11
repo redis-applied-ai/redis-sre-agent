@@ -1,6 +1,18 @@
-## Operational Notes and Limitations
+---
+description: Known sharp edges to avoid in production.
+---
 
-Known limitations, tradeoffs, and details worth understanding before you roll the agent into a production workflow.
+# Gotchas
+
+Read this before you put the agent in front of an on-call rotation. The
+items below are intentional design choices, known sharp edges, or
+behavior the LLM can produce that you should be aware of. None of them
+are blockers for evaluation use, but ignoring them in production has
+bitten teams before. For a deeper look at how the agent reasons, see
+[Triage loop (concept)](../../../concepts/triage_loop.md).
+
+**Related:** [Observability](observability.md) ·
+[Failure modes (for AIs)](../../../for-ais-only/FAILURE_MODES.md)
 
 ---
 

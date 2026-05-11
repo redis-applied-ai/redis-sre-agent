@@ -1,16 +1,26 @@
-## Eval System
+---
+description: Run the eval harness against the agent.
+---
+
+# Evals
+
+Run the eval harness when you change a prompt, swap a model, or add a tool
+and need to know whether the agent's behavior actually improved. Two
+entry points are available: deterministic mocked scenarios for
+regression testing, and live-model suite runs for periodic baseline
+checks. Mocked scenarios run in pytest and are safe for CI; live runs hit
+real LLM endpoints and cost money, so reach for them when you need a
+real-world signal.
+
+**Related:** [Triage loop (concept)](../../concepts/triage_loop.md) ·
+[CLI reference](../../api/cli_ref.md)
 
 Redis SRE Agent includes a scenario-driven eval system under `evals/` and `redis_sre_agent/evaluation/`.
-It has two main entry points:
-
-1. Deterministic mocked evals for development and regression testing.
-2. Live-model suite runs for manual or scheduled baseline checks.
-
 The CLI exposes scenario listing, one-off mocked-scenario execution, live-suite execution, and
 baseline comparison. For deterministic regression coverage, prefer the pytest-backed mocked eval
 suite; `eval run` is best for interactive debugging and ad hoc inspection.
 
-### Terms Used In This Guide
+## Terms Used In This Guide
 
 This page uses `policy` in two different ways:
 
@@ -19,7 +29,7 @@ This page uses `policy` in two different ways:
 
 When this guide says `policy file`, it means the live-suite baseline policy. When it says a scenario includes a `policy`, it means a document in the scenario's knowledge inputs.
 
-### What Lives Where
+## What Lives Where
 
 - `evals/scenarios/`: scenario manifests grouped by lane or topic.
 - `evals/corpora/`: versioned docs, skills, and ticket packs used by scenarios.
@@ -34,7 +44,7 @@ Example scenario files:
 - `evals/scenarios/redis/memory-pressure-oss/scenario.yaml`
 - `evals/scenarios/retrieval/skills-core/scenario.yaml`
 
-### Quick Start
+## Quick Start
 
 List the known scenarios:
 
@@ -49,7 +59,7 @@ Limit the scan to part of the tree:
 uv run redis-sre-agent eval list --root evals/scenarios/prompt
 ```
 
-### Mocked Evals During Development
+## Mocked Evals During Development
 
 The fast path for the mocked harness is the evaluation test suite. This uses the scenario fixtures under `evals/` instead of live Redis, live MCP servers, or live retrieval systems.
 
@@ -69,7 +79,7 @@ When you are editing one scenario family, run the narrow test module that covers
 
 Do not treat `evals/scenarios/` as a single live-model suite. Most of those scenario files are validated through the deterministic pytest modules above, while live-model execution is reserved for the curated manifests under `evals/suites/`.
 
-### Running One Mocked Scenario
+## Running One Mocked Scenario
 
 Use the CLI when you want to execute a single mocked scenario directly.
 
@@ -104,7 +114,7 @@ Useful options:
 - `--user-id`: associate the run with a specific user id.
 - `--allow-live-llm`: explicitly opt into scenarios configured with `llm_mode: live`.
 
-### Running from Python
+## Running from Python
 
 The Python API remains useful for custom harnesses and debugging.
 
@@ -155,7 +165,7 @@ Notes:
 - `agent_only` scenarios call the selected agent directly with a prebuilt eval context.
 - Scenarios marked `llm_mode: live` require explicit live opt-in in the Python API.
 
-### Scenario Anatomy
+## Scenario Anatomy
 
 Most scenarios are built from the same parts:
 
@@ -172,7 +182,7 @@ The `prompt/chat-iterative-tool-use` scenario is a good compact example because 
 - fixture-backed Redis tool payloads,
 - structured assertions in the same manifest.
 
-### Live Suites
+## Live Suites
 
 Use live suites when you want the current model to run against the scenario corpus and emit comparable artifact bundles.
 
@@ -205,7 +215,7 @@ uv run redis-sre-agent eval live-suite \
 
 That switches the suite run onto the `manual_update` baseline-policy profile in the CLI wrapper.
 
-### GitHub Actions Suite Config
+## GitHub Actions Suite Config
 
 CI also carries a separate suite manifest:
 
@@ -222,7 +232,7 @@ uv run python scripts/run_live_eval_suite.py \
   --trigger workflow_dispatch
 ```
 
-### Comparing Candidate Results Against a Baseline
+## Comparing Candidate Results Against a Baseline
 
 Each live run writes one suite directory. Compare two suite outputs with the same baseline-policy file used by the suite:
 
@@ -236,7 +246,7 @@ uv run redis-sre-agent eval compare \
 
 The compare command exits non-zero when the candidate breaches the configured variance band or is missing a scenario report.
 
-### Output Layout
+## Output Layout
 
 A live suite writes:
 
@@ -257,7 +267,7 @@ For the default local command above, the suite lands under:
 .artifacts/evals/live-agent-only-smoke/
 ```
 
-### Reading the Results
+## Reading the Results
 
 Use the artifacts for different questions:
 
@@ -268,7 +278,7 @@ Use the artifacts for different questions:
 - `retrieved_sources.json`: which pinned or retrieved sources were actually used.
 - `startup_context.json`: startup knowledge and bound-context snapshot seen by the run.
 
-### Choosing the Right Workflow
+## Choosing the Right Workflow
 
 Use mocked evals when:
 
@@ -282,7 +292,7 @@ Use live suites when:
 - you want a regression signal against a reviewed baseline,
 - you are preparing a scheduled or manual live-model check.
 
-### Current Behavior
+## Current Behavior
 
 - The scenario corpus mixes `full_turn`, `agent_only`, `prompt`, `redis`, `knowledge`, `retrieval`, and `sources` lanes under one tree.
 - Live suites coerce loaded scenarios to live LLM mode before execution, even when the source manifest is authored for replay mode.

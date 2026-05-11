@@ -1,8 +1,20 @@
-## VM Deployment with Redis Enterprise
+---
+description: Deploy the SRE agent on a single VM for shared team use.
+---
 
-Deploy the Redis SRE Agent on a Linux VM using Redis Enterprise as the application database (for agent state, vector search, and task queues).
+# VM deployment
 
-This guide covers bare-metal deployment without containers.
+Use this path when a single Linux VM is your target — typical for shared
+team installs, internal evaluations, or environments where containers
+are restricted. You'll set up Python, install the agent into a
+systemd-managed service, and back it with Redis Enterprise for state,
+vector search, and the task queue. For containerized deployments, use
+[Docker deployment](how_to_guides/operations/docker_deployment.md);
+for fully offline installs, use [Airgap
+deployment](how_to_guides/operations/airgap.md).
+
+**Related:** [Configuration](how_to_guides/configuration.md) ·
+[Observability](how_to_guides/operations/observability.md)
 
 ---
 
@@ -394,14 +406,14 @@ The agent exposes metrics at:
 Add to your Prometheus scrape config:
 ```yaml
 scrape_configs:
-  - job_name: 'redis-sre-agent'
+ - job_name: 'redis-sre-agent'
     static_configs:
-      - targets: ['sre-agent-vm:8000']
+     - targets: ['sre-agent-vm:8000']
     metrics_path: /api/v1/metrics
 
-  - job_name: 'redis-sre-worker'
+ - job_name: 'redis-sre-worker'
     static_configs:
-      - targets: ['sre-agent-vm:9101']
+     - targets: ['sre-agent-vm:9101']
 ```
 
 ### Logs
