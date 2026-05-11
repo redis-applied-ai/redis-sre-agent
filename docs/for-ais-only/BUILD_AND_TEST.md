@@ -26,8 +26,8 @@ make test-eval-live       scheduled live-model eval suite
 make local-services       docker compose up -d (full local stack)
 make local-services-down  stop the stack
 make quick-demo           seeded demo stack with a registered Redis target
-make docs-build           build Sphinx HTML to docs/_build/html
-make docs-serve           serve docs/_build/html on http://127.0.0.1:8000
+make docs-build           build the MkDocs site into ./site
+make docs-serve           serve the live MkDocs site on http://127.0.0.1:8000
 make docs-gen             regenerate REST/CLI reference pages from code
 make docs-gen-check       fail if `docs-gen` would change tracked files
 ```
@@ -49,28 +49,30 @@ uv run pytest tests/test_lint_parity.py -vv
 ## Building the docs
 
 ```
-uv sync --group docs       # if a docs group is defined; otherwise just sync
-make docs-build            # writes docs/_build/html
+make sync                  # installs the docs dependency group via default-groups
+make docs-build            # writes ./site
 make docs-serve            # http://127.0.0.1:8000
 ```
 
-The Sphinx build should complete with zero warnings. Treat any warning as a
-breaking change. Run with `-W` in CI:
+The MkDocs build should complete with zero warnings. Treat any warning as
+a breaking change. CI runs the build in strict mode, which promotes any
+warning to an error:
 
 ```
-uv run sphinx-build -W -b html docs docs/_build/html
+uv run mkdocs build --strict
 ```
 
-The Python package reference under `docs/api/python/` uses
-`sphinx.ext.autosummary` with `:recursive:`; if you add a top-level
-sub-package under `redis_sre_agent/`, list it in
-`docs/api/python/index.rst`.
+The Python package reference under `docs/api/python/` is rendered with
+[mkdocstrings](https://mkdocstrings.github.io/). If you add a new
+top-level sub-package under `redis_sre_agent/`, add a corresponding
+`docs/api/python/<name>.md` stub with a `::: redis_sre_agent.<name>`
+directive and list it in `mkdocs.yml` under the `Python package` nav.
 
 ## CI gates (target state)
 
 - `make lint` and `make test` on every PR.
 - `make docs-gen-check` on every PR (REST/CLI reference must stay in sync).
-- `make docs-build` with `-W` on every PR.
+- `mkdocs build --strict` on every PR (`.github/workflows/docs.yml`).
 - `make test-eval-pr` on every PR; `test-eval-live` on schedule.
 
 ## Fast iteration loops

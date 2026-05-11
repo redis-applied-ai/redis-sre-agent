@@ -60,8 +60,10 @@ The REST and CLI reference pages under `docs/api/` are generated from code.
 If `docs-gen-check` fails, regenerate (`make docs-gen`) and commit; do not
 hand-edit the generated files.
 
-## Sphinx warnings are errors
+## Strict-mode docs build warnings are errors
 
-`make docs-build` is expected to complete with zero warnings. Suppressing a
-warning in `conf.py` to "make CI green" hides broken cross-references that
-later become 404s on the published docs site.
+CI runs `mkdocs build --strict`, which promotes every warning to an
+error. Silencing a warning in `mkdocs.yml` (for example by removing a
+page from `nav` or relaxing a plugin's strictness) to "make CI green"
+hides broken cross-references that later become 404s on the published
+docs site. Fix the underlying link or page instead.
