@@ -377,6 +377,52 @@ async def test_guard_langchain_input_still_scans_in_limit_blocks_when_one_block_
 
 
 @pytest.mark.asyncio
+async def test_guard_langchain_input_preserves_blocked_decision_when_truncation_fails_open(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_fail_open_for_redact = True
+    guard_settings.pii_remediation_max_chars = 16
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.BLOCKED,
+            blocks=[
+                PIITextBlock(
+                    block_id="lc:1",
+                    path="messages[1].content",
+                    role="human",
+                    text="ssn 123-45-6789",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="secret",
+                    block_id="lc:1",
+                    placeholder="[PII:SECRET:1]",
+                    text="123-45-6789",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    with pytest.raises(PIIRemediationError, match="exceeded pii_remediation_max_chars"):
+        await guard_langchain_input(
+            [
+                HumanMessage(content="x" * 32),
+                HumanMessage(content="ssn 123-45"),
+            ],
+            request_kind="unit",
+        )
+
+    sent_request = remediator.await_args.args[0]
+    assert [block.block_id for block in sent_request.blocks] == ["lc:1"]
+
+
+@pytest.mark.asyncio
 async def test_guard_langchain_input_supports_mixed_message_and_dict_sequences(
     monkeypatch, guard_settings
 ):

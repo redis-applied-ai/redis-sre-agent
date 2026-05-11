@@ -401,6 +401,8 @@ async def _run_remediation(
             final_decision = PIIRemediationDecision.BLOCKED
         elif result.decision == PIIRemediationDecision.REDACTED:
             final_decision = PIIRemediationDecision.REDACTED
+        elif result.decision == PIIRemediationDecision.BLOCKED:
+            final_decision = PIIRemediationDecision.BLOCKED
         else:
             final_decision = PIIRemediationDecision.ALLOW
     else:
