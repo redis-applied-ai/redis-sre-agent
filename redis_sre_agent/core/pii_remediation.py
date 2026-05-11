@@ -135,9 +135,9 @@ def _load_pii_remediator_factory_from_config() -> None:
     if _pii_remediator_factory_initialized:
         return
 
-    _pii_remediator_factory_initialized = True
     factory_path = getattr(settings, "pii_remediation_factory", None)
     if not factory_path or not isinstance(factory_path, str):
+        _pii_remediator_factory_initialized = True
         return
 
     try:
@@ -154,6 +154,7 @@ def _load_pii_remediator_factory_from_config() -> None:
             raise ValueError(f"PII_REMEDIATION_FACTORY '{factory_path}' is not callable")
 
         _pii_remediator_factory = factory
+        _pii_remediator_factory_initialized = True
         logger.info("Loaded custom PII remediator factory from %s", factory_path)
     except Exception as exc:
         logger.error("Failed to load PII remediator factory from '%s': %s", factory_path, exc)

@@ -55,6 +55,30 @@ class TestPIIRemediatorLoading:
         assert remediator is fake_remediator
         module.custom_factory.assert_called_once_with()
 
+    def test_factory_load_failure_does_not_fallback_to_default(self):
+        with (
+            patch.object(
+                pii_module,
+                "settings",
+                SimpleNamespace(pii_remediation_factory="my.factory.custom_factory"),
+            ),
+            patch(
+                "redis_sre_agent.core.pii_remediation.importlib.import_module",
+                side_effect=ImportError("boom"),
+            ) as import_module,
+            patch.object(
+                pii_module,
+                "_default_pii_remediator_factory",
+                side_effect=AssertionError("default factory should not run"),
+            ),
+        ):
+            with pytest.raises(ImportError, match="boom"):
+                get_pii_remediator()
+            with pytest.raises(ImportError, match="boom"):
+                get_pii_remediator()
+
+        assert import_module.call_count == 2
+
 
 def test_normalize_category_only_strips_bio_prefixes():
     assert _normalize_category("B-private_email") == "private_email"
