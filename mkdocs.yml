@@ -8,8 +8,11 @@ theme:
   features:
     - navigation.instant
     - navigation.tracking
+    - navigation.sections
+    - navigation.indexes
     - navigation.top
-    - toc.integrate
+    - navigation.footer
+    - toc.follow
     - content.code.copy
   palette:
     - scheme: default
@@ -20,6 +23,7 @@ markdown_extensions:
   - admonition
   - toc:
       permalink: true
+      toc_depth: 3
   - tables
   - pymdownx.details
   - pymdownx.superfences:
@@ -31,38 +35,53 @@ markdown_extensions:
 
 plugins:
   - search
+  - autorefs
+  - section-index
 
 extra_javascript:
   - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 
 nav:
   - Home: index.md
+  - Concepts:
+      - concepts/index.md
+      - Core architecture: concepts/core.md
+      - Triage loop: concepts/triage_loop.md
+      - Pipelines: concepts/pipelines.md
+      - Tool providers: concepts/tool_providers.md
   - User Guide:
+      - user_guide/index.md
       - Local quick start: user_guide/01_local_quickstart.md
-      - End-to-end setup: user_guide/02_end_to_end.md
+      - End-to-end walkthrough: user_guide/02_end_to_end.md
       - VM deployment: user_guide/03_vm_deployment.md
-      - How-to:
-          - Agent Memory Server Integration: user_guide/how_to_guides/agent_memory_integration.md
-          - How to connect to Redis: user_guide/how_to_guides/connect_to_redis.md
+      - How-To Guides:
+          - user_guide/how_to_guides/index.md
+          - Connect to Redis: user_guide/how_to_guides/connect_to_redis.md
           - Configuration: user_guide/how_to_guides/configuration.md
-          - Eval system: user_guide/how_to_guides/evals.md
-          - Tool Providers: user_guide/how_to_guides/tool_providers.md
+          - Local development: user_guide/how_to_guides/local_dev.md
           - CLI workflows: user_guide/how_to_guides/cli_workflows.md
           - API workflows: user_guide/how_to_guides/api_workflows.md
-          - Local development & testing: user_guide/how_to_guides/local_dev.md
-          - Pipelines & ingestion: user_guide/how_to_guides/pipelines.md
-          - Source document features: user_guide/how_to_guides/source_documents.md
-          - Scheduling flows: user_guide/how_to_guides/scheduling.md
-          - Release tutorials:
-              - v0.2.8 release tutorial: user_guide/how_to_guides/release_tutorials/v0_2_8.md
+          - Tool providers: user_guide/how_to_guides/tool_providers.md
+          - Pipelines: user_guide/how_to_guides/pipelines.md
+          - Source documents: user_guide/how_to_guides/source_documents.md
+          - Scheduling: user_guide/how_to_guides/scheduling.md
+          - Evals: user_guide/how_to_guides/evals.md
+          - Agent memory integration: user_guide/how_to_guides/agent_memory_integration.md
           - Operations:
-              - Docker Deployment: user_guide/how_to_guides/operations/docker_deployment.md
-              - Air-Gap Deployment: user_guide/how_to_guides/operations/airgap.md
-              - Observability & Health: user_guide/how_to_guides/operations/observability.md
-              - Operational Notes & Limitations: user_guide/how_to_guides/operations/gotchas.md
-  - Concepts:
-      - Overview: concepts/core.md
+              - user_guide/how_to_guides/operations/index.md
+              - Docker deployment: user_guide/how_to_guides/operations/docker_deployment.md
+              - Observability: user_guide/how_to_guides/operations/observability.md
+              - Airgap: user_guide/how_to_guides/operations/airgap.md
+              - Gotchas: user_guide/how_to_guides/operations/gotchas.md
+          - Release tutorials:
+              - user_guide/how_to_guides/release_tutorials/index.md
+              - v0.2.8: user_guide/how_to_guides/release_tutorials/v0_2_8.md
+  - Examples:
+      - examples/index.md
+      - Incident triage: examples/incident_triage.md
+      - Custom provider: examples/custom_provider.md
   - API Reference:
-      - CLI Reference: api/cli_ref.md
+      - api/index.md
       - REST API: api/rest_api.md
+      - CLI reference: api/cli_ref.md
       - Configuration: api/configuration.md
