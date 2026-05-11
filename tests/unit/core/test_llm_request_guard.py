@@ -189,7 +189,7 @@ async def test_guard_logs_do_not_include_raw_pii(monkeypatch, guard_settings, ca
         await guard_langchain_input("safe alice@example.com", request_kind="unit")
 
     assert "alice@example.com" not in caplog.text
-    assert "private_email" in caplog.text
+    assert "findings=1" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -328,6 +328,52 @@ async def test_guard_langchain_input_detect_mode_allows_truncated_text(monkeypat
 
     assert result == "alice@example.com trailing"
     remediator.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_guard_langchain_input_still_scans_in_limit_blocks_when_one_block_is_truncated(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_max_chars = 12
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.REDACTED,
+            blocks=[
+                PIITextBlock(
+                    block_id="lc:1",
+                    path="messages[1].content",
+                    role="human",
+                    text="[PII:EMAIL:1]",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="private_email",
+                    block_id="lc:1",
+                    placeholder="[PII:EMAIL:1]",
+                    text="a@x.io",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    with pytest.raises(PIIRemediationError, match="exceeded pii_remediation_max_chars"):
+        await guard_langchain_input(
+            [
+                HumanMessage(content="x" * 32),
+                HumanMessage(content="a@x.io"),
+            ],
+            request_kind="unit",
+        )
+
+    sent_request = remediator.await_args.args[0]
+    assert [block.block_id for block in sent_request.blocks] == ["lc:1"]
+    assert [block.text for block in sent_request.blocks] == ["a@x.io"]
 
 
 @pytest.mark.asyncio
