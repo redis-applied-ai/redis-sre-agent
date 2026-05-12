@@ -230,6 +230,7 @@ async def test_fixture_backend_skills_check_keeps_best_matching_resource_for_que
     assert result["skills"][0]["name"] == "redis-maintenance-triage"
     assert result["skills"][0]["matched_resource_kind"] == "reference"
     assert result["skills"][0]["matched_resource_path"] == "references/maintenance-checklist.md"
+    assert result["search_type"] == "semantic"
 
 
 @pytest.mark.asyncio
@@ -286,6 +287,22 @@ async def test_fixture_backend_skills_check_without_query_prefers_entrypoint_rep
     assert result["skills"][0]["name"] == "redis-maintenance-triage"
     assert result["skills"][0]["matched_resource_kind"] == "entrypoint"
     assert result["skills"][0]["matched_resource_path"] == "SKILL.md"
+    assert result["search_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_fixture_backend_skills_check_reports_unsupported_hybrid_search():
+    backend = FixtureKnowledgeBackend([])
+
+    result = await backend.skills_check(
+        query="maintenance",
+        search_type="hybrid",
+        version="latest",
+    )
+
+    assert result["error"] == "unsupported_search_type"
+    assert result["requested_search_type"] == "hybrid"
+    assert result["supported_search_types"] == ["semantic", "keyword"]
 
 
 @pytest.mark.asyncio

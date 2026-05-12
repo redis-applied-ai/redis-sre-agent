@@ -357,7 +357,7 @@ async def test_startup_context_carries_internal_skill_discovery_envelope():
     assert envelope["name"] == "skills_check"
     assert envelope["args"] == {
         "query": "",
-        "limit": 50,
+        "limit": 25,
         "offset": 0,
         "version": "latest",
     }
@@ -438,7 +438,7 @@ async def test_startup_context_uses_eval_scoped_knowledge_backend():
 
         async def skills_check(self, **kwargs):
             assert kwargs["query"] is None
-            assert kwargs["limit"] == 50
+            assert kwargs["limit"] == 25
             return {
                 "skills": [
                     {

@@ -1744,6 +1744,33 @@ class TestSkillHelpers:
             limit=7,
             offset=0,
             version="latest",
+            search_type=None,
+            distance_threshold=0.8,
+        )
+
+    @pytest.mark.asyncio
+    async def test_skills_check_helper_passes_search_type_to_backend(self):
+        backend = MagicMock()
+        backend.list_skills = AsyncMock(return_value={"results_count": 0, "skills": []})
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_skill_backend",
+            return_value=backend,
+        ):
+            await skills_check_helper(
+                query="health check",
+                search_type="keyword",
+                limit=7,
+                offset=2,
+                version="latest",
+            )
+
+        backend.list_skills.assert_awaited_once_with(
+            query="health check",
+            limit=7,
+            offset=2,
+            version="latest",
+            search_type="keyword",
             distance_threshold=0.8,
         )
 

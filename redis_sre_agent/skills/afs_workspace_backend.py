@@ -13,6 +13,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from redis_sre_agent.skills.backend import (
+    normalize_skill_search_type,
+    unsupported_skill_search_type_result,
+)
+
 try:
     import httpx
 except ModuleNotFoundError:  # pragma: no cover - runtime image fallback
@@ -46,6 +51,7 @@ _GATEWAY_QUERY_STOPWORDS = {
     "you",
 }
 _SEMANTIC_SKILL_FETCH_LIMIT = 500
+_AFS_SUPPORTED_SEARCH_TYPES: tuple[str, ...] = ("semantic", "keyword")
 
 
 def _first_non_empty(
@@ -216,18 +222,25 @@ class AFSWorkspaceSkillBackend:
         limit: int,
         offset: int,
         version: str | None,
+        search_type: str | None = None,
         distance_threshold: float | None = 0.8,
     ) -> dict[str, Any]:
         del distance_threshold
+        normalized_search_type = normalize_skill_search_type(query, search_type)
         if self._use_gateway():
             return await self._list_skills_via_gateway(
                 query=query,
                 limit=limit,
                 offset=offset,
                 version=version,
+                search_type=normalized_search_type,
             )
         return await self._list_skills_via_api(
-            query=query, limit=limit, offset=offset, version=version
+            query=query,
+            limit=limit,
+            offset=offset,
+            version=version,
+            search_type=normalized_search_type,
         )
 
     async def get_skill(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
@@ -261,13 +274,27 @@ class AFSWorkspaceSkillBackend:
         limit: int,
         offset: int,
         version: str | None,
+        search_type: str | None,
     ) -> dict[str, Any]:
         if query:
+            if search_type == "hybrid":
+                return unsupported_skill_search_type_result(
+                    query=query,
+                    search_type=search_type,
+                    version=version,
+                    offset=offset,
+                    limit=limit,
+                    backend_kind="afs_workspace",
+                    supported_search_types=_AFS_SUPPORTED_SEARCH_TYPES,
+                )
             raw_skills = await self._fetch_api_skill_catalog(
                 version=version,
                 minimum_count=max(limit + offset, 1),
             )
-            ranked_skills = await self._semantic_rank_skills(raw_skills, query=query)
+            if search_type == "keyword":
+                ranked_skills = self._filter_skills_keyword(raw_skills, query=query)
+            else:
+                ranked_skills = await self._semantic_rank_skills(raw_skills, query=query)
             paged_skills = ranked_skills[offset : offset + limit]
             normalized_skills = [
                 self._normalize_skill_summary(skill, matched_path=None)
@@ -279,9 +306,12 @@ class AFSWorkspaceSkillBackend:
                 "version": version,
                 "offset": offset,
                 "limit": limit,
+                "search_type": search_type,
                 "results_count": len(normalized_skills),
                 "total_fetched": len(ranked_skills),
                 "skills": normalized_skills,
+                "backend_kind": "afs_workspace",
+                "supported_search_types": list(_AFS_SUPPORTED_SEARCH_TYPES),
             }
 
         payload = await self._request_json(
@@ -307,9 +337,12 @@ class AFSWorkspaceSkillBackend:
             "version": version,
             "offset": offset,
             "limit": limit,
+            "search_type": search_type,
             "results_count": len(normalized_skills),
             "total_fetched": int(data.get("total", len(normalized_skills))),
             "skills": normalized_skills,
+            "backend_kind": "afs_workspace",
+            "supported_search_types": list(_AFS_SUPPORTED_SEARCH_TYPES),
         }
 
     async def _list_skills_via_gateway(
@@ -319,10 +352,24 @@ class AFSWorkspaceSkillBackend:
         limit: int,
         offset: int,
         version: str | None,
+        search_type: str | None,
     ) -> dict[str, Any]:
         raw_skills = await self._gateway_catalog_entries(version=version)
         if query:
-            raw_skills = await self._semantic_rank_skills(raw_skills, query=query)
+            if search_type == "hybrid":
+                return unsupported_skill_search_type_result(
+                    query=query,
+                    search_type=search_type,
+                    version=version,
+                    offset=offset,
+                    limit=limit,
+                    backend_kind="afs_workspace",
+                    supported_search_types=_AFS_SUPPORTED_SEARCH_TYPES,
+                )
+            if search_type == "keyword":
+                raw_skills = self._filter_skills_keyword(raw_skills, query=query)
+            else:
+                raw_skills = await self._semantic_rank_skills(raw_skills, query=query)
         paged = raw_skills[offset : offset + limit]
         normalized_skills = [
             self._normalize_skill_summary(skill, matched_path=None) for skill in paged
@@ -332,9 +379,12 @@ class AFSWorkspaceSkillBackend:
             "version": version,
             "offset": offset,
             "limit": limit,
+            "search_type": search_type,
             "results_count": len(normalized_skills),
             "total_fetched": len(raw_skills),
             "skills": normalized_skills,
+            "backend_kind": "afs_workspace",
+            "supported_search_types": list(_AFS_SUPPORTED_SEARCH_TYPES),
         }
 
     async def _fetch_api_skill_catalog(
@@ -387,7 +437,7 @@ class AFSWorkspaceSkillBackend:
         if not query_text:
             return list(skills)
 
-        fallback_matches = self._filter_gateway_skills(skills, query=query)
+        fallback_matches = self._filter_skills_keyword(skills, query=query)
         if not skills:
             return []
 
@@ -422,7 +472,7 @@ class AFSWorkspaceSkillBackend:
         ranked = [item[3] for item in scored]
         return ranked or fallback_matches or list(skills)
 
-    def _filter_gateway_skills(
+    def _filter_skills_keyword(
         self,
         skills: list[Mapping[str, Any]],
         *,
