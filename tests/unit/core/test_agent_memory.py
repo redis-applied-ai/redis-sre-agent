@@ -322,6 +322,35 @@ class TestPersistTurn:
         ]
 
     @pytest.mark.asyncio
+    async def test_persist_turn_captures_first_person_preferences(self, memory_settings):
+        user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        mock_client = AsyncMock()
+        mock_client.put_working_memory = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            await service.persist_turn(
+                session_id="session-1",
+                user_id="user-1",
+                user_message="I prefer concise answers and I want remediation-first updates.",
+                assistant_message="Got it.",
+                user_working_memory=user_working_memory,
+                asset_working_memory=asset_working_memory,
+                instance_id="instance-1",
+                thread_id="thread-1",
+            )
+
+        assert mock_client.put_working_memory.await_count >= 1
+        user_memory = mock_client.put_working_memory.await_args_list[0].args[1]
+        assert user_memory.namespace == "redis-sre-agent-user"
+        joined = " ".join(m.content.lower() for m in user_memory.messages)
+        assert "i prefer concise" in joined
+        assert "i want remediation-first" in joined
+
+    @pytest.mark.asyncio
     async def test_persist_turn_routes_inseparable_mixed_sentence_to_user_scope(
         self, memory_settings
     ):

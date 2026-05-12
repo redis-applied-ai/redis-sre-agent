@@ -96,9 +96,15 @@ async def _list_user_long_term(
     limit: int,
     offset: int,
 ) -> LongTermSearchResult:
-    """Try broad-text fallbacks until one returns results (or all exhaust)."""
+    """Try broad-text fallbacks until one returns results (or all exhaust).
+
+    When paginating (offset > 0), only use the first canonical query so
+    subsequent pages stay anchored to the same result set instead of
+    falling through to a different fallback.
+    """
+    queries = _LIST_QUERY_FALLBACKS[:1] if offset > 0 else _LIST_QUERY_FALLBACKS
     last: Optional[LongTermSearchResult] = None
-    for query in _LIST_QUERY_FALLBACKS:
+    for query in queries:
         result = await session.search_user_long_term(
             query=query, user_id=user_id, limit=limit, offset=offset
         )
@@ -116,9 +122,15 @@ async def _list_asset_long_term(
     limit: int,
     offset: int,
 ) -> LongTermSearchResult:
-    """Try broad-text fallbacks until one returns results (or all exhaust)."""
+    """Try broad-text fallbacks until one returns results (or all exhaust).
+
+    When paginating (offset > 0), only use the first canonical query so
+    subsequent pages stay anchored to the same result set instead of
+    falling through to a different fallback.
+    """
+    queries = _LIST_QUERY_FALLBACKS[:1] if offset > 0 else _LIST_QUERY_FALLBACKS
     last: Optional[LongTermSearchResult] = None
-    for query in _LIST_QUERY_FALLBACKS:
+    for query in queries:
         result = await session.search_asset_long_term(
             query=query,
             instance_id=instance_id,
