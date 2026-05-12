@@ -10,6 +10,8 @@ from typing import Any, Literal, Protocol, cast
 
 from redis_sre_agent.core.config import Settings, settings
 
+from .contracts import build_contract_summary, extract_output_contract, extract_workflow_contract
+
 SkillSearchType = Literal["semantic", "keyword", "hybrid"]
 SUPPORTED_SKILL_SEARCH_TYPES: tuple[SkillSearchType, ...] = ("semantic", "keyword", "hybrid")
 
@@ -381,6 +383,9 @@ class RedisSkillBackend:
                 "skill_name": str(entrypoint.get("skill_name") or normalized_name),
                 "full_content": str(entrypoint.get("content") or "").strip(),
             }
+        ui_metadata = self._extract_ui_metadata(entrypoint.get("metadata", {}))
+        output_contract = extract_output_contract(ui_metadata)
+        workflow_contract = extract_workflow_contract(ui_metadata)
         return {
             "skill_name": str(entrypoint.get("skill_name") or normalized_name),
             "backend_kind": "redis",
@@ -412,7 +417,10 @@ class RedisSkillBackend:
                 for resource in resources
                 if resource["resource_kind"] == "asset"
             ],
-            "ui_metadata": self._extract_ui_metadata(entrypoint.get("metadata", {})),
+            "ui_metadata": ui_metadata,
+            "output_contract": output_contract,
+            "workflow_contract": workflow_contract,
+            "contract_summary": build_contract_summary(output_contract, workflow_contract),
         }
 
     async def get_skill_resource(

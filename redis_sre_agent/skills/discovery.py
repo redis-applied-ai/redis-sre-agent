@@ -121,7 +121,13 @@ def find_skill_package_root(path: Path, *, boundary: Path | None = None) -> Path
             resolved_boundary if resolved_boundary.is_dir() else resolved_boundary.parent
         )
 
-    for candidate in (resolved_path.parent, *resolved_path.parents):
+    candidate_roots = (
+        (resolved_path, *resolved_path.parents)
+        if resolved_path.is_dir()
+        else (resolved_path.parent, *resolved_path.parents)
+    )
+
+    for candidate in candidate_roots:
         if boundary_path is not None:
             try:
                 candidate.relative_to(boundary_path)
@@ -304,7 +310,9 @@ def skill_package_to_documents(
 
     source_root = source_root.resolve()
     root_label = str(source_root_label or source_root.name or "skills").strip().strip("/")
-    package_hash = _package_hash(package)
+    package_hash = (
+        str(package.metadata.get("document_hash") or "").strip() or _package_hash(package)
+    )
     manifest_json = json.dumps(_skill_package_manifest(package), sort_keys=True)
     documents: list[ScrapedDocument] = []
 

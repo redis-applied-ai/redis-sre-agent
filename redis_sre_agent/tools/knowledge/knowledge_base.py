@@ -260,7 +260,10 @@ class KnowledgeBaseToolProvider(ToolProvider):
                 name=self._make_tool_name("get_skill"),
                 description=(
                     "Retrieve the complete content of a skill by skill name. "
-                    "Use the name returned by skills_check."
+                    "Use the name returned by skills_check. "
+                    "Agent Skills packages may also return provider-specific contract fields such as "
+                    "`output_contract`, `workflow_contract`, and `contract_summary`; when present, "
+                    "treat them as binding instructions for the final answer and required follow-up work."
                 ),
                 capability=ToolCapability.KNOWLEDGE,
                 parameters={

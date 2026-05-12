@@ -20,6 +20,7 @@ def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
     agent_skill = skills_dir / "redis-maintenance-triage"
     (agent_skill / "references").mkdir(parents=True)
     (agent_skill / "scripts").mkdir()
+    (agent_skill / "agents").mkdir()
 
     legacy_skill.parent.mkdir(parents=True, exist_ok=True)
     legacy_skill.write_text(
@@ -46,6 +47,30 @@ def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
     )
     (agent_skill / "scripts" / "collect_context.sh").write_text(
         "#!/usr/bin/env bash\necho collect\n",
+        encoding="utf-8",
+    )
+    (agent_skill / "agents" / "openai.yaml").write_text(
+        "\n".join(
+            [
+                "display_name: Redis Maintenance Triage",
+                "preferred_entrypoint: SKILL.md",
+                "output_contract:",
+                "  mode: markdown",
+                "  validation_checklist:",
+                "    - Confirm summary heading is present.",
+                "  required_order:",
+                "    - '## Summary'",
+                "    - '## Actions'",
+                "  required_patterns:",
+                "    - description: Include a summary paragraph.",
+                "      pattern: '(?s)## Summary\\n.+'",
+                "workflow_contract:",
+                "  required_tool_calls:",
+                "    - inspect_maintenance_mode",
+                "  progress_checklist:",
+                "    - Read maintenance state first.",
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -117,6 +142,25 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
             "description": "Script resource at collect_context.sh",
         }
     ]
+    assert agent_skill["output_contract"] == {
+        "mode": "markdown",
+        "validation_checklist": ["Confirm summary heading is present."],
+        "required_order": ["## Summary", "## Actions"],
+        "required_patterns": [
+            {
+                "description": "Include a summary paragraph.",
+                "pattern": "(?s)## Summary\\n.+",
+            }
+        ],
+    }
+    assert agent_skill["workflow_contract"] == {
+        "required_tool_calls": ["inspect_maintenance_mode"],
+        "progress_checklist": ["Read maintenance state first."],
+    }
+    assert agent_skill["contract_summary"][0].startswith("This skill defines a binding output contract.")
+    assert "Output pattern: Include a summary paragraph." in agent_skill["contract_summary"]
+    assert "Validation checklist: Confirm summary heading is present." in agent_skill["contract_summary"]
+    assert "Workflow checklist: Read maintenance state first." in agent_skill["contract_summary"]
     assert agent_skill_resource["resource_kind"] == "reference"
     assert agent_skill_resource["content"] == "Checklist body"
     assert legacy == {"skill_name": "legacy-triage", "full_content": "Legacy body"}
