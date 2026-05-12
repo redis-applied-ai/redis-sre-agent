@@ -76,9 +76,13 @@ def _skills_toc_lines(
             "If you need a related skill that is not listed here, search for related skills before concluding there is no relevant match."
         )
     for skill in skills:
-        name = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
+        title = str(skill.get("title", "")).strip() or str(skill.get("name", "")).strip()
+        lookup_name = str(skill.get("name", "")).strip()
         summary = str(skill.get("summary", "")).strip() or str(skill.get("description", "")).strip()
-        lines.append(f"- {name}: {summary}")
+        if lookup_name and title and lookup_name != title:
+            lines.append(f"- {title} (`{lookup_name}`): {summary}")
+        else:
+            lines.append(f"- {title or lookup_name}: {summary}")
     return lines
 
 
@@ -227,12 +231,13 @@ def _build_internal_startup_skills_envelope(
 
     results: List[Dict[str, Any]] = []
     for skill in skills:
-        title = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
+        title = str(skill.get("title", "")).strip() or str(skill.get("name", "")).strip()
+        lookup_name = str(skill.get("name", "")).strip()
         document_hash = str(skill.get("document_hash", "")).strip()
         results.append(
             {
-                "id": document_hash or title,
-                "title": title or document_hash or "Skill",
+                "id": document_hash or lookup_name or title,
+                "title": title or lookup_name or document_hash or "Skill",
                 "source": str(skill.get("source", "")).strip(),
                 "document_hash": document_hash,
                 "doc_type": "skill",
