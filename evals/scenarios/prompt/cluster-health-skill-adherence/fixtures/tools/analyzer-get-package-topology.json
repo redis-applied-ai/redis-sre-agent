@@ -1,0 +1,1 @@
+{"package_id":"pkg-eval-001","databases":[{"id":"bdb-102","name":"sessions-cache","proxy_nodes":["1"],"master_nodes":["1"],"replica_nodes":["2"],"overlap_summary":"2 of 2 endpoints share the same proxy and master node"}]}

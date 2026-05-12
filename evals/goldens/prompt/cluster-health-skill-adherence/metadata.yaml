@@ -1,0 +1,6 @@
+scenario_id: prompt/cluster-health-skill-adherence
+source_pack: prompt-core
+source_pack_version: 2026-04-14
+review_status: reviewed
+reviewed_by: codex
+expectation_basis: human_authored

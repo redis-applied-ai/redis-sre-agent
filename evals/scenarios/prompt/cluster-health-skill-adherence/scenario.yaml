@@ -1,0 +1,203 @@
+id: prompt/cluster-health-skill-adherence
+name: Chat agent follows the Redis Cluster Health Check skill end to end
+description: Exercise the startup-visible Redis Cluster Health Check skill with mocked Analyzer MCP tools so the answer follows the mandated package workflow, proactive drill-downs, and customer-facing report format.
+
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - evals/corpora/prompt-core/2026-04-14/skills/redis-cluster-health-check/SKILL.md
+  synthetic:
+    is_synthetic: true
+    method: hand-authored fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/cluster-health-skill-adherence/expected.md
+    review_status: reviewed
+    reviewed_by: codex
+
+execution:
+  lane: agent_only
+  agent: chat
+  query: >
+    Review support package pkg-eval-001 and produce the customer-facing cluster health check
+    findings report for the attached Redis Enterprise cluster.
+  max_tool_steps: 16
+  llm_mode: replay
+
+knowledge:
+  mode: startup_only
+  version: latest
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14/skills/redis-cluster-health-check
+
+tools:
+  mcp_servers:
+    analyzer_eval:
+      capability: diagnostics
+      tools:
+        analyzer_get_package:
+          description: Fetch an Analyzer support package by exact package id.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+          result: fixtures/tools/analyzer-get-package.json
+        analyzer_get_package_overview:
+          description: Fetch package overview sections for cluster, databases, nodes, tasks, alerts, and health checks.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+              include_sections:
+                type: array
+          result: fixtures/tools/analyzer-get-package-overview.json
+        analyzer_get_package_health_checks:
+          description: Fetch filtered Analyzer health-check findings for the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+              include_ok:
+                type: boolean
+          result: fixtures/tools/analyzer-get-package-health-checks.json
+        analyzer_get_package_databases:
+          description: Fetch database inventory, modules, replica, and persistence details for the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+              include_modules:
+                type: boolean
+              include_replicas:
+                type: boolean
+          result: fixtures/tools/analyzer-get-package-databases.json
+        analyzer_get_package_events:
+          description: Fetch structured Analyzer events for the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+              severity:
+                type: string
+              limit:
+                type: integer
+          result: fixtures/tools/analyzer-get-package-events.json
+        analyzer_get_package_alerts:
+          description: Fetch alert state and threshold context for the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+          result: fixtures/tools/analyzer-get-package-alerts.json
+        analyzer_get_package_nodes:
+          description: Fetch node inventory and health context for the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+          result: fixtures/tools/analyzer-get-package-nodes.json
+        analyzer_get_package_topology:
+          description: Fetch shard and endpoint placement details for the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+          result: fixtures/tools/analyzer-get-package-topology.json
+        analyzer_get_package_time_series:
+          description: Fetch Analyzer metrics samples for the package at cluster or node scope.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+              scope:
+                type: string
+              interval:
+                type: string
+              node_id:
+                type: string
+          responders:
+            - when:
+                args_contains:
+                  scope: node
+              result: fixtures/tools/analyzer-get-package-time-series-node.json
+            - result: fixtures/tools/analyzer-get-package-time-series-cluster.json
+        analyzer_get_database_slowlog:
+          description: Fetch raw slowlog entries for one database in the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+              database_id:
+                type: string
+          result: fixtures/tools/analyzer-get-database-slowlog-orders.json
+        analyzer_get_database_commands:
+          description: Fetch command counters for one database in the package.
+          input_schema:
+            properties:
+              package_id:
+                type: string
+              database_id:
+                type: string
+          result: fixtures/tools/analyzer-get-database-commands-orders.json
+
+expectations:
+  required_tool_calls:
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_overview
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_health_checks
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_databases
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_events
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_alerts
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_nodes
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_topology
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_package_time_series
+    - provider_family: mcp
+      server_name: analyzer_eval
+      operation: analyzer_get_database_slowlog
+  required_response_patterns:
+    - '(?s)^# Cluster Health Check: .+?\n\n\*\*Package ID:\*\* .+?\n\*\*Cluster:\*\* .+?\n\*\*Software version:\*\* .+?\n\*\*Nodes:\*\* .+?\n\*\*Databases:\*\* .+?\n\*\*Analysis date:\*\* .+?\n\n## Summary\n.+?## Cluster-level findings\n.+?## Node-level findings\n.+?## Database-level findings\n.+?## Common Issues Rollup\n.+?## TAM Manual Review Required\n.+?## Skipped Checks\s*$'
+    - '(?m)^### orders-cache \(bdb-101\)$'
+    - '(?m)^### Server Side$'
+    - '(?m)^### Client Side$'
+    - '(?m)^### Operational$'
+    - '(?m)^- \*\*[^*]+\*\*: .+'
+  required_findings:
+    - cluster health check
+    - findings count by severity
+    - cluster-level findings
+    - node-level findings
+    - database-level findings
+    - orders-cache (bdb-101)
+    - top 3 commands by count
+    - cluster cpu rose from 42% to 71%
+    - node 2 peaked at 88% cpu
+    - common issues rollup
+    - tam manual review required
+    - skipped checks
+  forbidden_claims:
+    - please send the slowlog first
+    - i need the analyzer ui
+  required_sources:
+    - redis-cluster-health-check

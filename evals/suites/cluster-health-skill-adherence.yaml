@@ -1,0 +1,7 @@
+suites:
+  cluster-health-skill-adherence:
+    description: Live-model skill adherence check for the Redis Cluster Health Check workflow in the tmp fork.
+    policy_file: ../baseline_policy.yaml
+    judge_pass_threshold: 85.0
+    scenarios:
+      - ../scenarios/prompt/cluster-health-skill-adherence/scenario.yaml
