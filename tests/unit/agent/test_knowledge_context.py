@@ -104,6 +104,33 @@ async def test_startup_context_mentions_truncated_skill_inventory():
 
 
 @pytest.mark.asyncio
+async def test_startup_context_renders_skill_title_with_lookup_slug():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(
+                return_value={
+                    "skills": [
+                        {
+                            "name": "redis-cluster-health-check",
+                            "title": "Redis Cluster Health Check",
+                            "summary": "Run a fast cluster health check.",
+                        }
+                    ]
+                }
+            ),
+        ),
+    ):
+        context = await build_startup_knowledge_context(version="latest")
+
+    assert "Redis Cluster Health Check (`redis-cluster-health-check`): Run a fast cluster health check." in context
+
+
+@pytest.mark.asyncio
 async def test_startup_context_is_empty_without_pinned_docs_or_skills():
     with (
         patch(
