@@ -124,6 +124,16 @@ def scaffold_skill_package_from_markdown(
             {
                 "display_name": title or name,
                 "preferred_entrypoint": "SKILL.md",
+                "output_contract": {
+                    "mode": "markdown",
+                    "instructions": [
+                        "Add exact output-shape rules here when the response format is mandatory."
+                    ],
+                },
+                "workflow_contract": {
+                    "required_tool_calls": [],
+                    "required_followups": [],
+                },
             },
             sort_keys=False,
         ),
