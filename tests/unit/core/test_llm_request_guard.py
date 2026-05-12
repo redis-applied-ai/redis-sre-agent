@@ -319,7 +319,15 @@ async def test_guard_langchain_input_fails_closed_when_text_exceeds_max_chars(
 async def test_guard_langchain_input_detect_mode_allows_truncated_text(monkeypatch, guard_settings):
     guard_settings.pii_remediation_mode = "detect"
     guard_settings.pii_remediation_max_chars = 10
-    remediator = AsyncMock()
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.ALLOW,
+            blocks=[],
+            findings=[],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
     monkeypatch.setattr(
         guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
     )
@@ -327,7 +335,15 @@ async def test_guard_langchain_input_detect_mode_allows_truncated_text(monkeypat
     result = await guard_langchain_input("alice@example.com trailing", request_kind="unit")
 
     assert result == "alice@example.com trailing"
-    remediator.assert_not_awaited()
+    remediator.assert_awaited_once()
+    sent_request = remediator.await_args.args[0]
+    assert len(sent_request.blocks) == 1
+    assert sent_request.blocks[0].text == "alice@exam"
+    assert sent_request.blocks[0].metadata == {
+        "truncated_for_detection": True,
+        "original_char_count": len("alice@example.com trailing"),
+        "scanned_char_count": 10,
+    }
 
 
 @pytest.mark.asyncio
@@ -550,3 +566,52 @@ async def test_run_remediation_preserves_redaction_reason_when_truncation_fails_
     assert result.decision == PIIRemediationDecision.REDACTED
     assert result.reason == "redacted matching email"
     assert any(finding.category == "truncated_input" for finding in result.findings)
+
+
+@pytest.mark.asyncio
+async def test_run_remediation_detect_mode_preserves_original_block_text(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_max_chars = 8
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.ALLOW,
+            blocks=[
+                PIITextBlock(
+                    block_id="lc:0",
+                    path="messages[0].content",
+                    role="human",
+                    text="truncated",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="private_email",
+                    block_id="lc:0",
+                    text="alice@ex",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    result = await guard_module._run_remediation(
+        [
+            PIITextBlock(
+                block_id="lc:0",
+                path="messages[0].content",
+                role="human",
+                text="alice@example.com trailing",
+            )
+        ],
+        mode=guard_module.PIIRemediationMode.DETECT,
+        request_kind="unit",
+    )
+
+    assert result.decision == PIIRemediationDecision.ALLOW
+    assert result.blocks[0].text == "alice@example.com trailing"
+    assert result.findings[0].block_id == "lc:0"

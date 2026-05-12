@@ -337,6 +337,26 @@ def _truncation_findings(
     ]
 
 
+def _detect_mode_scan_blocks(
+    truncated_blocks: Dict[str, PIITextBlock],
+) -> List[PIITextBlock]:
+    scan_limit = settings.pii_remediation_max_chars
+    return [
+        block.model_copy(
+            update={
+                "text": (block.text or "")[:scan_limit],
+                "metadata": {
+                    **block.metadata,
+                    "truncated_for_detection": True,
+                    "original_char_count": len(block.text or ""),
+                    "scanned_char_count": scan_limit,
+                },
+            }
+        )
+        for block in truncated_blocks.values()
+    ]
+
+
 async def _run_remediation(
     blocks: Sequence[PIITextBlock],
     *,
@@ -345,20 +365,23 @@ async def _run_remediation(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> PIIRemediationResult:
     processable_blocks, truncated_blocks = _split_blocks_for_remediation(blocks)
+    remediation_blocks = list(processable_blocks)
+    if mode == PIIRemediationMode.DETECT and truncated_blocks:
+        remediation_blocks.extend(_detect_mode_scan_blocks(truncated_blocks))
     started = time.perf_counter()
     result = PIIRemediationResult(
         decision=PIIRemediationDecision.ALLOW,
-        blocks=list(processable_blocks),
+        blocks=list(remediation_blocks),
         findings=[],
         detector_name="guard",
     )
-    if processable_blocks:
+    if remediation_blocks:
         try:
             result = await get_pii_remediator().remediate(
                 PIIRemediationRequest(
                     mode=mode,
                     request_kind=request_kind,
-                    blocks=processable_blocks,
+                    blocks=remediation_blocks,
                     categories=list(settings.pii_remediation_categories),
                     metadata=metadata or {},
                 )
@@ -387,7 +410,8 @@ async def _run_remediation(
             )
 
     merged_blocks_by_id = {block.block_id: block for block in blocks}
-    merged_blocks_by_id.update({block.block_id: block for block in result.blocks})
+    if result.decision == PIIRemediationDecision.REDACTED:
+        merged_blocks_by_id.update({block.block_id: block for block in result.blocks})
     merged_findings = list(result.findings)
 
     status = "ok"
