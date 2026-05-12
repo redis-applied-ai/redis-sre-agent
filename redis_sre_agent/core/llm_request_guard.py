@@ -229,6 +229,7 @@ def _render_langchain_messages(
     rendered: List[Any] = []
     part_updates: Dict[tuple[int, int], str] = {}
     string_updates: Dict[int, str] = {}
+    messages_with_part_updates: set[int] = set()
 
     for location in locations:
         block = blocks_by_id.get(location.block_id)
@@ -238,6 +239,7 @@ def _render_langchain_messages(
             string_updates[location.indexes[0]] = block.text
         elif location.container == "langchain_part":
             part_updates[(location.indexes[0], location.indexes[1])] = block.text
+            messages_with_part_updates.add(location.indexes[0])
 
     for idx, message in enumerate(messages):
         content = getattr(message, "content", None)
@@ -252,6 +254,9 @@ def _render_langchain_messages(
                 rendered.append(message.model_copy(update={"content": string_updates[idx]}))
             continue
         if isinstance(content, list):
+            if idx not in messages_with_part_updates:
+                rendered.append(message)
+                continue
             new_content = copy.deepcopy(content)
             for part_idx, part in enumerate(new_content):
                 key = (idx, part_idx)
@@ -390,13 +395,13 @@ async def _run_remediation(
     if truncated_blocks:
         merged_findings.extend(_truncation_findings(truncated_blocks))
         status = "truncated"
-        reason = (
+        truncation_reason = (
             "One or more text blocks exceeded "
             f"pii_remediation_max_chars={settings.pii_remediation_max_chars}"
         )
         logger.warning(
             "%s for %s mode=%s truncated_blocks=%d",
-            reason,
+            truncation_reason,
             request_kind,
             mode.value,
             len(truncated_blocks),
@@ -406,12 +411,19 @@ async def _run_remediation(
         )
         if fail_closed_for_truncation:
             final_decision = PIIRemediationDecision.BLOCKED
+            reason = truncation_reason
         elif result.decision == PIIRemediationDecision.REDACTED:
             final_decision = PIIRemediationDecision.REDACTED
+            if reason is None:
+                reason = truncation_reason
         elif result.decision == PIIRemediationDecision.BLOCKED:
             final_decision = PIIRemediationDecision.BLOCKED
+            if reason is None:
+                reason = truncation_reason
         else:
             final_decision = PIIRemediationDecision.ALLOW
+            if reason is None:
+                reason = truncation_reason
     else:
         final_decision = result.decision
 

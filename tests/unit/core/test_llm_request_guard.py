@@ -462,3 +462,91 @@ async def test_guard_langchain_input_supports_mixed_message_and_dict_sequences(
 
     assert result[0].content == "safe"
     assert result[1]["content"] == "reach [PII:EMAIL:1]"
+
+
+def test_render_langchain_messages_reuses_unmodified_list_content_message():
+    messages = [
+        HumanMessage(content=[{"type": "text", "text": "keep"}]),
+        HumanMessage(content=[{"type": "text", "text": "change"}]),
+    ]
+    locations = [
+        guard_module._BlockLocation(
+            block_id="lc:1:0",
+            container="langchain_part",
+            indexes=(1, 0),
+            role="human",
+            path="messages[1].content[0].text",
+        )
+    ]
+    blocks_by_id = {
+        "lc:1:0": PIITextBlock(
+            block_id="lc:1:0",
+            path="messages[1].content[0].text",
+            role="human",
+            text="[PII:EMAIL:1]",
+        )
+    }
+
+    rendered = guard_module._render_langchain_messages(messages, locations, blocks_by_id)
+
+    assert rendered[0] is messages[0]
+    assert rendered[1] is not messages[1]
+    assert rendered[1].content[0]["text"] == "[PII:EMAIL:1]"
+
+
+@pytest.mark.asyncio
+async def test_run_remediation_preserves_redaction_reason_when_truncation_fails_open(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_max_chars = 8
+    guard_settings.pii_remediation_fail_open_for_redact = True
+    remediator = AsyncMock(
+        return_value=PIIRemediationResult(
+            decision=PIIRemediationDecision.REDACTED,
+            blocks=[
+                PIITextBlock(
+                    block_id="lc:1",
+                    path="messages[1].content",
+                    role="human",
+                    text="[PII:EMAIL:1]",
+                )
+            ],
+            findings=[
+                PIIFinding(
+                    category="private_email",
+                    block_id="lc:1",
+                    placeholder="[PII:EMAIL:1]",
+                    text="a@x.io",
+                )
+            ],
+            detector_name="test",
+            detector_model="local",
+            reason="redacted matching email",
+        )
+    )
+    monkeypatch.setattr(
+        guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
+    )
+
+    result = await guard_module._run_remediation(
+        [
+            PIITextBlock(
+                block_id="lc:0",
+                path="messages[0].content",
+                role="human",
+                text="x" * 16,
+            ),
+            PIITextBlock(
+                block_id="lc:1",
+                path="messages[1].content",
+                role="human",
+                text="a@x.io",
+            ),
+        ],
+        mode=guard_module.PIIRemediationMode.REDACT,
+        request_kind="unit",
+    )
+
+    assert result.decision == PIIRemediationDecision.REDACTED
+    assert result.reason == "redacted matching email"
+    assert any(finding.category == "truncated_input" for finding in result.findings)
