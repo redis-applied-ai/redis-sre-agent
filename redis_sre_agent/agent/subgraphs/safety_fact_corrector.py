@@ -32,6 +32,7 @@ class CorrectorState(TypedDict, total=False):
     instance: Dict[str, Any]
     result: Dict[str, Any]
 
+
 def build_safety_fact_corrector(
     base_llm,
     tool_adapters: List[Any],

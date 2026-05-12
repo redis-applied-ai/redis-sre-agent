@@ -33,6 +33,7 @@ class RecState(TypedDict, total=False):
     instance: Dict[str, Any]
     result: Dict[str, Any]
 
+
 def build_recommendation_worker(
     base_llm,
     knowledge_tool_adapters: List[Any],
