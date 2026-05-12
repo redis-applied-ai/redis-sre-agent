@@ -20,6 +20,7 @@ from opentelemetry import trace
 from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
 from redis_sre_agent.core.progress import (
     NullEmitter,
     ProgressEmitter,
@@ -245,7 +246,11 @@ class KnowledgeOnlyAgent:
                 with tracer.start_as_current_span(
                     "llm.call", attributes={"llm.component": "knowledge"}
                 ):
-                    response = await llm_to_use.ainvoke(messages)
+                    response = await guarded_ainvoke(
+                        llm_to_use,
+                        messages,
+                        request_kind="knowledge_agent.agent_node",
+                    )
                 record_llm_call_metrics(
                     component="knowledge", llm=llm_with_tools, response=response, start_time=_t0
                 )

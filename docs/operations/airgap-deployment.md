@@ -8,7 +8,7 @@ agencies, and other high-security environments.
 
 The air-gapped deployment uses:
 
-- **Pre-bundled embedding models** - HuggingFace sentence-transformers included in image
+- **Pre-bundled HuggingFace models** - Sentence-transformer embeddings and the default Privacy Filter model are included in the image
 - **External Redis** - Customer provides Redis with RediSearch module
 - **Internal LLM proxy** - Customer provides OpenAI-compatible API endpoint
 - **No runtime downloads** - Everything needed is in the published Docker images
@@ -88,7 +88,7 @@ cd redis-sre-agent
 
 The build script:
 
-1. **Builds the agent Docker image** from `Dockerfile.airgap` with pre-bundled HuggingFace models
+1. **Builds the agent Docker image** from `Dockerfile.airgap` with pre-bundled HuggingFace embedding and PII-remediation models
 2. **Builds the UI Docker image** from `ui/Dockerfile` using the production nginx target
 3. **Exports the images** to portable tarballs
 4. **Creates a complete bundle** with configuration files
@@ -465,9 +465,19 @@ spec:
 
 ## Configuration Reference
 
-### Embedding Models
+### Bundled Models
 
-Two models are pre-bundled in the air-gap image:
+Three models are pre-bundled in the air-gap image:
+
+| Model | Purpose | Notes |
+|-------|---------|-------|
+| `openai/privacy-filter` | Outbound PII detection/remediation | Default local Privacy Filter used by `PII_REMEDIATION_MODEL` |
+| `sentence-transformers/all-MiniLM-L6-v2` | Embeddings | Default local embedding model |
+| `sentence-transformers/all-mpnet-base-v2` | Embeddings | Larger optional local embedding model |
+
+### Embedding Model Details
+
+The bundled embedding models are:
 
 | Model | Dimensions | Size | Quality |
 |-------|------------|------|---------|

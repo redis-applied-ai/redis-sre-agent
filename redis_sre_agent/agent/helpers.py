@@ -70,6 +70,16 @@ def extract_last_ai_response(messages: List[Any], *, terminal_only: bool = False
     return ""
 
 
+def ensure_tool_bound_llm(base_llm: Any, tool_adapters: List[Any]) -> Any:
+    """Bind tool adapters once, reusing already-bound runnables when present."""
+    bound_kwargs = getattr(base_llm, "kwargs", None)
+    if isinstance(bound_kwargs, dict) and bound_kwargs.get("tools"):
+        return base_llm
+    if tool_adapters and hasattr(base_llm, "bind_tools"):
+        return base_llm.bind_tools(tool_adapters)
+    return base_llm
+
+
 def parse_json_maybe_fenced(text: str) -> Any:
     """Parse JSON that may be wrapped in markdown code fences (``` or ```json).
 

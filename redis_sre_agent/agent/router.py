@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from redis_sre_agent.core.llm_helpers import create_nano_llm
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
 from redis_sre_agent.core.targets import get_attached_target_handles_from_context
 
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
@@ -158,7 +159,11 @@ Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
             HumanMessage(content=query_with_context),
         ]
 
-        response = await llm.ainvoke(messages)
+        response = await guarded_ainvoke(
+            llm,
+            messages,
+            request_kind="router.route_to_appropriate_agent",
+        )
         category = response.content.strip().upper()
 
         if "DEEP_TRIAGE" in category:
@@ -215,11 +220,13 @@ Consider the conversation context if provided - a follow-up like "yes" or "check
    Examples: "What are Redis best practices?", "How does Redis replication work?"
 
 Respond with ONLY one word: either "NEEDS_INSTANCE" or "KNOWLEDGE_ONLY"."""
-        response = await llm.ainvoke(
+        response = await guarded_ainvoke(
+            llm,
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"Categorize this query: {query}{context_str}"),
-            ]
+            ],
+            request_kind="router.query_needs_live_redis_scope",
         )
         category = response.content.strip().upper()
         return "NEEDS_INSTANCE" in category

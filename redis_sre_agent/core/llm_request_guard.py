@@ -1,0 +1,592 @@
+"""Helpers for guarding outbound LLM request text with PII remediation."""
+
+from __future__ import annotations
+
+import copy
+import logging
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+from langchain_core.messages import BaseMessage, HumanMessage
+
+from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.pii_remediation import (
+    PIIFinding,
+    PIIRemediationDecision,
+    PIIRemediationMode,
+    PIIRemediationRequest,
+    PIIRemediationResult,
+    PIITextBlock,
+    get_pii_remediator,
+    is_pii_remediation_enabled,
+)
+from redis_sre_agent.observability.pii_remediation_metrics import (
+    decision_value,
+    record_pii_remediation_metrics,
+)
+
+logger = logging.getLogger(__name__)
+
+GuardableMessage = BaseMessage | dict[str, Any]
+GuardablePayload = str | BaseMessage | Sequence[GuardableMessage]
+GuardedPayload = str | BaseMessage | List[GuardableMessage]
+
+
+class PIIRemediationError(RuntimeError):
+    """Base exception for request-guard failures."""
+
+
+class PIIRemediationBlockedError(PIIRemediationError):
+    """Raised when remediation policy blocks an outbound request."""
+
+
+class GuardedMemoizeLLMProxy:
+    """Proxy that preserves guarded outbound calls when passed through memoizers."""
+
+    _sre_guarded_memoize_proxy = True
+
+    def __init__(
+        self,
+        inner_llm: Any,
+        *,
+        request_kind: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        cache_identity_source: Any = None,
+    ) -> None:
+        self._inner_llm = inner_llm
+        self._request_kind = request_kind
+        self._metadata = metadata or {}
+        self._sre_cache_identity_source = cache_identity_source
+
+    async def ainvoke(self, messages):
+        return await guarded_ainvoke(
+            self._inner_llm,
+            messages,
+            request_kind=self._request_kind,
+            metadata=self._metadata,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return getattr(self._inner_llm, name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"{type(self).__name__} and wrapped LLM both missing attribute {name!r}"
+            ) from exc
+
+
+@dataclass(frozen=True)
+class _BlockLocation:
+    block_id: str
+    container: str
+    indexes: Tuple[int, ...]
+    role: str
+    path: str
+
+
+def _mode() -> PIIRemediationMode:
+    raw = str(settings.pii_remediation_mode or "").strip().lower()
+    try:
+        return PIIRemediationMode(raw)
+    except ValueError:
+        return PIIRemediationMode.OFF
+
+
+def _text_part_value(part: Any) -> Optional[str]:
+    if isinstance(part, dict):
+        if part.get("type") == "text" and isinstance(part.get("text"), str):
+            return part["text"]
+        if isinstance(part.get("content"), str):
+            return part["content"]
+    return None
+
+
+def _is_dict_message_sequence(payload: Any) -> bool:
+    return (
+        bool(payload)
+        and isinstance(payload, Sequence)
+        and not isinstance(payload, (str, bytes))
+        and all(isinstance(message, dict) for message in payload)
+    )
+
+
+def _message_role_and_content(message: Any) -> tuple[str, Any]:
+    if isinstance(message, dict):
+        return str(message.get("role") or "user"), message.get("content")
+    return (
+        getattr(message, "type", None) or message.__class__.__name__.lower(),
+        getattr(message, "content", None),
+    )
+
+
+def _iter_message_blocks(
+    messages: Sequence[Any],
+    *,
+    block_prefix: str,
+    string_container: str,
+    part_container: str,
+) -> tuple[List[PIITextBlock], List[_BlockLocation]]:
+    blocks: List[PIITextBlock] = []
+    locations: List[_BlockLocation] = []
+    for idx, message in enumerate(messages):
+        role, content = _message_role_and_content(message)
+        if isinstance(content, str):
+            block_id = f"{block_prefix}:{idx}"
+            blocks.append(
+                PIITextBlock(
+                    block_id=block_id,
+                    path=f"messages[{idx}].content",
+                    role=role,
+                    text=content,
+                )
+            )
+            locations.append(
+                _BlockLocation(
+                    block_id=block_id,
+                    container=string_container,
+                    indexes=(idx,),
+                    role=role,
+                    path=f"messages[{idx}].content",
+                )
+            )
+        elif isinstance(content, list):
+            for part_idx, part in enumerate(content):
+                text = _text_part_value(part)
+                if text is None:
+                    continue
+                block_id = f"{block_prefix}:{idx}:{part_idx}"
+                blocks.append(
+                    PIITextBlock(
+                        block_id=block_id,
+                        path=f"messages[{idx}].content[{part_idx}].text",
+                        role=role,
+                        text=text,
+                    )
+                )
+                locations.append(
+                    _BlockLocation(
+                        block_id=block_id,
+                        container=part_container,
+                        indexes=(idx, part_idx),
+                        role=role,
+                        path=f"messages[{idx}].content[{part_idx}].text",
+                    )
+                )
+    return blocks, locations
+
+
+def _iter_langchain_blocks(
+    messages: Sequence[Any],
+) -> tuple[List[PIITextBlock], List[_BlockLocation]]:
+    return _iter_message_blocks(
+        messages,
+        block_prefix="lc",
+        string_container="langchain_str",
+        part_container="langchain_part",
+    )
+
+
+def _iter_openai_blocks(
+    messages: Sequence[dict[str, Any]],
+) -> tuple[List[PIITextBlock], List[_BlockLocation]]:
+    return _iter_message_blocks(
+        messages,
+        block_prefix="oa",
+        string_container="openai_str",
+        part_container="openai_part",
+    )
+
+
+def _render_langchain_messages(
+    messages: Sequence[Any],
+    locations: Sequence[_BlockLocation],
+    blocks_by_id: Dict[str, PIITextBlock],
+) -> List[Any]:
+    rendered: List[Any] = []
+    part_updates: Dict[tuple[int, int], str] = {}
+    string_updates: Dict[int, str] = {}
+    messages_with_part_updates: set[int] = set()
+
+    for location in locations:
+        block = blocks_by_id.get(location.block_id)
+        if block is None:
+            continue
+        if location.container == "langchain_str":
+            string_updates[location.indexes[0]] = block.text
+        elif location.container == "langchain_part":
+            part_updates[(location.indexes[0], location.indexes[1])] = block.text
+            messages_with_part_updates.add(location.indexes[0])
+
+    for idx, message in enumerate(messages):
+        content = getattr(message, "content", None)
+        if isinstance(message, dict):
+            content = message.get("content")
+        if idx in string_updates:
+            if isinstance(message, dict):
+                new_message = copy.deepcopy(message)
+                new_message["content"] = string_updates[idx]
+                rendered.append(new_message)
+            else:
+                rendered.append(message.model_copy(update={"content": string_updates[idx]}))
+            continue
+        if isinstance(content, list):
+            if idx not in messages_with_part_updates:
+                rendered.append(message)
+                continue
+            new_content = copy.deepcopy(content)
+            for part_idx, part in enumerate(new_content):
+                key = (idx, part_idx)
+                if key not in part_updates or not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    part["text"] = part_updates[key]
+                elif "content" in part and isinstance(part["content"], str):
+                    part["content"] = part_updates[key]
+            if isinstance(message, dict):
+                new_message = copy.deepcopy(message)
+                new_message["content"] = new_content
+                rendered.append(new_message)
+            else:
+                rendered.append(message.model_copy(update={"content": new_content}))
+            continue
+        rendered.append(message)
+    return rendered
+
+
+def _render_openai_messages(
+    messages: Sequence[dict[str, Any]],
+    locations: Sequence[_BlockLocation],
+    blocks_by_id: Dict[str, PIITextBlock],
+) -> List[dict[str, Any]]:
+    rendered = copy.deepcopy(list(messages))
+    for location in locations:
+        block = blocks_by_id.get(location.block_id)
+        if block is None:
+            continue
+        msg_index = location.indexes[0]
+        if location.container == "openai_str":
+            rendered[msg_index]["content"] = block.text
+        elif location.container == "openai_part":
+            part_index = location.indexes[1]
+            part = rendered[msg_index]["content"][part_index]
+            if part.get("type") == "text":
+                part["text"] = block.text
+            elif "content" in part and isinstance(part["content"], str):
+                part["content"] = block.text
+    return rendered
+
+
+def _apply_guard_failure(mode: PIIRemediationMode, exc: Exception) -> None:
+    if mode == PIIRemediationMode.DETECT:
+        return
+    if mode == PIIRemediationMode.REDACT and settings.pii_remediation_fail_open_for_redact:
+        return
+    raise PIIRemediationError(str(exc)) from exc
+
+
+def _split_blocks_for_remediation(
+    blocks: Iterable[PIITextBlock],
+) -> tuple[List[PIITextBlock], Dict[str, PIITextBlock]]:
+    processable: List[PIITextBlock] = []
+    truncated_blocks: Dict[str, PIITextBlock] = {}
+    for block in blocks:
+        text = block.text or ""
+        if len(text) > settings.pii_remediation_max_chars:
+            truncated_blocks[block.block_id] = block
+        else:
+            processable.append(block)
+    return processable, truncated_blocks
+
+
+def _truncation_findings(
+    truncated_blocks: Dict[str, PIITextBlock],
+) -> List[PIIFinding]:
+    return [
+        PIIFinding(
+            category="truncated_input",
+            block_id=block_id,
+            metadata={
+                "truncated_chars": len(block.text or "") - settings.pii_remediation_max_chars,
+            },
+        )
+        for block_id, block in truncated_blocks.items()
+    ]
+
+
+def _detect_mode_scan_blocks(
+    truncated_blocks: Dict[str, PIITextBlock],
+) -> List[PIITextBlock]:
+    scan_limit = settings.pii_remediation_max_chars
+    return [
+        block.model_copy(
+            update={
+                "text": (block.text or "")[:scan_limit],
+                "metadata": {
+                    **block.metadata,
+                    "truncated_for_detection": True,
+                    "original_char_count": len(block.text or ""),
+                    "scanned_char_count": scan_limit,
+                },
+            }
+        )
+        for block in truncated_blocks.values()
+    ]
+
+
+async def _run_remediation(
+    blocks: Sequence[PIITextBlock],
+    *,
+    mode: PIIRemediationMode,
+    request_kind: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> PIIRemediationResult:
+    processable_blocks, truncated_blocks = _split_blocks_for_remediation(blocks)
+    remediation_blocks = list(processable_blocks)
+    if mode == PIIRemediationMode.DETECT and truncated_blocks:
+        remediation_blocks.extend(_detect_mode_scan_blocks(truncated_blocks))
+    started = time.perf_counter()
+    result = PIIRemediationResult(
+        decision=PIIRemediationDecision.ALLOW,
+        blocks=list(remediation_blocks),
+        findings=[],
+        detector_name="guard",
+    )
+    if remediation_blocks:
+        try:
+            result = await get_pii_remediator().remediate(
+                PIIRemediationRequest(
+                    mode=mode,
+                    request_kind=request_kind,
+                    blocks=remediation_blocks,
+                    categories=list(settings.pii_remediation_categories),
+                    metadata=metadata or {},
+                )
+            )
+        except Exception as exc:
+            record_pii_remediation_metrics(
+                request_kind=request_kind,
+                mode=mode.value,
+                decision="error",
+                findings=[],
+                start_time=started,
+                status="error",
+            )
+            logger.warning(
+                "PII remediation failed for %s mode=%s: %s",
+                request_kind,
+                mode.value,
+                exc,
+            )
+            _apply_guard_failure(mode, exc)
+            return PIIRemediationResult(
+                decision=PIIRemediationDecision.ALLOW,
+                blocks=list(blocks),
+                detector_name="guard",
+                reason=str(exc),
+            )
+
+    merged_blocks_by_id = {block.block_id: block for block in blocks}
+    if result.decision == PIIRemediationDecision.REDACTED:
+        merged_blocks_by_id.update({block.block_id: block for block in result.blocks})
+    merged_findings = list(result.findings)
+
+    status = "ok"
+    reason: Optional[str] = result.reason
+    if truncated_blocks:
+        merged_findings.extend(_truncation_findings(truncated_blocks))
+        status = "truncated"
+        truncation_reason = (
+            "One or more text blocks exceeded "
+            f"pii_remediation_max_chars={settings.pii_remediation_max_chars}"
+        )
+        logger.warning(
+            "%s for %s mode=%s truncated_blocks=%d",
+            truncation_reason,
+            request_kind,
+            mode.value,
+            len(truncated_blocks),
+        )
+        fail_closed_for_truncation = mode == PIIRemediationMode.BLOCK or (
+            mode == PIIRemediationMode.REDACT and not settings.pii_remediation_fail_open_for_redact
+        )
+        if fail_closed_for_truncation:
+            final_decision = PIIRemediationDecision.BLOCKED
+            reason = truncation_reason
+        elif result.decision == PIIRemediationDecision.REDACTED:
+            final_decision = PIIRemediationDecision.REDACTED
+            if reason is None:
+                reason = truncation_reason
+        elif result.decision == PIIRemediationDecision.BLOCKED:
+            final_decision = PIIRemediationDecision.BLOCKED
+            if reason is None:
+                reason = truncation_reason
+        else:
+            final_decision = PIIRemediationDecision.ALLOW
+            if reason is None:
+                reason = truncation_reason
+    else:
+        final_decision = result.decision
+
+    changed_text = final_decision == PIIRemediationDecision.REDACTED
+    record_pii_remediation_metrics(
+        request_kind=request_kind,
+        mode=mode.value,
+        decision=decision_value(final_decision),
+        findings=merged_findings,
+        start_time=started,
+        detector_name=result.detector_name,
+        detector_model=result.detector_model,
+        changed_text=changed_text,
+        status=status,
+    )
+    logger.info(
+        "PII remediation request_kind=%s mode=%s decision=%s findings=%d detector=%s model=%s changed_text=%s",
+        request_kind,
+        mode.value,
+        decision_value(final_decision),
+        len(merged_findings),
+        result.detector_name,
+        result.detector_model,
+        changed_text,
+    )
+    if truncated_blocks and final_decision == PIIRemediationDecision.BLOCKED:
+        raise PIIRemediationBlockedError(reason or "PII remediation blocked request")
+
+    return PIIRemediationResult(
+        decision=final_decision,
+        blocks=[merged_blocks_by_id[block.block_id] for block in blocks],
+        findings=merged_findings,
+        detector_name=result.detector_name,
+        detector_model=result.detector_model,
+        reason=reason,
+    )
+
+
+async def guard_langchain_input(
+    payload: GuardablePayload,
+    *,
+    request_kind: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> GuardedPayload:
+    """Return a guarded LangChain payload with PII remediation applied."""
+
+    mode = _mode()
+    if not is_pii_remediation_enabled(mode.value):
+        return list(payload) if isinstance(payload, list) else payload
+
+    if _is_dict_message_sequence(payload):
+        return await guard_openai_chat_messages(
+            payload,
+            request_kind=request_kind,
+            metadata=metadata,
+        )
+
+    if isinstance(payload, str):
+        original_messages: List[BaseMessage] = [HumanMessage(content=payload)]
+        restore = "string"
+    elif isinstance(payload, BaseMessage):
+        original_messages = [payload]
+        restore = "message"
+    else:
+        original_messages = list(payload)
+        restore = "messages"
+
+    blocks, locations = _iter_langchain_blocks(original_messages)
+    if not blocks:
+        return list(payload) if isinstance(payload, list) else payload
+
+    result = await _run_remediation(
+        blocks,
+        mode=mode,
+        request_kind=request_kind,
+        metadata=metadata,
+    )
+
+    if result.decision == PIIRemediationDecision.BLOCKED:
+        raise PIIRemediationBlockedError(result.reason or "PII remediation blocked request")
+
+    if result.decision == PIIRemediationDecision.ALLOW:
+        return list(payload) if isinstance(payload, list) else payload
+
+    rendered = _render_langchain_messages(
+        original_messages,
+        locations,
+        {block.block_id: block for block in result.blocks},
+    )
+    if restore == "string":
+        return str(rendered[0].content or "")
+    if restore == "message":
+        return rendered[0]
+    return rendered
+
+
+async def guard_openai_chat_messages(
+    messages: Sequence[dict[str, Any]],
+    *,
+    request_kind: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> List[dict[str, Any]]:
+    """Return guarded OpenAI chat-completions messages."""
+
+    mode = _mode()
+    original = list(messages)
+    if not is_pii_remediation_enabled(mode.value):
+        return copy.deepcopy(original)
+
+    blocks, locations = _iter_openai_blocks(original)
+    if not blocks:
+        return copy.deepcopy(original)
+
+    result = await _run_remediation(
+        blocks,
+        mode=mode,
+        request_kind=request_kind,
+        metadata=metadata,
+    )
+
+    if result.decision == PIIRemediationDecision.BLOCKED:
+        raise PIIRemediationBlockedError(result.reason or "PII remediation blocked request")
+
+    if result.decision == PIIRemediationDecision.ALLOW:
+        return copy.deepcopy(original)
+
+    return _render_openai_messages(
+        original, locations, {block.block_id: block for block in result.blocks}
+    )
+
+
+async def guarded_ainvoke(
+    llm: Any,
+    payload: GuardablePayload,
+    *,
+    request_kind: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Guard outbound text before calling a LangChain LLM."""
+
+    guarded_payload = await guard_langchain_input(
+        payload,
+        request_kind=request_kind,
+        metadata=metadata,
+    )
+    return await llm.ainvoke(guarded_payload)
+
+
+async def guarded_chat_completions_create(
+    client: Any,
+    *,
+    model: str,
+    messages: Sequence[dict[str, Any]],
+    request_kind: str,
+    metadata: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> Any:
+    """Guard outbound text before calling the OpenAI chat-completions API."""
+
+    guarded_messages = await guard_openai_chat_messages(
+        messages,
+        request_kind=request_kind,
+        metadata=metadata,
+    )
+    return await client.chat.completions.create(model=model, messages=guarded_messages, **kwargs)

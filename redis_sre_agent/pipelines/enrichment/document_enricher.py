@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from redis_sre_agent.core.llm_helpers import create_nano_async_openai_client
+from redis_sre_agent.core.llm_request_guard import guarded_chat_completions_create
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +129,11 @@ class DocumentEnricher:
             }}
             """
 
-            response = await self.client.chat.completions.create(
+            response = await guarded_chat_completions_create(
+                self.client,
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
+                request_kind="document_enricher.semantic_description",
                 max_tokens=150,
                 temperature=0.1,
             )

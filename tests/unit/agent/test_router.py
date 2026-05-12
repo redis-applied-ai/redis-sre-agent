@@ -348,6 +348,27 @@ class TestRouteToAppropriateAgent:
 
             assert result == AgentType.REDIS_CHAT
 
+    async def test_routing_uses_guarded_ainvoke_wrapper(self):
+        """Diagnostic-scope routing should send LLM traffic through the request guard."""
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = "CHAT"
+
+        with (
+            patch("redis_sre_agent.agent.router.create_nano_llm", return_value=mock_llm),
+            patch(
+                "redis_sre_agent.agent.router.guarded_ainvoke",
+                new=AsyncMock(return_value=mock_response),
+            ) as mock_guarded,
+        ):
+            result = await route_to_appropriate_agent(
+                query="Check instance health",
+                context={"instance_id": "test-instance"},
+            )
+
+        assert result == AgentType.REDIS_CHAT
+        assert mock_guarded.await_count == 1
+
 
 class TestFormatConversationContext:
     """Test the format_conversation_context helper function."""

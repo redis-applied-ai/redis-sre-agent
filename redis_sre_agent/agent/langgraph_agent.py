@@ -38,6 +38,7 @@ from ..core.instances import (
     save_instances,
 )
 from ..core.llm_helpers import create_llm, create_mini_llm
+from ..core.llm_request_guard import GuardedMemoizeLLMProxy, guarded_ainvoke
 from ..core.progress import NullEmitter, ProgressEmitter
 from ..core.redis import get_redis_client
 from ..core.targets import (
@@ -439,9 +440,20 @@ Your response (one word only):"""
 
     try:
         if memoize:
-            response = await memoize("instance_type", llm, [HumanMessage(content=prompt)])
+            response = await memoize(
+                "instance_type",
+                GuardedMemoizeLLMProxy(
+                    llm,
+                    request_kind="langgraph_agent.instance_type_detection",
+                ),
+                [HumanMessage(content=prompt)],
+            )
         else:
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            response = await guarded_ainvoke(
+                llm,
+                [HumanMessage(content=prompt)],
+                request_kind="langgraph_agent.instance_type_detection",
+            )
         detected_type = response.content.strip().lower()
 
         # Validate response
@@ -635,16 +647,65 @@ class SRELangGraphAgent:
             # Last resort: non-stable key
             return str(id(messages))
 
+    def _resolve_llm_attr(self, llm: Any, *attr_names: str) -> Any:
+        to_visit = [llm]
+        seen: set[int] = set()
+        while to_visit:
+            current = to_visit.pop(0)
+            if current is None:
+                continue
+            current_id = id(current)
+            if current_id in seen:
+                continue
+            seen.add(current_id)
+
+            for attr_name in attr_names:
+                value = getattr(current, attr_name, None)
+                if value not in (None, ""):
+                    return value
+
+            for wrapper_attr in (
+                "_sre_cache_identity_source",
+                "_inner_llm",
+                "bound",
+                "runnable",
+                "first",
+                "last",
+            ):
+                nested = getattr(current, wrapper_attr, None)
+                if nested is None:
+                    continue
+                if isinstance(nested, (list, tuple)):
+                    to_visit.extend(nested)
+                else:
+                    to_visit.append(nested)
+        return None
+
     async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
+        if getattr(llm, "_sre_guarded_memoize_proxy", False):
+            invoke = llm.ainvoke
+        else:
+
+            async def invoke(payload):
+                return await guarded_ainvoke(
+                    llm,
+                    payload,
+                    request_kind=f"langgraph_agent.{tag}",
+                    metadata={"tag": tag},
+                )
+
         if not self._run_cache_active:
-            return await llm.ainvoke(messages)
-        # LLM objects use different attribute names: model, model_name, or _model
-        model = getattr(llm, "model", None) or getattr(llm, "model_name", None) or "unknown"
-        temperature = getattr(llm, "temperature", 0.0)
+            return await invoke(messages)
+        model = self._resolve_llm_attr(llm, "model", "model_name", "_model")
+        if model in (None, ""):
+            model = f"{llm.__class__.__module__}.{llm.__class__.__qualname__}"
+        temperature = self._resolve_llm_attr(llm, "temperature")
+        if temperature is None:
+            temperature = 0.0
         key = f"{tag}|{model}|{temperature}|{self._messages_cache_key(messages)}"
         if key in self._llm_cache:
             return self._llm_cache[key]
-        resp = await llm.ainvoke(messages)
+        resp = await invoke(messages)
         self._llm_cache[key] = resp
         return resp
 
