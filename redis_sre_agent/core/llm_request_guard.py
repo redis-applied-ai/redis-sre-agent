@@ -68,7 +68,12 @@ class GuardedMemoizeLLMProxy:
         )
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner_llm, name)
+        try:
+            return getattr(self._inner_llm, name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"{type(self).__name__} and wrapped LLM both missing attribute {name!r}"
+            ) from exc
 
 
 @dataclass(frozen=True)

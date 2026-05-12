@@ -421,6 +421,13 @@ async def test_ainvoke_memo_uses_cache_identity_source_for_fresh_proxies(monkeyp
     assert len(agent._llm_cache) == 1
 
 
+def test_guarded_memoize_proxy_missing_attribute_raises_clear_error():
+    proxy = GuardedMemoizeLLMProxy(object(), request_kind="unit.proxy")
+
+    with pytest.raises(AttributeError, match="wrapped LLM both missing attribute 'missing_attr'"):
+        getattr(proxy, "missing_attr")
+
+
 @pytest.mark.asyncio
 @patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_runs_on_risky_patterns(mock_build):

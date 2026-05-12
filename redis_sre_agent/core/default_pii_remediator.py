@@ -6,6 +6,7 @@ import asyncio
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -61,6 +62,10 @@ class DefaultPrivacyFilterPIIRemediator:
         }
         self._pipeline: Any = None
         self._pipeline_lock = threading.RLock()
+        self._executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="pii-remediator",
+        )
 
     def _get_pipeline(self) -> Any:
         with self._pipeline_lock:
@@ -175,9 +180,14 @@ class DefaultPrivacyFilterPIIRemediator:
         start = time.perf_counter()
         spans_by_block: Dict[str, List[_SpanDetection]] = {}
         findings: List[PIIFinding] = []
+        loop = asyncio.get_running_loop()
 
         for block in request.blocks:
-            spans = await asyncio.to_thread(self._detect_spans, block.text or "")
+            spans = await loop.run_in_executor(
+                self._executor,
+                self._detect_spans,
+                block.text or "",
+            )
             spans_by_block[block.block_id] = spans
             for span in spans:
                 findings.append(
