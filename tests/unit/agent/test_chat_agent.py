@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from redis_sre_agent.agent import chat_agent as chat_agent_module
 from redis_sre_agent.agent.chat_agent import (
     CHAT_SYSTEM_PROMPT,
     ChatAgent,
@@ -258,6 +259,205 @@ class TestChatAgentSystemPrompt:
         assert "exact live match" in prompt_lower
         assert "hostname or hostname fragment" in prompt_lower
         assert "analyzer-backed evidence" in prompt_lower
+
+
+class TestSkillContractRuntimeRepair:
+    """Test generic runtime enforcement for retrieved skill contracts."""
+
+    def test_skill_contract_gap_detection_reports_missing_tools_and_output(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "redis-cluster-health-check",
+                    "output_contract": {
+                        "required_order": [
+                            "## Summary",
+                            "## Cluster-level findings",
+                            "## Database-level findings",
+                            "## Skipped Checks",
+                        ],
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?m)^### .+ \([^)]+\)$",
+                                "description": "Include a database subsection heading.",
+                            }
+                        ],
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": [
+                            "analyzer_get_package",
+                            "analyzer_get_package_time_series",
+                        ],
+                        "required_followups": [
+                            "Always fetch cluster-scope time series with interval=5m before finalizing the report."
+                        ],
+                    },
+                },
+            },
+            {
+                "tool_key": "mcp_analyzer_eval_123abc_analyzer_get_package_overview",
+                "name": "analyzer_get_package_overview",
+                "data": {"status": "success"},
+            },
+        ]
+        messages = [
+            HumanMessage(content="Review package pkg-eval-001"),
+            AIMessage(
+                content=(
+                    "# Cluster Health Check: checkout-prod-cluster\n\n"
+                    "**Package ID:** pkg-eval-001\n"
+                    "**Cluster:** checkout-prod-cluster\n\n"
+                    "## Summary\nsummary\n"
+                    "## Cluster-level findings\ncluster\n"
+                    "## Database-level findings\nno subsection yet\n"
+                    "## Skipped Checks\nnone"
+                )
+            ),
+        ]
+
+        gaps = chat_agent_module._collect_skill_contract_gaps(envelopes, messages)
+
+        assert len(gaps) == 1
+        assert gaps[0]["missing_tools"] == [
+            "analyzer_get_package",
+            "analyzer_get_package_time_series",
+        ]
+        assert "Include a database subsection heading." in gaps[0]["missing_output"]
+        assert gaps[0]["required_followups"] == [
+            "Always fetch cluster-scope time series with interval=5m before finalizing the report."
+        ]
+
+    def test_build_skill_contract_repair_message_mentions_missing_requirements(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "redis-cluster-health-check",
+                    "output_contract": {
+                        "required_order": ["## Summary", "## Skipped Checks"],
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Skipped Checks\s*$",
+                                "description": "End the document after the `## Skipped Checks` section without adding a footer.",
+                            }
+                        ],
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["analyzer_get_package_time_series"],
+                        "required_followups": [
+                            "Always fetch cluster-scope time series with interval=5m before finalizing the report."
+                        ],
+                    },
+                },
+            }
+        ]
+        messages = [
+            HumanMessage(content="Review package"),
+            AIMessage(content="## Summary\nBrief summary\n\n## Skipped Checks\nNone\n\nSkill used: redis-cluster-health-check"),
+        ]
+
+        repair = chat_agent_module._build_skill_contract_repair_message(envelopes, messages)
+
+        assert repair is not None
+        content = str(repair.content)
+        assert "Do not finalize yet" in content
+        assert "`analyzer_get_package_time_series`" in content
+        assert "Always fetch cluster-scope time series with interval=5m before finalizing the report." in content
+        assert "End the document after the `## Skipped Checks` section without adding a footer." in content
+
+    def test_skill_contract_needs_followup_only_when_tools_are_missing(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "redis-cluster-health-check",
+                    "output_contract": {
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Skipped Checks\s*$",
+                                "description": "End the document after the `## Skipped Checks` section without adding a footer.",
+                            }
+                        ]
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["analyzer_get_package"],
+                    },
+                },
+            },
+            {
+                "tool_key": "mcp_analyzer_eval_123abc_analyzer_get_package",
+                "name": "analyzer_get_package",
+                "data": {"status": "success"},
+            },
+        ]
+        messages = [
+            HumanMessage(content="Review package"),
+            AIMessage(content="## Skipped Checks\nNone\n\nSkill used: redis-cluster-health-check"),
+        ]
+
+        assert (
+            chat_agent_module._skill_contract_needs_followup(envelopes, messages) is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_repair_response_to_skill_contract_uses_llm_for_output_only_rewrite(self):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent.llm = AsyncMock(
+            ainvoke=AsyncMock(
+                return_value=AIMessage(
+                    content=(
+                        "# Cluster Health Check: checkout-prod-cluster\n\n"
+                        "**Package ID:** pkg-eval-001\n"
+                        "**Cluster:** checkout-prod-cluster\n\n"
+                        "## Summary\nok\n\n"
+                        "## Skipped Checks\nnone"
+                    )
+                )
+            )
+        )
+
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "redis-cluster-health-check",
+                    "output_contract": {
+                        "required_order": ["## Summary", "## Skipped Checks"],
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Skipped Checks\s*$",
+                                "description": "End the document after the `## Skipped Checks` section without adding a footer.",
+                            }
+                        ],
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["analyzer_get_package"],
+                    },
+                },
+            },
+            {
+                "tool_key": "mcp_analyzer_eval_123abc_analyzer_get_package",
+                "name": "analyzer_get_package",
+                "data": {"status": "success"},
+            },
+        ]
+        original = "## Summary\nok\n\n## Skipped Checks\nnone\n\nSkill used: footer"
+        messages = [HumanMessage(content="Review package"), AIMessage(content=original)]
+
+        repaired = await agent._repair_response_to_skill_contract(
+            response_text=original,
+            tool_envelopes=envelopes,
+            messages=messages,
+        )
+
+        assert repaired.startswith("# Cluster Health Check: checkout-prod-cluster")
+        assert repaired.endswith("## Skipped Checks\nnone")
+        agent.llm.ainvoke.assert_awaited_once()
 
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
