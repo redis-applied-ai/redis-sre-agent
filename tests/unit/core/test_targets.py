@@ -506,6 +506,12 @@ async def test_bind_target_matches_with_thread_returns_materialized_attached_sco
             Thread(
                 thread_id="thread-1",
                 messages=[],
+                context=build_bound_target_scope_context([existing_binding], generation=2),
+                metadata=ThreadMetadata(),
+            ),
+            Thread(
+                thread_id="thread-1",
+                messages=[],
                 context=updated_context,
                 metadata=ThreadMetadata(),
             ),

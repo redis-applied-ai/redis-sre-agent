@@ -322,7 +322,9 @@ class TestPersistTurn:
         ]
 
     @pytest.mark.asyncio
-    async def test_persist_turn_routes_inseparable_mixed_sentence_to_user_scope(self, memory_settings):
+    async def test_persist_turn_routes_inseparable_mixed_sentence_to_user_scope(
+        self, memory_settings
+    ):
         user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
         asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
         mock_client = AsyncMock()

@@ -188,7 +188,9 @@ def _resolve_scope(state: Any) -> Dict[str, Any]:
     referenced_assets: List[Dict[str, Any]] = []
     if isinstance(raw_refs, list):
         for entry in raw_refs:
-            if isinstance(entry, dict) and (entry.get("instance_id") or entry.get("cluster_id") or entry.get("target_handle")):
+            if isinstance(entry, dict) and (
+                entry.get("instance_id") or entry.get("cluster_id") or entry.get("target_handle")
+            ):
                 referenced_assets.append(entry)
 
     return {
@@ -203,6 +205,7 @@ async def _resolve_handle_to_ids(target_handle: str) -> tuple[Optional[str], Opt
     """Look up instance_id/cluster_id for a target_handle via the handle store."""
     try:
         from redis_sre_agent.core.targets import get_target_handle_store
+
         store = get_target_handle_store()
         record = await store.get_record(target_handle)
         if record is None:
