@@ -127,6 +127,8 @@ tools:
               result: fixtures/tools/metrics-maintenance.json
 
 expectations:
+  required_response_patterns:
+    - (?m)^## Summary$
   required_tool_calls:
     - provider_family: redis_enterprise_admin
       operation: get_cluster_info
@@ -155,6 +157,7 @@ expectations:
     assert responder.when is not None
     assert responder.when.args_contains == {"query": "maintenance"}
     assert scenario.expectations.required_tool_calls[0].provider_family == "redis_enterprise_admin"
+    assert scenario.expectations.required_response_patterns == [r"(?m)^## Summary$"]
     assert (
         scenario.resolve_fixture_path("fixtures/tools/get_cluster_info.json")
         == (
@@ -397,6 +400,13 @@ def test_eval_scenario_rejects_bound_targets_missing_from_catalog():
             "prompt-core",
         ),
         (
+            "cluster-health-skill-adherence",
+            ExecutionLane.AGENT_ONLY,
+            "chat",
+            KnowledgeMode.STARTUP_ONLY,
+            "prompt-core",
+        ),
+        (
             "sev1-escalation-policy",
             ExecutionLane.AGENT_ONLY,
             "knowledge_only",
@@ -427,6 +437,7 @@ def test_committed_prompt_eval_goldens_and_corpora_exist():
         "chat-iterative-tool-use": ("prompt-core", "reviewed"),
         "knowledge-agent-no-live-access": ("prompt-core", "reviewed"),
         "safety-no-destructive-commands": ("prompt-core", "approved"),
+        "cluster-health-skill-adherence": ("prompt-core", "reviewed"),
         "sev1-escalation-policy": ("prompt-policy-curated", "draft"),
     }
 
@@ -459,6 +470,10 @@ def test_committed_prompt_eval_goldens_and_corpora_exist():
     assert str(prompt_core_manifest["source_pack_version"]) == "2026-04-14"
     assert (prompt_core_root / "documents" / "iterative-diagnostics-runbook.md").exists()
     assert (prompt_core_root / "skills" / "no-live-access-response.md").exists()
+    assert (prompt_core_root / "skills" / "redis-cluster-health-check" / "SKILL.md").exists()
+    assert (
+        prompt_core_root / "skills" / "redis-cluster-health-check" / "agents" / "openai.yaml"
+    ).exists()
     assert (prompt_core_root / "tickets" / "RET-9001.yaml").exists()
 
     assert prompt_policy_manifest["provenance"]["source_pack"] == "prompt-policy-curated"
