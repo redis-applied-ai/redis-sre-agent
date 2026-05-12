@@ -17,6 +17,11 @@ from redis_sre_agent.skills.backend import (
     normalize_skill_search_type,
     unsupported_skill_search_type_result,
 )
+from redis_sre_agent.skills.contracts import (
+    build_contract_summary,
+    extract_output_contract,
+    extract_workflow_contract,
+)
 
 try:
     import httpx
@@ -771,6 +776,14 @@ class AFSWorkspaceSkillBackend:
                 scripts.append(normalized)
             elif normalized["kind"] == "asset":
                 assets.append(normalized)
+        ui_metadata = skill.get("uiMetadata")
+        if not isinstance(ui_metadata, Mapping):
+            ui_metadata = skill.get("ui_metadata")
+        if not isinstance(ui_metadata, Mapping):
+            ui_metadata = {}
+        ui_metadata = dict(ui_metadata)
+        output_contract = extract_output_contract(ui_metadata)
+        workflow_contract = extract_workflow_contract(ui_metadata)
         return {
             "skill_name": str(skill.get("skillSlug", default_skill_name)).strip()
             or default_skill_name,
@@ -779,11 +792,16 @@ class AFSWorkspaceSkillBackend:
             "summary": str(skill.get("description", "")).strip(),
             "version": str(skill.get("version", default_version or "v1")).strip() or "v1",
             "content": entrypoint_content,
+            "full_content": entrypoint_content,
             "protocol": "agent_skills_v1",
             "backend_kind": "afs_workspace",
             "references": references,
             "scripts": scripts,
             "assets": assets,
+            "ui_metadata": ui_metadata,
+            "output_contract": output_contract,
+            "workflow_contract": workflow_contract,
+            "contract_summary": build_contract_summary(output_contract, workflow_contract),
         }
 
     @staticmethod
