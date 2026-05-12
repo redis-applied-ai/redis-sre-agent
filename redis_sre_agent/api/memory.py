@@ -241,8 +241,17 @@ async def get_thread_memory(
     user_offset: int = Query(default=0, ge=0),
     asset_limit: int = Query(default=50, ge=1, le=200),
     asset_offset: int = Query(default=0, ge=0),
+    asset_instance_id: Optional[str] = Query(default=None),
+    asset_cluster_id: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
-    """List in-scope user and asset memories for a given thread."""
+    """List in-scope user and asset memories for a given thread.
+
+    When `asset_instance_id` or `asset_cluster_id` is supplied, only that
+    one resolved asset scope is paginated and returned (so per-scope "load
+    more" works correctly when multiple asset scopes exist). The
+    `asset_offset` then applies to that specific scope. Without those
+    params, all in-scope assets are returned at `asset_offset=0`.
+    """
 
     service = AgentMemoryService()
     if not service.enabled:
@@ -273,12 +282,19 @@ async def get_thread_memory(
             "asset_scopes": [],
         }
 
+    target_asset_key: Optional[tuple[Optional[str], Optional[str]]] = None
+    if asset_instance_id or asset_cluster_id:
+        target_asset_key = (asset_instance_id or None, asset_cluster_id or None)
+
     user_section: Optional[Dict[str, Any]] = None
     asset_scopes: List[Dict[str, Any]] = []
 
     try:
         async with service.open_session() as ams_session:
-            if user_id:
+            # When the caller is paginating a single asset scope, skip
+            # re-fetching the user scope to keep the request lean and
+            # avoid double-counting working memory.
+            if user_id and target_asset_key is None:
                 user_long_term = await _list_user_long_term(
                     ams_session,
                     user_id=user_id,
@@ -293,17 +309,19 @@ async def get_thread_memory(
                 user_section = _serialize_section(long_term=user_long_term, working=user_working)
 
             if has_declared_asset:
-                label = instance_id or cluster_id or "asset"
-                entry = await _load_asset_scope_entry(
-                    ams_session,
-                    label=label,
-                    instance_id=instance_id,
-                    cluster_id=cluster_id,
-                    thread_id=thread_id,
-                    limit=asset_limit,
-                    offset=asset_offset,
-                )
-                asset_scopes.append(entry)
+                declared_key = (instance_id, cluster_id)
+                if target_asset_key is None or target_asset_key == declared_key:
+                    label = instance_id or cluster_id or "asset"
+                    entry = await _load_asset_scope_entry(
+                        ams_session,
+                        label=label,
+                        instance_id=instance_id,
+                        cluster_id=cluster_id,
+                        thread_id=thread_id,
+                        limit=asset_limit,
+                        offset=asset_offset if target_asset_key is not None else 0,
+                    )
+                    asset_scopes.append(entry)
 
             # Deduplicate referenced assets against the declared scope.
             declared_key = (instance_id, cluster_id)
@@ -325,6 +343,9 @@ async def get_thread_memory(
                     continue
                 seen_keys.add(key)
 
+                if target_asset_key is not None and target_asset_key != key:
+                    continue
+
                 label = ref.get("label") or ref_instance or ref_cluster or "asset"
                 entry = await _load_asset_scope_entry(
                     ams_session,
@@ -333,7 +354,7 @@ async def get_thread_memory(
                     cluster_id=ref_cluster,
                     thread_id=thread_id,
                     limit=asset_limit,
-                    offset=asset_offset,
+                    offset=asset_offset if target_asset_key is not None else 0,
                 )
                 asset_scopes.append(entry)
 

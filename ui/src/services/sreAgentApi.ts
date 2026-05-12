@@ -394,6 +394,11 @@ export interface ThreadMemoryParams {
   userOffset?: number;
   assetLimit?: number;
   assetOffset?: number;
+  // Identify a single asset scope to paginate. Required when assetOffset > 0
+  // so the offset applies to the correct scope instead of all asset scopes
+  // uniformly.
+  assetInstanceId?: string;
+  assetClusterId?: string;
 }
 
 class SREAgentAPI {
@@ -1546,6 +1551,10 @@ class SREAgentAPI {
       query.set("asset_limit", String(params.assetLimit));
     if (params?.assetOffset != null)
       query.set("asset_offset", String(params.assetOffset));
+    if (params?.assetInstanceId)
+      query.set("asset_instance_id", params.assetInstanceId);
+    if (params?.assetClusterId)
+      query.set("asset_cluster_id", params.assetClusterId);
     const qs = query.toString();
     const url = `${this.tasksBaseUrl}/memory/thread/${threadId}${qs ? `?${qs}` : ""}`;
     const response = await fetch(url);

@@ -216,26 +216,43 @@ const MemoryPanel = ({ threadId, onClose, refreshKey }: MemoryPanelProps) => {
 
   const loadMoreAssetAt = (idx: number) => async () => {
     if (!threadId || !data?.asset_scopes?.[idx]) return;
-    const offset = data.asset_scopes[idx].long_term.next_offset;
+    const section = data.asset_scopes[idx];
+    const offset = section.long_term.next_offset;
     if (offset == null) return;
+    // Pin the response to this exact asset scope so the offset can't bleed
+    // into other scopes and array-index drift can't merge mismatched items.
+    if (!section.instance_id && !section.cluster_id) return;
+    const targetInstanceId = section.instance_id ?? undefined;
+    const targetClusterId = section.cluster_id ?? undefined;
     setLoadingMoreAsset((prev) => ({ ...prev, [idx]: true }));
     try {
       const next = await sreAgentApi.getThreadMemory(threadId, {
         assetLimit: PAGE_SIZE,
         assetOffset: offset,
+        assetInstanceId: targetInstanceId,
+        assetClusterId: targetClusterId,
       });
-      const nextSection = next.asset_scopes?.[idx];
+      const nextSection = next.asset_scopes?.find(
+        (s) =>
+          (s.instance_id ?? null) === (targetInstanceId ?? null) &&
+          (s.cluster_id ?? null) === (targetClusterId ?? null),
+      );
       setData((prev) => {
         if (!prev || !nextSection) return prev;
-        const updated = [...prev.asset_scopes];
-        updated[idx] = {
-          ...updated[idx],
-          long_term: {
-            items: [...updated[idx].long_term.items, ...nextSection.long_term.items],
-            total: nextSection.long_term.total,
-            next_offset: nextSection.long_term.next_offset,
-          },
-        };
+        const updated = prev.asset_scopes.map((existing) => {
+          const matches =
+            (existing.instance_id ?? null) === (targetInstanceId ?? null) &&
+            (existing.cluster_id ?? null) === (targetClusterId ?? null);
+          if (!matches) return existing;
+          return {
+            ...existing,
+            long_term: {
+              items: [...existing.long_term.items, ...nextSection.long_term.items],
+              total: nextSection.long_term.total,
+              next_offset: nextSection.long_term.next_offset,
+            },
+          };
+        });
         return { ...prev, asset_scopes: updated };
       });
     } catch (err: any) {
