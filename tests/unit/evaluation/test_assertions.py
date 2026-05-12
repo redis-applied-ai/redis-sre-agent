@@ -306,6 +306,134 @@ def test_score_structured_assertions_infers_re_admin_alias_from_concrete_name():
     assert results.required_tool_calls[1].status.value == "passed"
 
 
+def test_score_structured_assertions_infers_mcp_identity_from_concrete_name():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "assertion-inferred-mcp-identity",
+            "name": "Assertion inferred MCP identity",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "agent_only", "agent": "chat", "query": "Review package."},
+            "tools": {
+                "mcp_servers": {
+                    "analyzer_eval": {
+                        "capability": "diagnostics",
+                        "tools": {
+                            "analyzer_get_package": {"result": {"ok": True}},
+                            "analyzer_get_package_time_series": {"result": {"ok": True}},
+                        },
+                    }
+                }
+            },
+            "expectations": {
+                "required_tool_calls": [
+                    {
+                        "provider_family": "mcp",
+                        "server_name": "analyzer_eval",
+                        "operation": "analyzer_get_package",
+                    },
+                    {
+                        "provider_family": "mcp",
+                        "server_name": "analyzer_eval",
+                        "operation": "analyzer_get_package_time_series",
+                    },
+                ]
+            },
+        }
+    )
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[
+            {
+                "concrete_name": "mcp_analyzer_eval_deadbeef_analyzer_get_package",
+                "status": "success",
+                "args": {"package_id": "pkg-1"},
+            },
+            {
+                "concrete_name": "mcp_analyzer_eval_deadbeef_analyzer_get_package_time_series",
+                "status": "success",
+                "args": {"package_id": "pkg-1", "scope": "cluster"},
+            },
+        ],
+    )
+
+    assert results.required_tool_calls[0].status.value == "passed"
+    assert results.required_tool_calls[1].status.value == "passed"
+
+
+def test_score_structured_assertions_checks_required_response_patterns():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "assertion-response-patterns",
+            "name": "Assertion response patterns",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "agent_only", "agent": "chat", "query": "Write the report."},
+            "expectations": {
+                "required_response_patterns": [
+                    r"(?m)^# Cluster Health Check: .+$",
+                    r"(?m)^## Summary$",
+                    r"(?m)^## Skipped Checks$",
+                ]
+            },
+        }
+    )
+
+    results = score_structured_assertions(
+        scenario,
+        final_answer=(
+            "# Cluster Health Check: checkout-prod\n\n"
+            "## Summary\n\n"
+            "All good.\n\n"
+            "## Skipped Checks\n"
+        ),
+    )
+
+    assert [row.status.value for row in results.required_response_patterns] == [
+        "passed",
+        "passed",
+        "passed",
+    ]
+
+
+def test_score_structured_assertions_fails_missing_required_response_patterns():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "assertion-response-patterns-missing",
+            "name": "Assertion response patterns missing",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "agent_only", "agent": "chat", "query": "Write the report."},
+            "expectations": {
+                "required_response_patterns": [
+                    r"(?m)^## Node-level findings$",
+                ]
+            },
+        }
+    )
+
+    results = score_structured_assertions(
+        scenario,
+        final_answer="# Cluster Health Check: checkout-prod\n\n## Summary\n",
+    )
+
+    assert results.required_response_patterns[0].status.value == "failed"
+    assert results.all_passed is False
+
+
 def test_score_structured_assertions_normalizes_routing_aliases():
     scenario = _scenario().model_copy(
         update={

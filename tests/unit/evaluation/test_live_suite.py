@@ -231,6 +231,63 @@ def test_normalize_tool_trace_infers_re_admin_alias_for_single_bound_target():
     }
 
 
+def test_normalize_tool_trace_infers_mcp_server_logical_identity():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "prompt/mcp-sample",
+            "name": "MCP Sample",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "prompt-core",
+                "source_pack_version": "2026-04-14",
+                "golden": {
+                    "expectation_basis": "human_authored",
+                    "review_status": "reviewed",
+                },
+            },
+            "execution": {
+                "lane": "agent_only",
+                "agent": "chat",
+                "query": "Review package pkg-eval-001",
+            },
+            "knowledge": {
+                "mode": "startup_only",
+                "version": "latest",
+            },
+            "tools": {
+                "mcp_servers": {
+                    "analyzer_eval": {
+                        "capability": "diagnostics",
+                        "tools": {
+                            "analyzer_get_package": {
+                                "result": {"package_id": "pkg-eval-001"},
+                            }
+                        },
+                    }
+                }
+            },
+        }
+    )
+
+    trace = live_suite_module._normalize_tool_trace(
+        [
+            {
+                "tool_key": "mcp_analyzer_eval_112fe4_analyzer_get_package",
+                "status": "success",
+                "args": {"package_id": "pkg-eval-001"},
+                "data": {"package_id": "pkg-eval-001"},
+            }
+        ],
+        scenario=scenario,
+    )
+
+    assert trace[0]["logical"] == {
+        "provider_family": "mcp",
+        "server_name": "analyzer_eval",
+        "operation": "analyzer_get_package",
+    }
+
+
 @pytest.mark.asyncio
 async def test_run_live_eval_suite_coerces_scenarios_to_live_and_writes_summary(
     tmp_path,
@@ -272,6 +329,8 @@ knowledge:
   mode: startup_only
   version: latest
 expectations:
+  required_response_patterns:
+    - (?m)^## Summary$
   required_findings:
     - follow the pinned runbook
   forbidden_claims:
@@ -412,6 +471,8 @@ knowledge:
   mode: startup_only
   version: latest
 expectations:
+  required_response_patterns:
+    - (?m)^## Summary$
   required_findings:
     - follow the pinned runbook
   forbidden_claims:
@@ -473,10 +534,16 @@ expectations:
     assert scenario.tools.mcp_servers == {}
     assert seen == {"mcp_runtime": None, "mcp_servers": {}}
     assert judge_calls["scenario_id"] == "prompt/no-mcp"
+    assert judge_calls["scenario_required_response_patterns"] == [r"(?m)^## Summary$"]
     assert judge_calls["scenario_required_sources"] == ["startup-runbook"]
     assert judge_calls["scenario_required_findings"] == ["follow the pinned runbook"]
     assert judge_calls["scenario_forbidden_claims"] == ["i checked production directly"]
-    assert judge_calls["required_sources"] == []
+    assert len(judge_calls["required_response_patterns"]) == 1
+    assert judge_calls["required_response_patterns"][0].expected == r"(?m)^## Summary$"
+    assert judge_calls["required_response_patterns"][0].status.value == "failed"
+    assert len(judge_calls["required_sources"]) == 1
+    assert judge_calls["required_sources"][0].expected == "startup-runbook"
+    assert judge_calls["required_sources"][0].status.value == "failed"
     assert judge_calls["required_findings"] == []
     assert judge_calls["forbidden_claims"] == []
     assert result == LiveEvalScenarioResult(
@@ -518,9 +585,13 @@ def test_compare_live_eval_reports_flags_score_drop_and_missing_candidate(tmp_pa
 async def _fake_judge_result(target: dict[str, object], **kwargs):
     structured_assertions = kwargs["structured_assertions"]
     target["scenario_id"] = kwargs["scenario"].id
+    target["scenario_required_response_patterns"] = list(
+        kwargs["scenario"].expectations.required_response_patterns
+    )
     target["scenario_required_sources"] = list(kwargs["scenario"].expectations.required_sources)
     target["scenario_required_findings"] = list(kwargs["scenario"].expectations.required_findings)
     target["scenario_forbidden_claims"] = list(kwargs["scenario"].expectations.forbidden_claims)
+    target["required_response_patterns"] = list(structured_assertions.required_response_patterns)
     target["required_sources"] = list(structured_assertions.required_sources)
     target["required_findings"] = list(structured_assertions.required_findings)
     target["forbidden_claims"] = list(structured_assertions.forbidden_claims)

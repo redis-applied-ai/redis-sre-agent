@@ -101,6 +101,7 @@ def _normalize_assertion_payload(payload: dict) -> dict:
         ("chat-iterative-tool-use", "redis_chat", KnowledgeMode.FULL, "prompt-core"),
         ("knowledge-agent-no-live-access", "knowledge_only", KnowledgeMode.FULL, "prompt-core"),
         ("safety-no-destructive-commands", "chat", KnowledgeMode.STARTUP_ONLY, "prompt-core"),
+        ("cluster-health-skill-adherence", "chat", KnowledgeMode.STARTUP_ONLY, "prompt-core"),
         (
             "target-discovery-instance-evictions",
             "redis_chat",
@@ -255,6 +256,52 @@ async def test_knowledge_agent_prompt_scenario_materializes_startup_context():
 
 
 @pytest.mark.asyncio
+async def test_cluster_health_prompt_scenario_materializes_skill_and_drilldown_expectations():
+    scenario = load_eval_scenario(
+        scenario_manifest_path("prompt", "cluster-health-skill-adherence")
+    )
+    backend = build_fixture_knowledge_backend(scenario)
+
+    startup_context = await build_startup_knowledge_context(
+        version=scenario.knowledge.version,
+        available_tools=[],
+        knowledge_backend=backend,
+    )
+
+    envelopes = {
+        envelope["tool_key"]: envelope
+        for envelope in getattr(startup_context, "internal_tool_envelopes", [])
+    }
+    assert "knowledge.startup_skills_check" in envelopes
+    assert {
+        result["document_hash"]
+        for result in envelopes["knowledge.startup_skills_check"]["data"]["results"]
+    } >= {"redis-cluster-health-check"}
+
+    required_ops = {
+        expected.operation
+        for expected in scenario.expectations.required_tool_calls
+        if expected.server_name == "analyzer_eval"
+    }
+    assert "analyzer_get_database_slowlog" in required_ops
+    assert "analyzer_get_package_time_series" in required_ops
+    assert scenario.expectations.required_sources == ["redis-cluster-health-check"]
+    assert scenario.expectations.required_response_patterns == [
+        r"(?s)^# Cluster Health Check: .+?\n\n\*\*Package ID:\*\* .+?\n\*\*Cluster:\*\* .+?\n\*\*Software version:\*\* .+?\n\*\*Nodes:\*\* .+?\n\*\*Databases:\*\* .+?\n\*\*Analysis date:\*\* .+?\n\n## Summary\n.+?## Cluster-level findings\n.+?## Node-level findings\n.+?## Database-level findings\n.+?## Common Issues Rollup\n.+?## TAM Manual Review Required\n.+?## Skipped Checks\s*$",
+        r"(?m)^### orders-cache \(bdb-101\)$",
+        r"(?m)^### Server Side$",
+        r"(?m)^### Client Side$",
+        r"(?m)^### Operational$",
+        r"(?m)^- \*\*[^*]+\*\*: .+",
+    ]
+    assert scenario.execution.max_tool_steps == 16
+    time_series_schema = scenario.tools.mcp_servers["analyzer_eval"].tools[
+        "analyzer_get_package_time_series"
+    ].input_schema
+    assert time_series_schema["properties"]["node_id"]["type"] == "string"
+
+
+@pytest.mark.asyncio
 async def test_knowledge_agent_prompt_scenario_uses_agent_only_harness():
     scenario = load_eval_scenario(
         scenario_manifest_path("prompt", "knowledge-agent-no-live-access")
@@ -295,6 +342,9 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         scenario_manifest_path("prompt", "knowledge-agent-no-live-access")
     )
     safety = load_eval_scenario(scenario_manifest_path("prompt", "safety-no-destructive-commands"))
+    cluster_health = load_eval_scenario(
+        scenario_manifest_path("prompt", "cluster-health-skill-adherence")
+    )
     sev1 = load_eval_scenario(scenario_manifest_path("prompt", "sev1-escalation-policy"))
     target_instance = load_eval_scenario(
         scenario_manifest_path("prompt", "target-discovery-instance-evictions")
@@ -322,6 +372,13 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
     assert knowledge_only.expectations.required_sources == ["no-live-instance-claims", "RET-9001"]
     assert safety.expectations.forbidden_claims == ["run flushall immediately"]
     assert safety.expectations.required_sources == ["destructive-commands-policy"]
+    assert cluster_health.expectations.required_sources == ["redis-cluster-health-check"]
+    assert cluster_health.expectations.required_response_patterns[0].startswith(r"(?s)^# Cluster Health Check:")
+    assert cluster_health.execution.max_tool_steps == 16
+    assert cluster_health.expectations.required_tool_calls[0].server_name == "analyzer_eval"
+    assert cluster_health.expectations.required_tool_calls[-1].operation == (
+        "analyzer_get_database_slowlog"
+    )
     assert sev1.expectations.required_findings == [
         "escalate immediately",
         "page the incident commander",
@@ -354,6 +411,7 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         "chat-iterative-tool-use": "prompt-core",
         "knowledge-agent-no-live-access": "prompt-core",
         "safety-no-destructive-commands": "prompt-core",
+        "cluster-health-skill-adherence": "prompt-core",
         "target-discovery-instance-evictions": "prompt-core",
         "target-discovery-cluster-database-list": "prompt-core",
         "target-discovery-ambiguous-cache": "prompt-core",
@@ -397,6 +455,10 @@ def test_prompt_scenario_corpora_ship_authoritative_manifests_and_core_fixtures(
     assert _normalize_loaded_date(prompt_core_manifest["source_pack_version"]) == "2026-04-14"
     assert (prompt_core_root / "documents" / "iterative-diagnostics-runbook.md").exists()
     assert (prompt_core_root / "skills" / "no-live-access-response.md").exists()
+    assert (prompt_core_root / "skills" / "redis-cluster-health-check" / "SKILL.md").exists()
+    assert (
+        prompt_core_root / "skills" / "redis-cluster-health-check" / "agents" / "openai.yaml"
+    ).exists()
     assert (prompt_core_root / "tickets" / "RET-9001.yaml").exists()
 
     prompt_policy_provenance = prompt_policy_manifest["provenance"]

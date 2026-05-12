@@ -347,7 +347,7 @@ def _infer_live_trace_logical_identity(
             "operation": "pinned_context",
         }
 
-    candidate_operations: list[tuple[int, str, str]] = []
+    candidate_operations: list[tuple[int, str, str, str | None]] = []
     for provider_family, operation_map in scenario.tools.providers.items():
         raw_provider = str(provider_family or "").strip().lower().replace("-", "_")
         normalized_provider = normalize_provider_family(raw_provider)
@@ -361,13 +361,28 @@ def _infer_live_trace_logical_identity(
             normalized_operation = str(operation or "").strip().lower().replace("-", "_")
             if normalized_name.endswith(f"_{normalized_operation}"):
                 candidate_operations.append(
-                    (len(normalized_operation), normalized_provider, normalized_operation)
+                    (len(normalized_operation), normalized_provider, normalized_operation, None)
+                )
+
+    for server_name, server_config in scenario.tools.mcp_servers.items():
+        normalized_server = str(server_name or "").strip().lower().replace("-", "_")
+        if not normalized_server:
+            continue
+        if not normalized_name.startswith(f"mcp_{normalized_server}_"):
+            continue
+        for operation in server_config.tools:
+            normalized_operation = str(operation or "").strip().lower().replace("-", "_")
+            if normalized_name.endswith(f"_{normalized_operation}"):
+                candidate_operations.append(
+                    (len(normalized_operation), "mcp", normalized_operation, normalized_server)
                 )
 
     if not candidate_operations:
         return None
 
-    _length, provider_family, operation = max(candidate_operations, key=lambda item: item[0])
+    _length, provider_family, operation, server_name = max(
+        candidate_operations, key=lambda item: item[0]
+    )
     target_handle = (
         scenario.scope.bound_targets[0] if len(scenario.scope.bound_targets) == 1 else None
     )
@@ -375,7 +390,9 @@ def _infer_live_trace_logical_identity(
         "provider_family": provider_family,
         "operation": operation,
     }
-    if target_handle and provider_family not in {
+    if server_name is not None:
+        logical_identity["server_name"] = server_name
+    elif target_handle and provider_family not in {
         "knowledge",
         "mcp",
         "target_discovery",
@@ -446,14 +463,13 @@ def _mechanical_assertion_scenario(scenario: EvalScenario) -> EvalScenario:
     """Drop free-form text assertions for live suites.
 
     Live-model evals should use hard assertions only for mechanical outputs
-    such as tool calls and routing. Text quality, semantic correctness, and
-    retrieval/source selection belong in the judge path because they depend on
-    live-model wording and query formulation.
+    such as tool calls, retrieved sources, and routing. Text quality,
+    semantic correctness, and narrative wording belong in the judge path
+    because they depend on live-model phrasing and query formulation.
     """
 
     expectations = scenario.expectations.model_copy(
         update={
-            "required_sources": [],
             "required_findings": [],
             "forbidden_claims": [],
         }
