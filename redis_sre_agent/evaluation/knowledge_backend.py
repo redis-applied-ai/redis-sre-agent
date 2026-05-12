@@ -14,6 +14,10 @@ import yaml
 
 from redis_sre_agent.evaluation.injection import EvalKnowledgeBackend
 from redis_sre_agent.evaluation.scenarios import EvalScenario
+from redis_sre_agent.skills.backend import (
+    normalize_skill_search_type,
+    unsupported_skill_search_type_result,
+)
 from redis_sre_agent.skills.discovery import find_skill_package_root, load_skill_package
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
@@ -565,11 +569,25 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
         limit: int = 20,
         offset: int = 0,
         version: Optional[str] = "latest",
+        search_type: Optional[str] = None,
         distance_threshold: Optional[float] = 0.8,
         **_: Any,
     ) -> dict[str, Any]:
         effective_limit = _coerce_positive_int(limit, default=20)
         effective_offset = _coerce_non_negative_int(offset, default=0)
+        normalized_search_type = normalize_skill_search_type(query, search_type)
+        supported_search_types = ("semantic", "keyword")
+
+        if normalized_search_type == "hybrid":
+            return unsupported_skill_search_type_result(
+                query=query,
+                search_type=normalized_search_type,
+                version=version,
+                offset=effective_offset,
+                limit=effective_limit,
+                backend_kind="redis",
+                supported_search_types=supported_search_types,
+            )
 
         def _representative_rank(
             document: FixtureKnowledgeDocument,
@@ -611,6 +629,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             "version": version,
             "offset": effective_offset,
             "limit": effective_limit,
+            "search_type": normalized_search_type,
             "results_count": len(paged_documents),
             "total_fetched": len(ordered_documents),
             "skills": [
@@ -638,6 +657,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 for document in paged_documents
             ],
             "distance_threshold": distance_threshold,
+            "supported_search_types": list(supported_search_types),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
