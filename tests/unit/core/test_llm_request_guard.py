@@ -378,7 +378,7 @@ async def test_guard_langchain_input_still_scans_in_limit_blocks_when_one_block_
         guard_module, "get_pii_remediator", lambda: SimpleNamespace(remediate=remediator)
     )
 
-    with pytest.raises(PIIRemediationError, match="exceeded pii_remediation_max_chars"):
+    with pytest.raises(PIIRemediationBlockedError, match="exceeded pii_remediation_max_chars"):
         await guard_langchain_input(
             [
                 HumanMessage(content="x" * 32),

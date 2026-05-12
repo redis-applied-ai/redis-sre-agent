@@ -111,20 +111,28 @@ def _is_dict_message_sequence(payload: Any) -> bool:
     )
 
 
-def _iter_langchain_blocks(
+def _message_role_and_content(message: Any) -> tuple[str, Any]:
+    if isinstance(message, dict):
+        return str(message.get("role") or "user"), message.get("content")
+    return (
+        getattr(message, "type", None) or message.__class__.__name__.lower(),
+        getattr(message, "content", None),
+    )
+
+
+def _iter_message_blocks(
     messages: Sequence[Any],
+    *,
+    block_prefix: str,
+    string_container: str,
+    part_container: str,
 ) -> tuple[List[PIITextBlock], List[_BlockLocation]]:
     blocks: List[PIITextBlock] = []
     locations: List[_BlockLocation] = []
     for idx, message in enumerate(messages):
-        if isinstance(message, dict):
-            role = str(message.get("role") or "user")
-            content = message.get("content")
-        else:
-            role = getattr(message, "type", None) or message.__class__.__name__.lower()
-            content = getattr(message, "content", None)
+        role, content = _message_role_and_content(message)
         if isinstance(content, str):
-            block_id = f"lc:{idx}"
+            block_id = f"{block_prefix}:{idx}"
             blocks.append(
                 PIITextBlock(
                     block_id=block_id,
@@ -136,7 +144,7 @@ def _iter_langchain_blocks(
             locations.append(
                 _BlockLocation(
                     block_id=block_id,
-                    container="langchain_str",
+                    container=string_container,
                     indexes=(idx,),
                     role=role,
                     path=f"messages[{idx}].content",
@@ -147,7 +155,7 @@ def _iter_langchain_blocks(
                 text = _text_part_value(part)
                 if text is None:
                     continue
-                block_id = f"lc:{idx}:{part_idx}"
+                block_id = f"{block_prefix}:{idx}:{part_idx}"
                 blocks.append(
                     PIITextBlock(
                         block_id=block_id,
@@ -159,66 +167,35 @@ def _iter_langchain_blocks(
                 locations.append(
                     _BlockLocation(
                         block_id=block_id,
-                        container="langchain_part",
+                        container=part_container,
                         indexes=(idx, part_idx),
                         role=role,
                         path=f"messages[{idx}].content[{part_idx}].text",
                     )
                 )
     return blocks, locations
+
+
+def _iter_langchain_blocks(
+    messages: Sequence[Any],
+) -> tuple[List[PIITextBlock], List[_BlockLocation]]:
+    return _iter_message_blocks(
+        messages,
+        block_prefix="lc",
+        string_container="langchain_str",
+        part_container="langchain_part",
+    )
 
 
 def _iter_openai_blocks(
     messages: Sequence[dict[str, Any]],
 ) -> tuple[List[PIITextBlock], List[_BlockLocation]]:
-    blocks: List[PIITextBlock] = []
-    locations: List[_BlockLocation] = []
-    for idx, message in enumerate(messages):
-        role = str(message.get("role") or "user")
-        content = message.get("content")
-        if isinstance(content, str):
-            block_id = f"oa:{idx}"
-            blocks.append(
-                PIITextBlock(
-                    block_id=block_id,
-                    path=f"messages[{idx}].content",
-                    role=role,
-                    text=content,
-                )
-            )
-            locations.append(
-                _BlockLocation(
-                    block_id=block_id,
-                    container="openai_str",
-                    indexes=(idx,),
-                    role=role,
-                    path=f"messages[{idx}].content",
-                )
-            )
-        elif isinstance(content, list):
-            for part_idx, part in enumerate(content):
-                text = _text_part_value(part)
-                if text is None:
-                    continue
-                block_id = f"oa:{idx}:{part_idx}"
-                blocks.append(
-                    PIITextBlock(
-                        block_id=block_id,
-                        path=f"messages[{idx}].content[{part_idx}].text",
-                        role=role,
-                        text=text,
-                    )
-                )
-                locations.append(
-                    _BlockLocation(
-                        block_id=block_id,
-                        container="openai_part",
-                        indexes=(idx, part_idx),
-                        role=role,
-                        path=f"messages[{idx}].content[{part_idx}].text",
-                    )
-                )
-    return blocks, locations
+    return _iter_message_blocks(
+        messages,
+        block_prefix="oa",
+        string_container="openai_str",
+        part_container="openai_part",
+    )
 
 
 def _render_langchain_messages(
@@ -474,9 +451,7 @@ async def _run_remediation(
         changed_text,
     )
     if truncated_blocks and final_decision == PIIRemediationDecision.BLOCKED:
-        if mode == PIIRemediationMode.BLOCK:
-            raise PIIRemediationBlockedError(reason or "PII remediation blocked request")
-        raise PIIRemediationError(reason or "PII remediation blocked request")
+        raise PIIRemediationBlockedError(reason or "PII remediation blocked request")
 
     return PIIRemediationResult(
         decision=final_decision,
