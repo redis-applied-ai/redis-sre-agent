@@ -479,12 +479,9 @@ class Settings(BaseSettings):
         default="openai/privacy-filter",
         description="Model identifier for the default local PII remediator.",
     )
-    pii_remediation_runtime: Literal["local"] = Field(
-        default="local",
-        description="Runtime location for the default PII remediator.",
-    )
     pii_remediation_max_chars: int = Field(
         default=32000,
+        gt=0,
         description="Maximum characters to send through one PII remediation pass.",
     )
     pii_remediation_categories: List[str] = Field(

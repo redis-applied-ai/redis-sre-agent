@@ -5,8 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 import redis_sre_agent.core.pii_remediation as pii_module
+from redis_sre_agent.core.config import Settings
 from redis_sre_agent.core.default_pii_remediator import (
     DefaultPrivacyFilterPIIRemediator,
     _normalize_category,
@@ -84,6 +86,51 @@ def test_normalize_category_only_strips_bio_prefixes():
     assert _normalize_category("B-private_email") == "private_email"
     assert _normalize_category("I-private_email") == "private_email"
     assert _normalize_category("SEMI-PRIVATE") == "semi-private"
+
+
+def test_pii_remediation_max_chars_must_be_positive():
+    with pytest.raises(ValidationError, match="greater than 0"):
+        Settings(pii_remediation_max_chars=0)
+
+
+@pytest.mark.asyncio
+async def test_default_privacy_filter_empty_settings_categories_disable_detection():
+    with patch(
+        "redis_sre_agent.core.default_pii_remediator.settings",
+        SimpleNamespace(
+            pii_remediation_model="openai/privacy-filter",
+            pii_remediation_categories=[],
+        ),
+    ):
+        remediator = DefaultPrivacyFilterPIIRemediator()
+
+    remediator._pipeline = lambda text: [
+        {
+            "entity_group": "PRIVATE_EMAIL",
+            "start": 6,
+            "end": 23,
+            "score": 0.98,
+        }
+    ]
+    request = PIIRemediationRequest(
+        mode=PIIRemediationMode.REDACT,
+        request_kind="test",
+        blocks=[
+            PIITextBlock(
+                block_id="b1",
+                path="messages[0].content",
+                role="user",
+                text="Email alice@example.com",
+            )
+        ],
+        categories=[],
+    )
+
+    result = await remediator.remediate(request)
+
+    assert result.decision == PIIRemediationDecision.ALLOW
+    assert result.findings == []
+    assert result.blocks[0].text == "Email alice@example.com"
 
 
 @pytest.mark.asyncio
@@ -252,3 +299,27 @@ async def test_default_privacy_filter_serializes_shared_pipeline_access():
     )
 
     assert max_active == 1
+
+
+def test_reset_pii_remediator_factory_shuts_down_cached_instance():
+    remediator = MagicMock()
+    set_pii_remediator_factory(lambda: remediator)
+
+    assert get_pii_remediator() is remediator
+
+    reset_pii_remediator_factory()
+
+    remediator.shutdown.assert_called_once_with()
+
+
+def test_set_pii_remediator_factory_shuts_down_replaced_instance():
+    original = MagicMock()
+    replacement = MagicMock()
+    set_pii_remediator_factory(lambda: original)
+
+    assert get_pii_remediator() is original
+
+    set_pii_remediator_factory(lambda: replacement)
+
+    original.shutdown.assert_called_once_with()
+    assert get_pii_remediator() is replacement

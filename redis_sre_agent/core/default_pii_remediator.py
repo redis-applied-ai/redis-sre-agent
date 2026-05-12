@@ -56,13 +56,13 @@ class DefaultPrivacyFilterPIIRemediator:
         categories: Optional[Sequence[str]] = None,
     ) -> None:
         self.model_name = model_name or settings.pii_remediation_model
+        category_source = settings.pii_remediation_categories if categories is None else categories
         self.categories = {
-            _normalize_category(item)
-            for item in (categories or settings.pii_remediation_categories)
+            normalized for item in category_source if (normalized := _normalize_category(item))
         }
         self._pipeline: Any = None
         self._pipeline_lock = threading.RLock()
-        self._executor = ThreadPoolExecutor(
+        self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="pii-remediator",
         )
@@ -100,7 +100,7 @@ class DefaultPrivacyFilterPIIRemediator:
             category = _normalize_category(
                 item.get("entity_group") or item.get("entity") or item.get("label")
             )
-            if not category or (self.categories and category not in self.categories):
+            if not category or category not in self.categories:
                 continue
             start = item.get("start")
             end = item.get("end")
@@ -176,15 +176,25 @@ class DefaultPrivacyFilterPIIRemediator:
             redacted = f"{redacted[: span.start]}{placeholder}{redacted[span.end :]}"
         return redacted
 
+    def shutdown(self) -> None:
+        executor = self._executor
+        if executor is None:
+            return
+        self._executor = None
+        executor.shutdown(wait=False, cancel_futures=True)
+
     async def remediate(self, request: PIIRemediationRequest) -> PIIRemediationResult:
         start = time.perf_counter()
         spans_by_block: Dict[str, List[_SpanDetection]] = {}
         findings: List[PIIFinding] = []
         loop = asyncio.get_running_loop()
+        executor = self._executor
+        if executor is None:
+            raise RuntimeError("PII remediator has been shut down")
 
         for block in request.blocks:
             spans = await loop.run_in_executor(
-                self._executor,
+                executor,
                 self._detect_spans,
                 block.text or "",
             )

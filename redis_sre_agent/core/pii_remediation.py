@@ -101,6 +101,20 @@ def is_pii_remediation_enabled(mode: Optional[str] = None) -> bool:
     return str(effective_mode or "").strip().lower() != PIIRemediationMode.OFF.value
 
 
+def _shutdown_pii_remediator_instance(instance: Optional[PIIRemediator]) -> None:
+    if instance is None:
+        return
+
+    shutdown = getattr(instance, "shutdown", None)
+    if not callable(shutdown):
+        return
+
+    try:
+        shutdown()
+    except Exception:
+        logger.warning("Failed to shut down cached PII remediator instance", exc_info=True)
+
+
 def reset_pii_remediator_factory() -> None:
     """Reset cached factory and singleton instance.
 
@@ -112,6 +126,7 @@ def reset_pii_remediator_factory() -> None:
         _pii_remediator_factory_initialized, \
         _pii_remediator_factory_load_error, \
         _pii_remediator_instance
+    _shutdown_pii_remediator_instance(_pii_remediator_instance)
     _pii_remediator_factory = None
     _pii_remediator_factory_initialized = False
     _pii_remediator_factory_load_error = None
@@ -126,6 +141,7 @@ def set_pii_remediator_factory(factory: Optional[PIIRemediationFactory]) -> None
         _pii_remediator_factory_initialized, \
         _pii_remediator_factory_load_error, \
         _pii_remediator_instance
+    _shutdown_pii_remediator_instance(_pii_remediator_instance)
     _pii_remediator_factory = factory
     _pii_remediator_factory_initialized = True
     _pii_remediator_factory_load_error = None

@@ -305,7 +305,6 @@ Recommended settings:
 
 - `pii_remediation_model = "openai/privacy-filter"`
 - `pii_remediation_max_chars = 32000`
-- `pii_remediation_runtime = "local"`
 
 The base taxonomy should align to the model's released labels:
 
@@ -352,7 +351,6 @@ Add settings in `redis_sre_agent/core/config.py`:
 - `pii_remediation_mode: Literal["off", "detect", "redact", "block"] = "off"`
 - `pii_remediation_factory: Optional[str] = None`
 - `pii_remediation_model: str = "openai/privacy-filter"`
-- `pii_remediation_runtime: Literal["local"] = "local"`
 - `pii_remediation_max_chars: int = 32000`
 - `pii_remediation_categories: list[str]`
 
