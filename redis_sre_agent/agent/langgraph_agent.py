@@ -679,21 +679,6 @@ class SRELangGraphAgent:
                     to_visit.extend(nested)
                 else:
                     to_visit.append(nested)
-
-            try:
-                nested_values = vars(current).values()
-            except TypeError:
-                nested_values = ()
-
-            for nested in nested_values:
-                if nested is None or isinstance(nested, (str, bytes, int, float, bool)):
-                    continue
-                if isinstance(nested, dict):
-                    to_visit.extend(nested.values())
-                elif isinstance(nested, (list, tuple, set)):
-                    to_visit.extend(nested)
-                else:
-                    to_visit.append(nested)
         return None
 
     async def _ainvoke_memo(self, tag: str, llm: Any, messages: List[BaseMessage]):
