@@ -18,7 +18,7 @@ from langgraph.prebuilt import ToolNode
 from opentelemetry import trace
 
 from ...core.llm_request_guard import GuardedMemoizeLLMProxy, guarded_ainvoke
-from ..helpers import log_preflight_messages, sanitize_messages_for_llm
+from ..helpers import ensure_tool_bound_llm, log_preflight_messages, sanitize_messages_for_llm
 from ..models import Recommendation
 
 logger = logging.getLogger(__name__)
@@ -32,16 +32,6 @@ class RecState(TypedDict, total=False):
     evidence: List[Dict[str, Any]]
     instance: Dict[str, Any]
     result: Dict[str, Any]
-
-
-def _ensure_tool_bound_llm(base_llm: Any, tool_adapters: List[Any]) -> Any:
-    bound_kwargs = getattr(base_llm, "kwargs", None)
-    if isinstance(bound_kwargs, dict) and bound_kwargs.get("tools"):
-        return base_llm
-    if tool_adapters and hasattr(base_llm, "bind_tools"):
-        return base_llm.bind_tools(tool_adapters)
-    return base_llm
-
 
 def build_recommendation_worker(
     base_llm,
@@ -67,7 +57,7 @@ def build_recommendation_worker(
     """
 
     tool_node = ToolNode(knowledge_tool_adapters)
-    llm_with_tools = _ensure_tool_bound_llm(base_llm, knowledge_tool_adapters)
+    llm_with_tools = ensure_tool_bound_llm(base_llm, knowledge_tool_adapters)
     memoized_loop_llm = (
         GuardedMemoizeLLMProxy(
             llm_with_tools,
