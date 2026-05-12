@@ -25,16 +25,30 @@ def skills():
 
 @skills.command("list")
 @click.option("--query", "-q", type=str, default=None, help="Optional search query")
+@click.option(
+    "--search-type",
+    type=click.Choice(["semantic", "keyword", "hybrid"], case_sensitive=False),
+    default=None,
+    help="Optional search type. Defaults to semantic when --query is set.",
+)
 @click.option("--limit", "-l", default=20, show_default=True, help="Number of skills to return")
 @click.option("--offset", "-o", default=0, show_default=True, help="Offset for pagination")
 @click.option("--version", "-v", default="latest", show_default=True, help="Version filter")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON")
-def skills_list(query: str | None, limit: int, offset: int, version: str, as_json: bool):
+def skills_list(
+    query: str | None,
+    search_type: str | None,
+    limit: int,
+    offset: int,
+    version: str,
+    as_json: bool,
+):
     """List skills from the active skill backend."""
 
     async def _run():
         result = await skills_check_helper(
             query=query,
+            search_type=search_type,
             limit=limit,
             offset=offset,
             version=version,

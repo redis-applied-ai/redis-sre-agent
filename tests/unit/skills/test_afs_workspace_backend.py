@@ -177,6 +177,8 @@ async def test_afs_workspace_skill_backend_query_and_error_paths() -> None:
 
     assert queried["skills"][0]["name"] == "redis-cluster-health-check"
     assert queried["skills"][0]["matched_resource_kind"] == "entrypoint"
+    assert queried["search_type"] == "semantic"
+    assert queried["supported_search_types"] == ["semantic", "keyword"]
 
     missing_skill = await backend.get_skill(skill_name="missing", version="v1")
     assert missing_skill["error"] == "Skill not found"
@@ -215,6 +217,78 @@ async def test_afs_workspace_skill_backend_omits_none_version_from_api_params() 
 
     assert queried["skills"] == []
     assert client.calls[1][2] == {"limit": 100, "offset": 0}
+
+
+@pytest.mark.asyncio
+async def test_afs_workspace_skill_backend_keyword_query_uses_lexical_filter() -> None:
+    responses = [
+        _FakeResponse(
+            {
+                "data": {
+                    "skills": [
+                        {
+                            "skillSlug": "redis-maintenance-triage",
+                            "displayName": "Redis Maintenance Triage",
+                            "description": "Check maintenance mode first.",
+                            "version": "v1",
+                            "resources": [],
+                        },
+                        {
+                            "skillSlug": "redis-cluster-health-check",
+                            "displayName": "Redis Cluster Health Check",
+                            "description": "Produce Analyzer-backed cluster findings.",
+                            "version": "v1",
+                            "resources": [],
+                        },
+                    ],
+                    "total": 2,
+                }
+            }
+        )
+    ]
+    client = _FakeAsyncClient(responses=responses)
+    backend = AFSWorkspaceSkillBackend(
+        base_url="https://skills.internal",
+        tenant_id="tenant_a",
+        project_id="proj_1",
+        agent_id="agent_1",
+        client_factory=lambda **kwargs: client,  # type: ignore[arg-type]
+    )
+
+    queried = await backend.list_skills(
+        query="cluster findings",
+        search_type="keyword",
+        limit=10,
+        offset=0,
+        version="v1",
+    )
+
+    assert queried["skills"][0]["name"] == "redis-cluster-health-check"
+    assert queried["search_type"] == "keyword"
+    assert queried["supported_search_types"] == ["semantic", "keyword"]
+
+
+@pytest.mark.asyncio
+async def test_afs_workspace_skill_backend_hybrid_query_reports_unsupported() -> None:
+    backend = AFSWorkspaceSkillBackend(
+        base_url="https://skills.internal",
+        tenant_id="tenant_a",
+        project_id="proj_1",
+        agent_id="agent_1",
+        client_factory=lambda **kwargs: _FakeAsyncClient(responses=[]),  # type: ignore[arg-type]
+    )
+
+    result = await backend.list_skills(
+        query="cluster findings",
+        search_type="hybrid",
+        limit=10,
+        offset=3,
+        version="v1",
+    )
+
+    assert result["error"] == "unsupported_search_type"
+    assert result["requested_search_type"] == "hybrid"
+    assert result["supported_search_types"] == ["semantic", "keyword"]
 
 
 def test_afs_workspace_skill_backend_from_settings_uses_env_fallbacks(
@@ -391,6 +465,7 @@ async def test_afs_workspace_skill_backend_gateway_query_uses_semantic_ranking()
         )
 
     assert result["skills"][0]["name"] == "redis-cluster-health-check"
+    assert result["search_type"] == "semantic"
 
 
 @pytest.mark.asyncio

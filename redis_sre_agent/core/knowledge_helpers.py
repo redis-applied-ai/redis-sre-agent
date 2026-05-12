@@ -665,6 +665,7 @@ async def skills_check_helper(
     limit: int = 20,
     offset: int = 0,
     version: Optional[str] = "latest",
+    search_type: Optional[str] = None,
     distance_threshold: Optional[float] = 0.8,
     config: Optional[Settings] = None,
 ) -> Dict[str, Any]:
@@ -678,6 +679,7 @@ async def skills_check_helper(
         limit=limit,
         offset=offset,
         version=version,
+        search_type=search_type,
         distance_threshold=distance_threshold,
     )
     if override_result is not None:
@@ -686,8 +688,9 @@ async def skills_check_helper(
     limit = _coerce_positive_int(limit, default=20)
     offset = _coerce_non_negative_int(offset, default=0)
     logger.info(
-        "Listing skills (query=%s, version=%s, offset=%s, limit=%s)",
+        "Listing skills (query=%s, search_type=%s, version=%s, offset=%s, limit=%s)",
         bool(query),
+        search_type,
         version,
         offset,
         limit,
@@ -698,6 +701,7 @@ async def skills_check_helper(
         limit=limit,
         offset=offset,
         version=version,
+        search_type=search_type,
         distance_threshold=distance_threshold,
     )
 

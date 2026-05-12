@@ -218,6 +218,31 @@ class TestSkillTools:
         assert result == expected
         mock_helper.assert_awaited_once_with(
             query="maintenance",
+            search_type=None,
+            limit=5,
+            offset=1,
+            version="latest",
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_skills_passes_search_type(self):
+        expected = {"skills": [{"name": "redis-maintenance-triage"}], "total": 1}
+
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.skills_check_helper",
+            new=AsyncMock(return_value=expected),
+        ) as mock_helper:
+            result = await redis_sre_list_skills(
+                query="maintenance",
+                search_type="keyword",
+                limit=5,
+                offset=1,
+            )
+
+        assert result == expected
+        mock_helper.assert_awaited_once_with(
+            query="maintenance",
+            search_type="keyword",
             limit=5,
             offset=1,
             version="latest",
