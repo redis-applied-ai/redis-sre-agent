@@ -375,6 +375,53 @@ async def test_ainvoke_memo_distinguishes_wrapped_models(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ainvoke_memo_uses_cache_identity_source_for_fresh_proxies(monkeypatch):
+    agent = SRELangGraphAgent()
+    agent._run_cache_active = True
+    agent._llm_cache = {}
+
+    class BaseModel:
+        model_name = "stable-model"
+        temperature = 0.0
+
+    class OpaqueStructuredWrapper:
+        def __repr__(self):
+            return f"<OpaqueStructuredWrapper at {id(self):x}>"
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="cached")
+
+    inner_calls = []
+
+    async def inner_guarded_ainvoke(llm, messages, request_kind, metadata=None):
+        inner_calls.append((request_kind, metadata or {}))
+        return await llm.ainvoke(messages)
+
+    monkeypatch.setattr(
+        "redis_sre_agent.core.llm_request_guard.guarded_ainvoke", inner_guarded_ainvoke
+    )
+
+    first_proxy = GuardedMemoizeLLMProxy(
+        OpaqueStructuredWrapper(),
+        request_kind="unit.proxy",
+        cache_identity_source=BaseModel(),
+    )
+    second_proxy = GuardedMemoizeLLMProxy(
+        OpaqueStructuredWrapper(),
+        request_kind="unit.proxy",
+        cache_identity_source=BaseModel(),
+    )
+
+    first_result = await agent._ainvoke_memo("tag", first_proxy, [])
+    second_result = await agent._ainvoke_memo("tag", second_proxy, [])
+
+    assert first_result.content == "cached"
+    assert second_result.content == "cached"
+    assert inner_calls == [("unit.proxy", {})]
+    assert len(agent._llm_cache) == 1
+
+
+@pytest.mark.asyncio
 @patch("redis_sre_agent.agent.langgraph_agent.build_safety_fact_corrector")
 async def test_corrector_runs_on_risky_patterns(mock_build):
     # Corrector returns edited content

@@ -77,7 +77,7 @@ class TestPIIRemediatorLoading:
             with pytest.raises(ImportError, match="boom"):
                 get_pii_remediator()
 
-        assert import_module.call_count == 2
+        assert import_module.call_count == 1
 
 
 def test_normalize_category_only_strips_bio_prefixes():

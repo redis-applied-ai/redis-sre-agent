@@ -91,6 +91,7 @@ class PIIRemediator(Protocol):
 _pii_remediator_factory: Optional[PIIRemediationFactory] = None
 _pii_remediator_factory_initialized = False
 _pii_remediator_instance: Optional[PIIRemediator] = None
+_pii_remediator_factory_load_error: Optional[Exception] = None
 
 
 def is_pii_remediation_enabled(mode: Optional[str] = None) -> bool:
@@ -106,27 +107,42 @@ def reset_pii_remediator_factory() -> None:
     Primarily intended for tests.
     """
 
-    global _pii_remediator_factory, _pii_remediator_factory_initialized, _pii_remediator_instance
+    global \
+        _pii_remediator_factory, \
+        _pii_remediator_factory_initialized, \
+        _pii_remediator_factory_load_error, \
+        _pii_remediator_instance
     _pii_remediator_factory = None
     _pii_remediator_factory_initialized = False
+    _pii_remediator_factory_load_error = None
     _pii_remediator_instance = None
 
 
 def set_pii_remediator_factory(factory: Optional[PIIRemediationFactory]) -> None:
     """Register a custom PII remediator factory."""
 
-    global _pii_remediator_factory, _pii_remediator_factory_initialized, _pii_remediator_instance
+    global \
+        _pii_remediator_factory, \
+        _pii_remediator_factory_initialized, \
+        _pii_remediator_factory_load_error, \
+        _pii_remediator_instance
     _pii_remediator_factory = factory
     _pii_remediator_factory_initialized = True
+    _pii_remediator_factory_load_error = None
     _pii_remediator_instance = None
 
 
 def _load_pii_remediator_factory_from_config() -> None:
     """Load the PII remediator factory from configuration if specified."""
 
-    global _pii_remediator_factory, _pii_remediator_factory_initialized
+    global \
+        _pii_remediator_factory, \
+        _pii_remediator_factory_initialized, \
+        _pii_remediator_factory_load_error
 
     if _pii_remediator_factory_initialized:
+        if _pii_remediator_factory_load_error is not None:
+            raise _pii_remediator_factory_load_error
         return
 
     factory_path = getattr(settings, "pii_remediation_factory", None)
@@ -148,9 +164,12 @@ def _load_pii_remediator_factory_from_config() -> None:
             raise ValueError(f"PII_REMEDIATION_FACTORY '{factory_path}' is not callable")
 
         _pii_remediator_factory = factory
+        _pii_remediator_factory_load_error = None
         _pii_remediator_factory_initialized = True
         logger.info("Loaded custom PII remediator factory from %s", factory_path)
     except Exception as exc:
+        _pii_remediator_factory_load_error = exc
+        _pii_remediator_factory_initialized = True
         logger.error("Failed to load PII remediator factory from '%s': %s", factory_path, exc)
         raise
 

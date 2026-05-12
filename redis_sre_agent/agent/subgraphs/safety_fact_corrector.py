@@ -115,6 +115,7 @@ def build_safety_fact_corrector(
             GuardedMemoizeLLMProxy(
                 structured_llm,
                 request_kind="safety_fact_corrector.synth",
+                cache_identity_source=base_llm,
             )
             if memoize
             else None

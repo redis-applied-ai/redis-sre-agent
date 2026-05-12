@@ -132,6 +132,7 @@ def build_recommendation_worker(
             GuardedMemoizeLLMProxy(
                 structured_llm,
                 request_kind="recommendation_worker.synth",
+                cache_identity_source=base_llm,
             )
             if memoize
             else None

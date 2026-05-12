@@ -52,10 +52,12 @@ class GuardedMemoizeLLMProxy:
         *,
         request_kind: str,
         metadata: Optional[Dict[str, Any]] = None,
+        cache_identity_source: Any = None,
     ) -> None:
         self._inner_llm = inner_llm
         self._request_kind = request_kind
         self._metadata = metadata or {}
+        self._sre_cache_identity_source = cache_identity_source
 
     async def ainvoke(self, messages):
         return await guarded_ainvoke(

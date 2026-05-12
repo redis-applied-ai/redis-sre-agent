@@ -664,11 +664,33 @@ class SRELangGraphAgent:
                 if value not in (None, ""):
                     return value
 
-            for wrapper_attr in ("_inner_llm", "bound", "runnable", "first", "last"):
+            for wrapper_attr in (
+                "_sre_cache_identity_source",
+                "_inner_llm",
+                "bound",
+                "runnable",
+                "first",
+                "last",
+            ):
                 nested = getattr(current, wrapper_attr, None)
                 if nested is None:
                     continue
                 if isinstance(nested, (list, tuple)):
+                    to_visit.extend(nested)
+                else:
+                    to_visit.append(nested)
+
+            try:
+                nested_values = vars(current).values()
+            except TypeError:
+                nested_values = ()
+
+            for nested in nested_values:
+                if nested is None or isinstance(nested, (str, bytes, int, float, bool)):
+                    continue
+                if isinstance(nested, dict):
+                    to_visit.extend(nested.values())
+                elif isinstance(nested, (list, tuple, set)):
                     to_visit.extend(nested)
                 else:
                     to_visit.append(nested)
@@ -689,7 +711,9 @@ class SRELangGraphAgent:
 
         if not self._run_cache_active:
             return await invoke(messages)
-        model = self._resolve_llm_attr(llm, "model", "model_name", "_model") or repr(llm)
+        model = self._resolve_llm_attr(llm, "model", "model_name", "_model")
+        if model in (None, ""):
+            model = f"{llm.__class__.__module__}.{llm.__class__.__qualname__}"
         temperature = self._resolve_llm_attr(llm, "temperature")
         if temperature is None:
             temperature = 0.0
