@@ -13,6 +13,7 @@ from redis_sre_agent.agent.knowledge_context import (
     merge_internal_tool_envelopes,
 )
 from redis_sre_agent.evaluation.injection import eval_runtime_overrides
+from redis_sre_agent.skills import backend as skill_backend_module
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 
 
@@ -128,6 +129,56 @@ async def test_startup_context_reports_actual_skill_count_when_backend_returns_f
         context = await build_startup_knowledge_context(version="latest", skills_limit=50)
 
     assert "1 skill shown, 99 more available" in context
+
+
+@pytest.mark.asyncio
+async def test_startup_context_uses_default_redis_skill_backend_for_inventory():
+    fake_settings = SimpleNamespace(
+        skill_backend_kind="redis",
+        skill_backend_class="",
+        skill_reference_char_budget=12000,
+    )
+    skills_index = AsyncMock()
+    skills_index.query = AsyncMock(
+        return_value=[
+            {
+                "id": "skill-0",
+                "document_hash": "hash-skill",
+                "chunk_index": 0,
+                "name": "Redis Cluster Health Check",
+                "title": "Redis Cluster Health Check",
+                "summary": "Run a fast health check for the cluster.",
+                "content": "Checklist content",
+                "source": "docs/latest/skill",
+                "doc_type": "skill",
+                "version": "latest",
+                "resource_kind": "entrypoint",
+                "resource_path": "SKILL.md",
+            }
+        ]
+    )
+    original_cache = skill_backend_module._DEFAULT_BACKEND_CACHE
+    skill_backend_module._DEFAULT_BACKEND_CACHE = None
+    try:
+        with (
+            patch(
+                "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+                new=AsyncMock(return_value={"pinned_documents": []}),
+            ),
+            patch.object(skill_backend_module, "settings", fake_settings),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_skills_index",
+                new=AsyncMock(return_value=skills_index),
+            ) as get_skills_index,
+        ):
+            context = await build_startup_knowledge_context(version="latest", skills_limit=5)
+
+        assert "Skills you know:" in context
+        assert "Redis Cluster Health Check: Run a fast health check for the cluster." in context
+        get_skills_index.assert_awaited_once_with(config=fake_settings)
+        skills_index.query.assert_awaited_once()
+    finally:
+        skill_backend_module._DEFAULT_BACKEND_CACHE = original_cache
 
 
 @pytest.mark.asyncio
