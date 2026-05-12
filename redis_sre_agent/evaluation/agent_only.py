@@ -11,6 +11,7 @@ from redis_sre_agent.agent.chat_agent import get_chat_agent
 from redis_sre_agent.agent.knowledge_agent import get_knowledge_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.core.turn_scope import TurnScope
+from redis_sre_agent.evaluation.fake_memory import inject_memory_fixture
 from redis_sre_agent.evaluation.scenarios import EvalScenario, ExecutionLane
 from redis_sre_agent.targets.contracts import PublicTargetBinding
 
@@ -172,15 +173,16 @@ async def run_agent_only_scenario(
     )
     context["tool_call_budget_override"] = _agent_iteration_budget(scenario)
     agent = factory()
-    response = await agent.process_query(
-        query=scenario.execution.query,
-        session_id=session_id,
-        user_id=user_id,
-        max_iterations=_agent_iteration_budget(scenario),
-        context=context,
-        progress_emitter=progress_emitter,
-        conversation_history=list(conversation_history or []) or None,
-    )
+    async with inject_memory_fixture(scenario):
+        response = await agent.process_query(
+            query=scenario.execution.query,
+            session_id=session_id,
+            user_id=user_id,
+            max_iterations=_agent_iteration_budget(scenario),
+            context=context,
+            progress_emitter=progress_emitter,
+            conversation_history=list(conversation_history or []) or None,
+        )
     return AgentOnlyHarnessResult(
         agent_name=agent_name,
         session_id=session_id,

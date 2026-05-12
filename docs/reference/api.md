@@ -116,3 +116,9 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `GET` | `/docs/oauth2-redirect` | swagger_ui_redirect |
 | `GET` | `/openapi.json` | openapi |
 | `GET` | `/redoc` | redoc_html |
+
+### Other
+
+| Method | Path | Summary |
+|---|---|---|
+| `GET` | `/api/v1/memory/thread/{thread_id}` | get_thread_memory |

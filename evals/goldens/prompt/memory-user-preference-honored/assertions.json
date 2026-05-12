@@ -1,0 +1,4 @@
+{
+  "required_findings": ["remediation"],
+  "forbidden_claims": ["before remediation, let's diagnose", "first, let's look at root cause"]
+}

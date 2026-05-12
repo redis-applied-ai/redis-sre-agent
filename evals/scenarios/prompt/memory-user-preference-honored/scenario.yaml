@@ -1,0 +1,54 @@
+id: prompt/memory-user-preference-honored
+name: Memory user preference honored — remediation-first
+description: >
+  Verify that a user preference stored in long-term memory (remediation-first answers
+  over diagnostics narration) is honored when answering a latency investigation query.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.evaluation.fake_memory.FakeMemorySession
+    - redis_sre_agent.evaluation.fake_memory.inject_memory_fixture
+  synthetic:
+    is_synthetic: true
+    method: hand_authored
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/memory-user-preference-honored/expected.md
+    review_status: draft
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    My production Redis cache is showing elevated latency. What should I do?
+  max_tool_steps: 6
+  llm_mode: live
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: full
+  version: latest
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+
+memory:
+  user_context: "User prefers remediation-first answers over diagnostics-first narration"
+  user_long_term:
+    - text: >
+        User has stated a strong preference for remediation steps first, diagnostics and
+        root-cause narration second. Always lead with what to do, not why it happened.
+      memory_type: semantic
+
+expectations:
+  required_findings:
+    - remediation
+  forbidden_claims:
+    - "before remediation, let's diagnose"
+    - "first, let's look at root cause"

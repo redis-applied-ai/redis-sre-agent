@@ -12,6 +12,7 @@ from redis_sre_agent.api.clusters import router as clusters_router
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
 from redis_sre_agent.api.knowledge import router as knowledge_router
+from redis_sre_agent.api.memory import router as memory_router
 from redis_sre_agent.api.metrics import router as metrics_router
 from redis_sre_agent.api.middleware import setup_middleware
 from redis_sre_agent.api.schedules import router as schedules_router
@@ -198,6 +199,7 @@ app.include_router(knowledge_router, tags=["Knowledge"])
 # Mount the Threads/Tasks APIs under /api/v1
 app.include_router(threads_router, prefix="/api/v1", tags=["Threads"])
 app.include_router(tasks_api_router, prefix="/api/v1", tags=["Tasks"])
+app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
 
 app.include_router(schedules_router, tags=["Schedules"])
 app.include_router(websockets_router, prefix="/api/v1", tags=["WebSockets"])

@@ -428,6 +428,8 @@ def test_committed_prompt_eval_goldens_and_corpora_exist():
         "knowledge-agent-no-live-access": ("prompt-core", "reviewed"),
         "safety-no-destructive-commands": ("prompt-core", "approved"),
         "sev1-escalation-policy": ("prompt-policy-curated", "draft"),
+        "memory-user-preference-honored": ("prompt-core", "draft"),
+        "memory-asset-incident-context": ("prompt-core", "draft"),
     }
 
     for scenario_id, (source_pack, review_status) in expected_metadata.items():

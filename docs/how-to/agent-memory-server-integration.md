@@ -54,13 +54,15 @@ The integration now distinguishes two long-term memory scopes.
 This is for operator-specific context:
 
 - response style preferences
-- durable user-specific habits
-- user-specific investigative history
+- reporting preferences
+- durable user-specific workflow habits
+- personalized operating style
 
 Examples:
 
 - “alice prefers concise answers”
 - “alice usually wants root-cause-first summaries”
+- “alice wants executive-summary-first updates”
 
 ### Asset-scoped memory
 
@@ -81,6 +83,8 @@ Examples:
 Operator preferences must stay in user-scoped memory only.
 
 Asset-scoped memory is shared operational memory. It should not be used to store or recall user-personalized preferences.
+
+User-scoped memory should also not be used as a catch-all bucket for asset history. Asset incidents, environment facts, configuration facts, and ownership or inventory facts belong in asset scope unless they are explicitly transformed into a durable user workflow preference.
 
 ## Retrieval Rules
 
@@ -128,8 +132,9 @@ The integration uses a custom extraction strategy.
 ### User-scoped extraction focus
 
 - operator interaction preferences
-- durable user-specific context
-- stable facts or incidents that matter to that user and asset
+- reporting preferences
+- durable user-specific workflow habits
+- personalized operating style
 
 ### Asset-scoped extraction focus
 
@@ -148,6 +153,21 @@ The integration is designed to avoid storing:
 - speculative diagnoses
 
 In addition, asset-scoped long-term memory is filtered on read to prevent operator-preference-like memories from surfacing there, even if they were extracted incorrectly.
+
+## Mixed Memory Handling
+
+When a turn contains both user behavior and asset context, the system should split the durable parts by scope instead of duplicating the same mixed sentence into both namespaces.
+
+Example input:
+
+- “Jamie prefers executive-summary-first updates when investigating service-12345 latency.”
+
+Expected durable outputs:
+
+- user scope: `Jamie prefers executive-summary-first updates`
+- asset scope: `service-12345 had latency issues`
+
+If the system cannot cleanly separate a mixed statement into durable user and asset fragments, it should prefer dropping the ambiguous fragment over duplicating it into both namespaces.
 
 ## Fail-Open Behavior
 
@@ -191,6 +211,8 @@ the agent can combine:
 - user-specific preferences
 - shared operational history for that asset
 
+The important nuance is that this combination happens at retrieval time across two different scopes. It should not require the same mixed sentence to be stored verbatim in both namespaces.
+
 ### Best practice 4: rely on live tools for current-state truth
 
 AMS memory is prior context, not current truth.
@@ -218,3 +240,27 @@ In short:
 - live tools = current-state truth
 
 That is the intended integration model.
+
+## Redis Verification
+
+Correctness should be directly inspectable in Redis.
+
+### What should be true
+
+- `redis-sre-agent-user` should contain user preferences, reporting preferences, and workflow habits only.
+- `redis-sre-agent-user` should not contain asset-only incident, configuration, environment, or ownership facts.
+- `redis-sre-agent-asset` should contain shared asset facts and incident history only.
+- `redis-sre-agent-asset` should not contain user preferences or workflow habits.
+- Mixed user+asset statements should result in split records, not one duplicated mixed sentence in both namespaces.
+
+### How to inspect
+
+Use RedisInsight or `FT.SEARCH` to filter AMS records by namespace and inspect the stored text payloads directly.
+
+Typical checks:
+
+- search the user namespace for asset-only phrases from a test incident statement; expect no matches
+- search the asset namespace for preference phrases from a user-style statement; expect no matches
+- search both namespaces for the exact mixed sentence; expect no duplicated verbatim record in both places
+
+This Redis-observable check is a required complement to unit tests that verify per-namespace payloads before AMS writes occur.

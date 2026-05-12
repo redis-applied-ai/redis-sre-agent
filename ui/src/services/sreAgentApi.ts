@@ -340,6 +340,67 @@ export interface AgentStatus {
   status?: string;
 }
 
+export interface ThreadMemoryItem {
+  id: string | null;
+  text: string | null;
+  memory_type: string | null;
+  created_at: string | null;
+  last_accessed: string | null;
+  topics: string[];
+  entities: string[];
+}
+
+export interface ThreadMemorySectionList {
+  items: ThreadMemoryItem[];
+  total: number;
+  next_offset: number | null;
+}
+
+export interface ThreadMemorySection {
+  long_term: ThreadMemorySectionList;
+  working_memory_context: string | null;
+}
+
+export interface AssetMemoryScope extends ThreadMemorySection {
+  label: string;
+  instance_id: string | null;
+  cluster_id: string | null;
+}
+
+export interface ThreadMemoryScope {
+  user_id: string | null;
+  instance_id: string | null;
+  cluster_id: string | null;
+}
+
+export type ThreadMemoryStatus =
+  | "loaded"
+  | "disabled"
+  | "unavailable"
+  | "missing_scope"
+  | "error";
+
+export interface ThreadMemoryResponse {
+  enabled: boolean;
+  status: ThreadMemoryStatus;
+  error: string | null;
+  scope: ThreadMemoryScope;
+  user_scope: ThreadMemorySection | null;
+  asset_scopes: AssetMemoryScope[];
+}
+
+export interface ThreadMemoryParams {
+  userLimit?: number;
+  userOffset?: number;
+  assetLimit?: number;
+  assetOffset?: number;
+  // Identify a single asset scope to paginate. Required when assetOffset > 0
+  // so the offset applies to the correct scope instead of all asset scopes
+  // uniformly.
+  assetInstanceId?: string;
+  assetClusterId?: string;
+}
+
 class SREAgentAPI {
   private tasksBaseUrl: string;
 
@@ -1473,6 +1534,32 @@ class SREAgentAPI {
       throw new Error(
         `Failed to update knowledge settings: ${response.statusText}`,
       );
+    }
+    return response.json();
+  }
+
+  async getThreadMemory(
+    threadId: string,
+    params?: ThreadMemoryParams,
+  ): Promise<ThreadMemoryResponse> {
+    const query = new URLSearchParams();
+    if (params?.userLimit != null)
+      query.set("user_limit", String(params.userLimit));
+    if (params?.userOffset != null)
+      query.set("user_offset", String(params.userOffset));
+    if (params?.assetLimit != null)
+      query.set("asset_limit", String(params.assetLimit));
+    if (params?.assetOffset != null)
+      query.set("asset_offset", String(params.assetOffset));
+    if (params?.assetInstanceId)
+      query.set("asset_instance_id", params.assetInstanceId);
+    if (params?.assetClusterId)
+      query.set("asset_cluster_id", params.assetClusterId);
+    const qs = query.toString();
+    const url = `${this.tasksBaseUrl}/memory/thread/${threadId}${qs ? `?${qs}` : ""}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch thread memory: ${response.statusText}`);
     }
     return response.json();
   }

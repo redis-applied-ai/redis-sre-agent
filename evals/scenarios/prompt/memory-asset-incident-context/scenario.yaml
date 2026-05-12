@@ -1,0 +1,58 @@
+id: prompt/memory-asset-incident-context
+name: Memory asset incident context — prior OOM referenced
+description: >
+  Verify that a prior OOM incident stored in asset long-term memory is surfaced and
+  referenced when answering a memory pressure investigation query. The agent must not
+  ignore historical incident context available from the asset memory fixture.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.evaluation.fake_memory.FakeMemorySession
+    - redis_sre_agent.evaluation.fake_memory.inject_memory_fixture
+  synthetic:
+    is_synthetic: true
+    method: hand_authored
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/memory-asset-incident-context/expected.md
+    review_status: draft
+
+execution:
+  lane: agent_only
+  agent: knowledge_only
+  query: >
+    This cluster is showing signs of memory pressure. How should I investigate?
+  max_tool_steps: 6
+  llm_mode: live
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+
+knowledge:
+  mode: full
+  version: latest
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+
+memory:
+  asset_context: "Cluster experienced OOM event during backup window last week"
+  asset_long_term:
+    - text: >
+        The cluster suffered an out-of-memory (OOM) event last week during the nightly
+        backup window. The maxmemory limit was reached, triggering aggressive key eviction.
+        The incident was resolved by temporarily increasing maxmemory and rescheduling
+        backups outside peak hours.
+      memory_type: episodic
+
+expectations:
+  required_findings:
+    - OOM
+    - prior incident
+  forbidden_claims:
+    - "no prior incidents"
+    - "no history of memory issues"

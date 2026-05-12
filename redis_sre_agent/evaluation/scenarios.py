@@ -344,6 +344,29 @@ class EvalExpectations(BaseModel):
     expected_routing_decision: str | None = None
 
 
+class EvalMemoryRecord(BaseModel):
+    """One long-term memory entry declared in a scenario fixture."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    memory_type: str | None = None
+    id: str | None = None
+    topics: list[str] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
+
+
+class EvalMemoryFixture(BaseModel):
+    """Pre-seeded AMS memory state for one scenario."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_context: str | None = None
+    user_long_term: list[EvalMemoryRecord] = Field(default_factory=list)
+    asset_context: str | None = None
+    asset_long_term: list[EvalMemoryRecord] = Field(default_factory=list)
+
+
 class EvalScenario(BaseModel):
     """Portable eval scenario contract."""
 
@@ -358,6 +381,7 @@ class EvalScenario(BaseModel):
     knowledge: EvalKnowledgeConfig = Field(default_factory=EvalKnowledgeConfig)
     tools: EvalToolsConfig = Field(default_factory=EvalToolsConfig)
     expectations: EvalExpectations = Field(default_factory=EvalExpectations)
+    memory: EvalMemoryFixture = Field(default_factory=EvalMemoryFixture)
 
     _source_path: Path | None = PrivateAttr(default=None)
 
@@ -399,6 +423,8 @@ __all__ = [
     "EvalExpectations",
     "EvalKnowledgeConfig",
     "EvalLogicalToolRef",
+    "EvalMemoryFixture",
+    "EvalMemoryRecord",
     "EvalToolFailure",
     "EvalToolFailureKind",
     "EvalMCPServerConfig",

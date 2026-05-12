@@ -362,6 +362,8 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         "target-discovery-multi-target-comparison": "prompt-core",
         "target-discovery-known-targets-then-connect": "prompt-core",
         "sev1-escalation-policy": "prompt-policy-curated",
+        "memory-user-preference-honored": "prompt-core",
+        "memory-asset-incident-context": "prompt-core",
     }
     for scenario_id, source_pack in expected_metadata.items():
         metadata_path = golden_metadata_path("prompt", scenario_id)

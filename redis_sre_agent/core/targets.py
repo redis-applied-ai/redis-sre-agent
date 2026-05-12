@@ -1494,6 +1494,23 @@ async def attach_target_matches(
         active_handle=active_handle,
     )
 
+    if selected_bindings:
+        thread = await thread_manager.get_thread(thread_id)
+        thread_ctx = (thread.context if thread else None) or {}
+        existing_refs: List[Dict] = list(thread_ctx.get("referenced_assets") or [])
+        existing_handles = {a["target_handle"] for a in existing_refs if isinstance(a, dict)}
+        new_refs = [
+            {
+                "label": b.display_name,
+                "target_handle": b.target_handle,
+                "target_kind": b.target_kind,
+            }
+            for b in selected_bindings
+            if b.target_handle not in existing_handles
+        ]
+        if new_refs:
+            context_updates["referenced_assets"] = existing_refs + new_refs
+
     await thread_manager.update_thread_context(thread_id, context_updates, merge=True)
     return selected_bindings, generation
 
