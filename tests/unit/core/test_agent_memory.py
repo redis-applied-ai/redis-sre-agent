@@ -421,6 +421,49 @@ class TestPersistTurn:
         )
 
 
+class TestMemorySessionSearchAssetLongTerm:
+    @pytest.mark.asyncio
+    async def test_filtered_search_reports_unadjusted_total(self, memory_settings):
+        # AMS returns 5 memories with 2 preference-shaped on this page,
+        # and reports total=100 across all pages. The session must return
+        # filtered memories but keep total=100 — subtracting the per-page
+        # removed count would shift the denominator on every page.
+        ams_result = SimpleNamespace(
+            memories=[
+                SimpleNamespace(text="Cluster had OOM incident", memory_type="semantic"),
+                SimpleNamespace(text="Operator prefers concise replies", memory_type="semantic"),
+                SimpleNamespace(text="Replication lag spiked", memory_type="semantic"),
+                SimpleNamespace(text="User prefers exec-summary-first", memory_type="semantic"),
+                SimpleNamespace(text="Backup window is 2am UTC", memory_type="semantic"),
+            ],
+            total=100,
+        )
+        mock_client = AsyncMock()
+        mock_client.search_long_term_memory = AsyncMock(return_value=ams_result)
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            async with service.open_session() as session:
+                result = await session.search_asset_long_term(
+                    query="incident",
+                    instance_id="i1",
+                    cluster_id=None,
+                    limit=5,
+                    offset=0,
+                    filter_preferences=True,
+                )
+
+        texts = [m.text for m in result.memories]
+        assert "Operator prefers concise replies" not in texts
+        assert "User prefers exec-summary-first" not in texts
+        assert len(result.memories) == 3
+        # Total must remain the unadjusted AMS value so the UI denominator
+        # is stable across pages.
+        assert result.total == 100
+
+
 class TestPrepareAgentTurnMemory:
     @pytest.mark.asyncio
     async def test_prepare_agent_turn_memory_forwards_cluster_context(self):

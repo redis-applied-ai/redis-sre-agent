@@ -898,10 +898,14 @@ class MemorySession:
         if not filter_preferences:
             return wrapped
         filtered = self._service._filter_asset_memories(wrapped.memories)
-        removed = len(wrapped.memories) - len(filtered)
+        # Report wrapped.total as-is. Subtracting the per-page removed count
+        # gives an unstable estimate (the denominator shifts each page and
+        # never converges on the true filtered total). Keeping the raw AMS
+        # total is a stable upper bound; the UI shows slightly fewer items
+        # than the count but the count itself does not move across pages.
         return LongTermSearchResult(
             memories=filtered,
-            total=max(0, wrapped.total - removed),
+            total=wrapped.total,
             next_offset=wrapped.next_offset,
         )
 
