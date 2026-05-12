@@ -104,6 +104,33 @@ async def test_startup_context_mentions_truncated_skill_inventory():
 
 
 @pytest.mark.asyncio
+async def test_startup_context_reports_actual_skill_count_when_backend_returns_fewer_rows():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(
+                return_value={
+                    "skills": [
+                        {
+                            "name": "Redis Cluster Health Check",
+                            "summary": "Run a fast health check for the cluster.",
+                        }
+                    ],
+                    "total_fetched": 100,
+                }
+            ),
+        ),
+    ):
+        context = await build_startup_knowledge_context(version="latest", skills_limit=50)
+
+    assert "1 skill shown, 99 more available" in context
+
+
+@pytest.mark.asyncio
 async def test_startup_context_is_empty_without_pinned_docs_or_skills():
     with (
         patch(

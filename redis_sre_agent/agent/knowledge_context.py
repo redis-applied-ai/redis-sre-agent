@@ -69,7 +69,7 @@ def _skills_toc_lines(
     ]
     if total_skills is not None and total_skills > len(skills):
         remaining = total_skills - len(skills)
-        shown = displayed_limit if displayed_limit is not None else len(skills)
+        shown = len(skills)
         lines.append(
             "- This startup inventory is truncated: "
             f"{shown} skill{'s' if shown != 1 else ''} shown, {remaining} more available in the backend. "
