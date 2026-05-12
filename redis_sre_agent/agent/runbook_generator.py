@@ -9,22 +9,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 
-import openai
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
-from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import search_knowledge_base
 from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-
-# Initialize OpenAI client
-openai.api_key = settings.openai_api_key
 
 
 @dataclass

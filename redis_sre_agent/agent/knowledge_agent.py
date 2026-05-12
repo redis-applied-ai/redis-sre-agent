@@ -11,8 +11,8 @@ knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus
 import logging
 from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
@@ -132,7 +132,7 @@ class KnowledgeOnlyAgent:
         logger.info("Knowledge-only agent initialized (tools loaded per-query)")
 
     def _build_workflow(
-        self, tool_mgr: ToolManager, llm_with_tools: ChatOpenAI, emitter: ProgressEmitter
+        self, tool_mgr: ToolManager, llm_with_tools: BaseChatModel, emitter: ProgressEmitter
     ) -> StateGraph:
         """Build the LangGraph workflow for knowledge-only queries.
 
