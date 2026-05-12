@@ -223,6 +223,63 @@ async def test_corrector_memoize_uses_bound_llm_when_tools_present(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_corrector_does_not_rebind_already_bound_llm(monkeypatch):
+    bound_llm = MagicMock()
+    bound_llm.kwargs = {"tools": [{"type": "function", "function": {"name": "knowledge_lookup"}}]}
+    bound_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+    def fail_bind_tools(_adapters):
+        raise AssertionError("already-bound llm should not be rebound")
+
+    bound_llm.bind_tools = fail_bind_tools
+    bound_llm.with_structured_output = MagicMock(
+        return_value=MagicMock(
+            ainvoke=AsyncMock(
+                return_value={
+                    "edited_response": "EDITED",
+                    "edits_applied": ["fixed"],
+                }
+            )
+        )
+    )
+
+    async def direct_memoize(tag, memo_llm, messages):
+        return await memo_llm.ainvoke(messages)
+
+    def dummy_tool(query: str) -> str:
+        return query
+
+    tool = StructuredTool.from_function(
+        func=dummy_tool,
+        name="knowledge_lookup",
+        description="Dummy knowledge tool",
+    )
+
+    graph = build_safety_fact_corrector(bound_llm, [tool], memoize=direct_memoize)
+
+    from redis_sre_agent.core import llm_request_guard as guard_module
+
+    calls = []
+
+    async def fake_guarded_ainvoke(llm_obj, messages, request_kind, metadata=None):
+        calls.append(llm_obj)
+        return await llm_obj.ainvoke(messages)
+
+    monkeypatch.setattr(guard_module, "guarded_ainvoke", fake_guarded_ainvoke)
+
+    await graph.ainvoke(
+        {
+            "messages": [],
+            "budget": 1,
+            "response_text": "Original response",
+            "instance": {},
+        }
+    )
+
+    assert calls[0] is bound_llm
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cache_active", [False, True])
 async def test_ainvoke_memo_avoids_double_guard_for_guarded_proxy(monkeypatch, cache_active):
     agent = SRELangGraphAgent()

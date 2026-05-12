@@ -33,6 +33,15 @@ class CorrectorState(TypedDict, total=False):
     result: Dict[str, Any]
 
 
+def _ensure_tool_bound_llm(base_llm: Any, tool_adapters: List[Any]) -> Any:
+    bound_kwargs = getattr(base_llm, "kwargs", None)
+    if isinstance(bound_kwargs, dict) and bound_kwargs.get("tools"):
+        return base_llm
+    if tool_adapters and hasattr(base_llm, "bind_tools"):
+        return base_llm.bind_tools(tool_adapters)
+    return base_llm
+
+
 def build_safety_fact_corrector(
     base_llm,
     tool_adapters: List[Any],
@@ -47,11 +56,7 @@ def build_safety_fact_corrector(
     """
 
     tool_node = ToolNode(tool_adapters)
-    llm_with_tools = (
-        base_llm.bind_tools(tool_adapters)
-        if tool_adapters and hasattr(base_llm, "bind_tools")
-        else base_llm
-    )
+    llm_with_tools = _ensure_tool_bound_llm(base_llm, tool_adapters)
     memoized_loop_llm = (
         GuardedMemoizeLLMProxy(
             llm_with_tools,
