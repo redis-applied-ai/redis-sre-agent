@@ -1,0 +1,43 @@
+{
+  "required_tool_calls": [
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_overview"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_health_checks"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_databases"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_events"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_alerts"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_nodes"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_topology"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_package_time_series"},
+    {"provider_family": "mcp", "server_name": "analyzer_eval", "operation": "analyzer_get_database_slowlog"}
+  ],
+  "required_response_patterns": [
+    "(?s)^# Cluster Health Check: .+?\\n\\n\\*\\*Package ID:\\*\\* .+?\\n\\*\\*Cluster:\\*\\* .+?\\n\\*\\*Software version:\\*\\* .+?\\n\\*\\*Nodes:\\*\\* .+?\\n\\*\\*Databases:\\*\\* .+?\\n\\*\\*Analysis date:\\*\\* .+?\\n\\n## Summary\\n.+?## Cluster-level findings\\n.+?## Node-level findings\\n.+?## Database-level findings\\n.+?## Common Issues Rollup\\n.+?## TAM Manual Review Required\\n.+?## Skipped Checks\\s*$",
+    "(?m)^### orders-cache \\(bdb-101\\)$",
+    "(?m)^### Server Side$",
+    "(?m)^### Client Side$",
+    "(?m)^### Operational$",
+    "(?m)^- \\*\\*[^*]+\\*\\*: .+"
+  ],
+  "required_findings": [
+    "cluster health check",
+    "findings count by severity",
+    "cluster-level findings",
+    "node-level findings",
+    "database-level findings",
+    "orders-cache (bdb-101)",
+    "top 3 commands by count",
+    "cluster cpu rose from 42% to 71%",
+    "node 2 peaked at 88% cpu",
+    "common issues rollup",
+    "tam manual review required",
+    "skipped checks"
+  ],
+  "forbidden_claims": [
+    "please send the slowlog first",
+    "i need the analyzer ui"
+  ],
+  "required_sources": [
+    "redis-cluster-health-check"
+  ]
+}

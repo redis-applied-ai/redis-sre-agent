@@ -1,0 +1,1 @@
+{"package_id":"pkg-eval-001","database_id":"bdb-101","database_name":"orders-cache","commands":[{"command":"FT.SEARCH","calls":124000},{"command":"FT.AGGREGATE","calls":18000},{"command":"DEL","calls":6400}]}
