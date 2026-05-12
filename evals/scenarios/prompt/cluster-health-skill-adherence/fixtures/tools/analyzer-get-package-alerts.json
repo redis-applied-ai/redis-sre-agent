@@ -1,0 +1,1 @@
+{"package_id":"pkg-eval-001","alerts":[{"name":"Cluster RAM headroom","state":"warning","current_value_gb":12,"threshold_gb":15},{"name":"Node CPU imbalance","state":"warning","current_value_pct":88,"threshold_pct":80}]}

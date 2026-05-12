@@ -1,0 +1,74 @@
+display_name: Redis Cluster Health Check
+preferred_entrypoint: SKILL.md
+output_contract:
+  mode: markdown
+  required_preamble_lines:
+    - "# Cluster Health Check: <cluster name>"
+    - "**Package ID:** <package_id>"
+    - "**Cluster:** <cluster name>"
+    - "**Software version:** <version or unknown>"
+    - "**Nodes:** <node count>"
+    - "**Databases:** <database count>"
+    - "**Analysis date:** <today>"
+  required_order:
+    - "## Summary"
+    - "## Cluster-level findings"
+    - "## Node-level findings"
+    - "## Database-level findings"
+    - "## Common Issues Rollup"
+    - "## TAM Manual Review Required"
+    - "## Skipped Checks"
+  required_subsections:
+    - "### Server Side"
+    - "### Client Side"
+    - "### Operational"
+  required_patterns:
+    - description: "Leave a blank line between the title and the metadata preamble."
+      pattern: '(?s)^# Cluster Health Check: .+?\n\n\*\*Package ID:\*\*'
+    - description: "Under Summary, include the `**Findings count by severity:**` block with Critical, Warning, and Informational bullets."
+      pattern: '(?s)\*\*Findings count by severity:\*\*\n- Critical: .+?\n- Warning: .+?\n- Informational: .+?'
+    - description: "Include at least one database subsection heading such as `### orders-cache (bdb-101)` under Database-level findings."
+      pattern: '(?m)^### .+ \([^)]+\)$'
+    - description: "Write findings as markdown bullets in the form `- **<finding label>**: ...`, not numbered lists."
+      pattern: '(?m)^- \*\*[^*]+\*\*: .+'
+    - description: "End the document after the required `## Skipped Checks` section without adding a footer."
+      pattern: '(?s)## Skipped Checks\s*$'
+  must_include_even_if_empty: true
+  instructions:
+    - "Return one markdown document only."
+    - "Do not rename required headings."
+    - "Use the required headings verbatim and in order."
+    - "Include all required sections even when brief."
+    - "Include the findings-count block exactly under the Summary section."
+    - "Do not use numbered lists for findings; use markdown bullets."
+    - "Do not append any footer after the final required section."
+  validation_checklist:
+    - "Confirm the title is followed by one blank line before the metadata preamble."
+    - "Confirm Summary includes the findings-count block with Critical, Warning, and Informational bullets."
+    - "Confirm Database-level findings uses `### <database name> (<id>)` subsections."
+    - "Confirm findings are markdown bullets, not numbered lists."
+    - "Confirm the document ends after `## Skipped Checks` with no footer."
+workflow_contract:
+  required_tool_calls:
+    - analyzer_get_package
+    - analyzer_get_package_overview
+    - analyzer_get_package_health_checks
+    - analyzer_get_package_databases
+    - analyzer_get_package_events
+    - analyzer_get_package_alerts
+    - analyzer_get_package_nodes
+    - analyzer_get_package_topology
+    - analyzer_get_package_time_series
+    - analyzer_get_database_slowlog
+  required_followups:
+    - "Always fetch cluster-scope time series with interval=5m before finalizing the report."
+    - "If the cluster view suggests node imbalance, fetch node-scope time series for the affected node before finalizing the report."
+    - "When a Slowlog health check fires, fetch raw slowlog entries for the affected database before writing the finding."
+    - "Prefer analyzer_get_package for an exact package id before relying on derived package context."
+  progress_checklist:
+    - "Resolve the package by exact id before relying on derived package context."
+    - "Gather overview, health checks, databases, alerts, events, nodes, topology, and cluster time series."
+    - "If cluster metrics suggest node imbalance, gather node-scope time series for the affected node."
+    - "For each Slowlog finding, gather raw slowlog evidence and corroborating command stats before writing the report."
+    - "Draft the report in the exact markdown skeleton required by the output contract."
+    - "Run the validation checklist and repair the answer until every required heading and pattern is satisfied."
