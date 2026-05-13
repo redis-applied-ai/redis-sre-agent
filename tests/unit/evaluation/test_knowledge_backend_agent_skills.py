@@ -36,7 +36,31 @@ def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
                 "summary: Check maintenance state before disruptive actions.",
                 "---",
                 "",
-                "Agent Skills entrypoint body",
+                "# Redis Maintenance Triage",
+                "",
+                "## Output structure",
+                "",
+                "Return one markdown document in this shape:",
+                "",
+                "```markdown",
+                "# Maintenance Review: <cluster name>",
+                "",
+                "**Cluster:** <cluster name>",
+                "**Mode:** <maintenance status>",
+                "",
+                "## Summary",
+                "",
+                "**Findings count by severity:**",
+                "- Critical: <n>",
+                "- Warning: <n>",
+                "- Informational: <n>",
+                "",
+                "## Actions",
+                "",
+                "### <database name> (<id>)",
+                "",
+                "- **<finding label>**: <observation>. <recommendation>.",
+                "```",
             ]
         ),
         encoding="utf-8",
@@ -54,16 +78,6 @@ def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
             [
                 "display_name: Redis Maintenance Triage",
                 "preferred_entrypoint: SKILL.md",
-                "output_contract:",
-                "  mode: markdown",
-                "  validation_checklist:",
-                "    - Confirm summary heading is present.",
-                "  required_order:",
-                "    - '## Summary'",
-                "    - '## Actions'",
-                "  required_patterns:",
-                "    - description: Include a summary paragraph.",
-                "      pattern: '(?s)## Summary\\n.+'",
                 "workflow_contract:",
                 "  required_tool_calls:",
                 "    - inspect_maintenance_mode",
@@ -144,22 +158,84 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
     ]
     assert agent_skill["output_contract"] == {
         "mode": "markdown",
-        "validation_checklist": ["Confirm summary heading is present."],
+        "instructions": [
+            "Return one markdown document only.",
+            "Do not rename required headings.",
+            "Use the required headings verbatim and in order.",
+            "Include all required sections even when brief.",
+        ],
+        "validation_checklist": [
+            "Confirm the final answer follows the markdown template from the skill's Output structure section.",
+            "Confirm Summary includes the findings-count block with Critical, Warning, and Informational bullets.",
+            "Confirm Database-level findings uses `### <database name> (<id>)` subsections.",
+            "Confirm findings are markdown bullets, not numbered lists.",
+            "Confirm the document ends after `## Actions` with no footer.",
+        ],
+        "required_preamble_lines": [
+            "# Maintenance Review: <cluster name>",
+            "**Cluster:** <cluster name>",
+            "**Mode:** <maintenance status>",
+        ],
         "required_order": ["## Summary", "## Actions"],
+        "required_subsections": ["### <database name> (<id>)"],
         "required_patterns": [
             {
-                "description": "Include a summary paragraph.",
-                "pattern": "(?s)## Summary\\n.+",
-            }
+                "description": "Put `# Maintenance Review: <cluster name>` on its own line, add a blank line, then place `**Cluster:**`, `**Mode:**` on separate lines.",
+                "pattern": "(?s)^\\#\\ Maintenance\\ Review:\\ .+?\\\n\\\n\\*\\*Cluster:\\*\\*\\ .+?\\\n\\*\\*Mode:\\*\\*\\ .+?",
+            },
+            {
+                "description": "Include the `**Findings count by severity:**` block with Critical, Warning, and Informational bullets under Summary.",
+                "pattern": "(?s)\\*\\*Findings count by severity:\\*\\*\\n- Critical: .+?\\n- Warning: .+?\\n- Informational: .+?",
+            },
+            {
+                "description": "Include per-database subsection headings such as `### orders-cache (bdb-101)`.",
+                "pattern": "(?m)^### .+ \\([^)]+\\)$",
+            },
+            {
+                "description": "Write findings as markdown bullets in the form `- **<finding label>**: ...`.",
+                "pattern": "(?m)^- \\*\\*[^*]+\\*\\*: .+",
+            },
+            {
+                "description": "End the document after the required `## Actions` section without adding a footer.",
+                "pattern": "(?s)\\#\\#\\ Actions\\s*$",
+            },
         ],
+        "must_include_even_if_empty": True,
+        "template": "\n".join(
+            [
+                "# Maintenance Review: <cluster name>",
+                "",
+                "**Cluster:** <cluster name>",
+                "**Mode:** <maintenance status>",
+                "",
+                "## Summary",
+                "",
+                "**Findings count by severity:**",
+                "- Critical: <n>",
+                "- Warning: <n>",
+                "- Informational: <n>",
+                "",
+                "## Actions",
+                "",
+                "### <database name> (<id>)",
+                "",
+                "- **<finding label>**: <observation>. <recommendation>.",
+            ]
+        ),
     }
     assert agent_skill["workflow_contract"] == {
         "required_tool_calls": ["inspect_maintenance_mode"],
         "progress_checklist": ["Read maintenance state first."],
     }
     assert agent_skill["contract_summary"][0].startswith("This skill defines a binding output contract.")
-    assert "Output pattern: Include a summary paragraph." in agent_skill["contract_summary"]
-    assert "Validation checklist: Confirm summary heading is present." in agent_skill["contract_summary"]
+    assert (
+        "Output pattern: Include the `**Findings count by severity:**` block with Critical, Warning, and Informational bullets under Summary."
+        in agent_skill["contract_summary"]
+    )
+    assert (
+        "Validation checklist: Confirm Summary includes the findings-count block with Critical, Warning, and Informational bullets."
+        in agent_skill["contract_summary"]
+    )
     assert "Workflow checklist: Read maintenance state first." in agent_skill["contract_summary"]
     assert agent_skill_resource["resource_kind"] == "reference"
     assert agent_skill_resource["content"] == "Checklist body"

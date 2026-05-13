@@ -434,6 +434,12 @@ class TestSkillContractRuntimeRepair:
                                 "description": "End the document after the `## Skipped Checks` section without adding a footer.",
                             }
                         ],
+                        "template": (
+                            "# Cluster Health Check: <cluster name>\n\n"
+                            "**Package ID:** <package_id>\n"
+                            "## Summary\n\n"
+                            "## Skipped Checks"
+                        ),
                     },
                     "workflow_contract": {
                         "required_tool_calls": ["analyzer_get_package"],
@@ -458,6 +464,9 @@ class TestSkillContractRuntimeRepair:
         assert repaired.startswith("# Cluster Health Check: checkout-prod-cluster")
         assert repaired.endswith("## Skipped Checks\nnone")
         agent.llm.ainvoke.assert_awaited_once()
+        repair_messages = agent.llm.ainvoke.await_args.args[0]
+        assert "Required markdown template:" in repair_messages[0].content
+        assert "# Cluster Health Check: <cluster name>" in repair_messages[0].content
 
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""

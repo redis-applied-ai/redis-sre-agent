@@ -782,7 +782,10 @@ class AFSWorkspaceSkillBackend:
         if not isinstance(ui_metadata, Mapping):
             ui_metadata = {}
         ui_metadata = dict(ui_metadata)
-        output_contract = extract_output_contract(ui_metadata)
+        output_contract = extract_output_contract(
+            ui_metadata,
+            skill_content=entrypoint_content,
+        )
         workflow_contract = extract_workflow_contract(ui_metadata)
         return {
             "skill_name": str(skill.get("skillSlug", default_skill_name)).strip()
