@@ -18,7 +18,11 @@ from redis_sre_agent.knowledge_pack.checksums import (
     write_checksums_file,
 )
 from redis_sre_agent.knowledge_pack.loader import load_knowledge_pack
-from redis_sre_agent.knowledge_pack.models import KnowledgePackManifest, RecordCounts
+from redis_sre_agent.knowledge_pack.models import (
+    ActiveKnowledgePackRegistry,
+    KnowledgePackManifest,
+    RecordCounts,
+)
 
 
 def _write_artifact_batch(root: Path, batch_date: str) -> None:
@@ -239,3 +243,14 @@ async def test_auto_mode_falls_back_to_reingest(
     assert result["mode"] == "reingest"
     assert result["ingestion"]["chunks_indexed"] == 1
     assert await async_redis_client.exists(RedisKeys.knowledge_pack_active()) == 1
+
+    registry_payload = await async_redis_client.get(RedisKeys.knowledge_pack_active())
+    assert registry_payload is not None
+    registry = ActiveKnowledgePackRegistry.model_validate_json(registry_payload)
+    assert registry.schema_hash == compute_schema_hash(airgap_settings.vector_dim)
+    assert registry.embedding_fingerprint == compute_embedding_fingerprint(
+        embedding_provider=airgap_settings.embedding_provider,
+        embedding_model=airgap_settings.embedding_model,
+        vector_dim=airgap_settings.vector_dim,
+        schema_hash=compute_schema_hash(airgap_settings.vector_dim),
+    )

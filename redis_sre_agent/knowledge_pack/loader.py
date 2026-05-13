@@ -155,14 +155,22 @@ async def _materialize_registry_from_live_index(
         else:
             document_meta_keys.append(normalized_key)
 
+    runtime_schema_hash = compute_schema_hash(config.vector_dim)
+    runtime_embedding_fingerprint = compute_embedding_fingerprint(
+        embedding_provider=config.embedding_provider,
+        embedding_model=config.embedding_model,
+        vector_dim=config.vector_dim,
+        schema_hash=runtime_schema_hash,
+    )
+
     return ActiveKnowledgePackRegistry(
         pack_id=manifest.pack_id,
         release_tag=manifest.release_tag,
         pack_profile=manifest.pack_profile,
         loaded_at=_utcnow(),
         batch_date=manifest.batch_date,
-        schema_hash=manifest.schema_hash,
-        embedding_fingerprint=manifest.embedding_fingerprint,
+        schema_hash=runtime_schema_hash,
+        embedding_fingerprint=runtime_embedding_fingerprint,
         chunk_keys=sorted(chunk_keys),
         document_meta_keys=sorted(document_meta_keys),
         source_meta_keys=sorted(source_meta_keys),
