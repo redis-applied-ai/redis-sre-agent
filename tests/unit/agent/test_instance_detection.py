@@ -152,6 +152,30 @@ async def test_detect_instance_type_llm_error():
     assert detected_type == "unknown"
 
 
+@pytest.mark.asyncio
+async def test_detect_instance_type_memoize_still_uses_guarded_ainvoke(
+    redis_enterprise_instance, monkeypatch
+):
+    """Test that naive memoize callbacks still invoke the request guard."""
+
+    mock_llm = MagicMock()
+
+    async def naive_memoize(tag, memo_llm, messages):
+        return await memo_llm.ainvoke(messages)
+
+    guarded = AsyncMock(return_value=MagicMock(content="redis_enterprise"))
+    monkeypatch.setattr("redis_sre_agent.core.llm_request_guard.guarded_ainvoke", guarded)
+
+    detected_type = await _detect_instance_type_with_llm(
+        redis_enterprise_instance,
+        mock_llm,
+        memoize=naive_memoize,
+    )
+
+    assert detected_type == "redis_enterprise"
+    guarded.assert_awaited_once()
+
+
 def test_mask_credentials_comprehensive():
     """Comprehensive test of credential masking edge cases."""
     test_cases = [

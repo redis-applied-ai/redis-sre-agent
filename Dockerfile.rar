@@ -1,0 +1,15 @@
+FROM 608528796300.dkr.ecr.us-west-2.amazonaws.com/tenant_local/proj_sre_runtime_20260325/agent_sre_runtime_20260325:build_20260501_235418
+
+ENV SKILL_BACKEND_KIND=custom \
+    SKILL_BACKEND_CLASS=redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend \
+    SKILLS_API_BASE_URL=http://rar-api.rar-dev.svc.cluster.local:8080 \
+    SKILLS_API_TIMEOUT_SECONDS=15
+
+WORKDIR /app
+
+# Reuse the current production runtime image and overlay only the updated
+# source tree. The existing venv and system dependencies remain intact.
+# Resident-worker execution imports from /workspace, while direct container
+# introspection resolves from /app, so both trees must be refreshed together.
+COPY . /app
+COPY . /workspace

@@ -3,7 +3,7 @@
 from redis_sre_agent.agent.chat_agent import CHAT_SYSTEM_PROMPT
 from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
 from redis_sre_agent.agent.knowledge_context import _tool_instruction_lines_for_categories
-from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+from redis_sre_agent.agent.prompts import REDIS_COMMAND_SEMANTICS_GUARDRAILS, SRE_SYSTEM_PROMPT
 from redis_sre_agent.tools.models import ToolCapability, ToolDefinition
 
 
@@ -56,6 +56,17 @@ def test_chat_prompt_mentions_support_ticket_usage():
     assert "general knowledge search excludes support tickets" in prompt
 
 
+def test_chat_prompt_requires_explicit_skill_retrieval_and_scope_evidence():
+    prompt = CHAT_SYSTEM_PROMPT.lower()
+    assert "inventory only" in prompt
+    assert "`get_skill`" in CHAT_SYSTEM_PROMPT
+    assert "health check skill" in prompt
+    assert "response as satisfying a skill" in prompt
+    assert "captured package contents" in prompt
+    assert "hostname or hostname fragment is not enough" in prompt
+    assert "exact live match" in prompt
+
+
 def test_knowledge_prompt_mentions_support_tickets():
     prompt = KNOWLEDGE_SYSTEM_PROMPT.lower()
     assert "support ticket" in prompt
@@ -67,3 +78,35 @@ def test_sre_prompt_mentions_support_ticket_usage():
     assert "category tools in your batch" in prompt
     assert "support tickets" in prompt
     assert "general knowledge search excludes support tickets" in prompt
+
+
+def test_sre_prompt_requires_explicit_skill_retrieval_and_scope_evidence():
+    prompt = SRE_SYSTEM_PROMPT.lower()
+    assert "inventory only" in prompt
+    assert "`get_skill`" in SRE_SYSTEM_PROMPT
+    assert "health-check skill" in prompt
+    assert "response as satisfying a skill" in prompt
+    assert "captured evidence, not current live state" in prompt
+    assert "resolve the target before making live-state claims" in prompt
+
+
+def test_chat_prompt_includes_command_semantics_guardrails():
+    prompt = CHAT_SYSTEM_PROMPT.lower()
+    assert "do not infer connection counts from `memory stats`".lower() in prompt
+    assert "`info clients`" in prompt
+    assert "`client list`" in prompt
+    assert "clients.normal" in prompt
+
+
+def test_sre_prompt_includes_command_semantics_guardrails():
+    prompt = SRE_SYSTEM_PROMPT.lower()
+    assert "do not infer connection counts from `memory stats`".lower() in prompt
+    assert "`info clients`" in prompt
+    assert "`client list`" in prompt
+    assert "clients.normal" in prompt
+
+
+def test_chat_and_sre_prompts_share_guardrails_constant():
+    shared = REDIS_COMMAND_SEMANTICS_GUARDRAILS.strip()
+    assert shared in CHAT_SYSTEM_PROMPT
+    assert shared in SRE_SYSTEM_PROMPT

@@ -219,7 +219,6 @@ async def test_knowledge_agent_prompt_scenario_materializes_startup_context():
     backend = build_fixture_knowledge_backend(scenario)
 
     startup_context = await build_startup_knowledge_context(
-        query=scenario.execution.query,
         version=scenario.knowledge.version,
         available_tools=[],
         knowledge_backend=backend,
@@ -362,6 +361,8 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         "target-discovery-multi-target-comparison": "prompt-core",
         "target-discovery-known-targets-then-connect": "prompt-core",
         "sev1-escalation-policy": "prompt-policy-curated",
+        "memory-user-preference-honored": "prompt-core",
+        "memory-asset-incident-context": "prompt-core",
     }
     for scenario_id, source_pack in expected_metadata.items():
         metadata_path = golden_metadata_path("prompt", scenario_id)

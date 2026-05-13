@@ -49,6 +49,7 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `embedding_model` | `EMBEDDING_MODEL` | `str` | `text-embedding-3-small` | Embedding model name. |
 | `vector_dim` | `VECTOR_DIM` | `int` | `1536` | Must match embedding model output dimensions. |
 | `embeddings_cache_ttl` | `EMBEDDINGS_CACHE_TTL` | `int \| None` | `604800` | Embedding cache TTL in seconds; `None` means no expiration. |
+| `vectorizer_factory` | `VECTORIZER_FACTORY` | `str \| None` | `None` | Dot-path to custom vectorizer factory returning an object with `aembed()`/`aembed_many()`. |
 
 ### Knowledge Packs
 
@@ -96,6 +97,7 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `llm_timeout` | `LLM_TIMEOUT` | `float` | `180.0` | LLM HTTP timeout in seconds. |
 | `llm_factory` | `LLM_FACTORY` | `str \| None` | `None` | Dot-path to custom LangChain chat model factory. |
 | `async_openai_client_factory` | `ASYNC_OPENAI_CLIENT_FACTORY` | `str \| None` | `None` | Dot-path to custom AsyncOpenAI-compatible client factory. |
+| `vectorizer_factory` | `VECTORIZER_FACTORY` | `str \| None` | `None` | Dot-path to custom embeddings/vectorizer factory. |
 
 ### Monitoring
 
@@ -134,6 +136,27 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | Field | Environment Variable | Type | Default | Notes |
 |---|---|---|---|---|
 | `mcp_servers` | `MCP_SERVERS` | `dict[str, MCPServerConfig]` | Empty dict | JSON object of MCP server definitions. No MCP integrations are enabled unless you configure them. |
+
+### Skill Backend
+
+| Field | Environment Variable | Type | Default | Notes |
+|---|---|---|---|---|
+| `skill_roots` | `SKILL_ROOTS` | `list[str]` | `[]` | Extra filesystem roots to scan for Agent Skills packages during ingestion. |
+| `skill_backend_kind` | `SKILL_BACKEND_KIND` | `Literal["redis", "custom"]` | `redis` | Select the shipped Redis backend or a custom backend implementation. |
+| `skill_backend_class` | `SKILL_BACKEND_CLASS` | `str \| None` | `None` | Dot-path to the custom backend class when `skill_backend_kind=custom`. |
+| `skills_api_base_url` | `SKILLS_API_BASE_URL` | `str \| None` | `None` | Base URL for the runtime-owned Skills facade used by the shipped proxy-backed workspace backend. |
+| `skills_api_tenant_id` | `SKILLS_API_TENANT_ID` | `str \| None` | `None` | Tenant id sent to the runtime-owned Skills facade. |
+| `skills_api_project_id` | `SKILLS_API_PROJECT_ID` | `str \| None` | `None` | Project id sent to the runtime-owned Skills facade. |
+| `skills_api_agent_id` | `SKILLS_API_AGENT_ID` | `str \| None` | `None` | Agent app id sent to the runtime-owned Skills facade. |
+| `skills_api_token` | `SKILLS_API_TOKEN` | `str \| None` | `None` | Bearer token for the runtime-owned Skills facade. Required when using the shipped workspace backend. |
+| `skills_api_timeout_seconds` | `SKILLS_API_TIMEOUT_SECONDS` | `float` | `15.0` | HTTP timeout in seconds for the runtime-owned Skills facade. |
+| `skill_reference_char_budget` | `SKILL_REFERENCE_CHAR_BUDGET` | `int` | `12000` | Maximum characters returned by `get_skill_resource` before truncation. |
+
+Compatibility note:
+- The shipped `AFSWorkspaceSkillBackend` also honors the `RAR_SKILLS_API_*` environment variables
+  used by the control-plane deployment wiring.
+- In runtime deployments it can also read the runner-provided `RAK_API_TOKEN`/`RAK_SERVICE_TOKEN`
+  values. Direct AFS fallback is not part of the worker skills path.
 
 `MCPServerConfig` object keys:
 

@@ -165,7 +165,6 @@ async def test_knowledge_helpers_dispatch_to_eval_backend():
 async def test_startup_context_uses_eval_knowledge_backend():
     with eval_injection_scope(knowledge_backend=_FakeKnowledgeBackend()):
         context = await build_startup_knowledge_context(
-            query="investigate maintenance mode",
             available_tools=[],
         )
 

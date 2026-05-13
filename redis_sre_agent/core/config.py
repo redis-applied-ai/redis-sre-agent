@@ -395,6 +395,16 @@ class Settings(BaseSettings):
             "reingest from bundled artifacts."
         ),
     )
+    vectorizer_factory: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dot-path to a custom vectorizer factory function. The function must accept "
+            "(provider: str, model: str | None, config: Settings, cache: EmbeddingsCache, "
+            "**kwargs) and return an object implementing aembed()/aembed_many(). "
+            "Example: 'mypackage.embeddings.custom_vectorizer_factory'. "
+            "If not set, uses the default OpenAI or HuggingFace RedisVL vectorizer factory."
+        ),
+    )
 
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
@@ -485,6 +495,51 @@ class Settings(BaseSettings):
             "If not set, uses the default AsyncOpenAI factory."
         ),
     )
+    pii_remediation_mode: Literal["off", "detect", "redact", "block"] = Field(
+        default="off",
+        description=(
+            "Policy applied to outbound LLM request text. 'off' disables inspection, "
+            "'detect' records findings only, 'redact' masks matched text, and 'block' "
+            "rejects requests containing matched sensitive spans."
+        ),
+    )
+    pii_remediation_factory: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dot-path to a custom PII remediator factory function. The function must return "
+            "an object implementing the PIIRemediator protocol. If not set, uses the default "
+            "local Privacy Filter implementation."
+        ),
+    )
+    pii_remediation_model: str = Field(
+        default="openai/privacy-filter",
+        description="Model identifier for the default local PII remediator.",
+    )
+    pii_remediation_max_chars: int = Field(
+        default=32000,
+        gt=0,
+        description="Maximum characters to send through one PII remediation pass.",
+    )
+    pii_remediation_categories: List[str] = Field(
+        default_factory=lambda: [
+            "private_person",
+            "private_address",
+            "private_email",
+            "private_phone",
+            "private_url",
+            "private_date",
+            "account_number",
+            "secret",
+        ],
+        description="Enabled category names for outbound PII remediation.",
+    )
+    pii_remediation_fail_open_for_redact: bool = Field(
+        default=False,
+        description=(
+            "When true, redact mode will allow the original request through if remediation "
+            "fails. Default is fail-closed."
+        ),
+    )
 
     # Monitoring Integration (optional)
     prometheus_url: Optional[str] = Field(default=None, description="Prometheus server URL")
@@ -559,9 +614,38 @@ class Settings(BaseSettings):
         description="Dot-path to a custom SkillBackend implementation when "
         "skill_backend_kind='custom'.",
     )
+    skills_api_base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for the runtime-owned Skills facade when using the proxy-backed "
+        "workspace skill backend.",
+    )
+    skills_api_tenant_id: Optional[str] = Field(
+        default=None,
+        description="Tenant id used when calling the runtime-owned Skills facade.",
+    )
+    skills_api_project_id: Optional[str] = Field(
+        default=None,
+        description="Project id used when calling the runtime-owned Skills facade.",
+    )
+    skills_api_agent_id: Optional[str] = Field(
+        default=None,
+        description="Agent app id used when calling the runtime-owned Skills facade.",
+    )
+    skills_api_token: Optional[str] = Field(
+        default=None,
+        description="Optional bearer token for the runtime-owned Skills facade.",
+    )
+    skills_api_timeout_seconds: float = Field(
+        default=15.0,
+        description="HTTP timeout in seconds for the runtime-owned Skills facade.",
+    )
     skill_reference_char_budget: int = Field(
         default=12000,
         description="Character budget for explicit skill resource retrieval responses.",
+    )
+    startup_skills_toc_limit: int = Field(
+        default=50,
+        description="Maximum number of skills to inject into the startup prompt TOC.",
     )
 
     target_integrations: TargetIntegrationsConfig = Field(

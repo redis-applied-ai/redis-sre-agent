@@ -7,7 +7,7 @@
 # - All dependencies must be pre-bundled
 #
 # Key differences from standard Dockerfile:
-# - Pre-downloads HuggingFace embedding model (no runtime downloads)
+# - Pre-downloads HuggingFace runtime models (no runtime downloads)
 # - Bundles MCP server dependencies (no npx -y at runtime)
 # - Removes network-dependent build steps
 # - Ships with pre-built knowledge base artifacts
@@ -98,15 +98,25 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # =============================================================================
 FROM python:3.12-slim AS model-downloader
 
-RUN pip install --no-cache-dir sentence-transformers requests
+RUN pip install --no-cache-dir "transformers>=5.8.0" sentence-transformers requests
 
-# Download the default air-gap embedding model
-# This caches the model in /root/.cache/huggingface
+# Cache all HuggingFace assets in a path we can copy into the runtime image.
 ENV HF_HOME=/models/huggingface
+
+# Download the default local Privacy Filter model used by outbound remediation.
+RUN python -c "from transformers import pipeline; \
+    pipeline( \
+        task='token-classification', \
+        model='openai/privacy-filter', \
+        tokenizer='openai/privacy-filter', \
+        aggregation_strategy='simple' \
+    )"
+
+# Download the default air-gap embedding model.
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
-# Also download a larger model option
+# Also download a larger model option.
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('sentence-transformers/all-mpnet-base-v2')"
 

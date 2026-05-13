@@ -24,6 +24,7 @@ from redis_sre_agent.core.clusters import RedisCluster
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.core.llm_helpers import create_llm, create_mini_llm
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
 from redis_sre_agent.core.progress import (
     NullEmitter,
     ProgressEmitter,
@@ -50,9 +51,10 @@ from .checkpointing import (
     persist_checkpoint_metadata,
     resolve_graph_thread_id,
 )
-from .helpers import build_result_envelope
+from .helpers import build_result_envelope, extract_last_ai_response
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
+from .prompts import REDIS_COMMAND_SEMANTICS_GUARDRAILS
 from .tool_execution import execute_tool_calls_with_gate
 
 logger = logging.getLogger(__name__)
@@ -69,7 +71,7 @@ def _format_exception_message(exc: Exception) -> str:
     return type(exc).__name__
 
 
-CHAT_SYSTEM_PROMPT = """You are a Redis SRE agent with access to tools for investigating Redis deployments.
+CHAT_SYSTEM_PROMPT = f"""You are a Redis SRE agent with access to tools for investigating Redis deployments.
 
 ## Your Approach - ITERATIVE INVESTIGATION
 
@@ -104,13 +106,24 @@ For metrics/logs:
 For target discovery:
 - If the user asks what Redis targets you know about, call `list_known_redis_targets`
 - If the user describes a target but has not given `instance_id` or `cluster_id`, call `resolve_redis_targets` before making live-state claims
+- Only treat target discovery as confirmed when it returns an exact live match. If the match is fuzzy, partial, or ambiguous, ask the user to confirm the target before you attach tools or describe live state
 - If the user asks to compare or investigate multiple targets, call `resolve_redis_targets` with `allow_multiple=true`, keep the attached target set, and gather evidence per target before comparing
 - If the user asks both "what do you know about?" and asks to drill into one target in the same turn, list first, then resolve the chosen target and continue with the attached live tools
+- A hostname or hostname fragment is not enough to assume a live Redis target. If target discovery does not return an exact live match, do not attach or describe a different Redis deployment as if it were that hostname
 
 For historical incident context (if `tickets` tools are available):
 - Use tickets tools instead of general knowledge search because general knowledge search excludes support tickets
 - Search support tickets with concrete identifiers (cluster name/host, error strings)
 - Fetch the most relevant ticket record for full details
+
+For skills, runbooks, and Analyzer-backed workflows:
+- A skill name shown in startup context is inventory only, not proof that you retrieved or executed that skill
+- If a listed or requested skill is relevant, fetch it with `get_skill` before claiming you followed it or improvising the workflow from memory
+- Do not say you "used the health check skill", "followed the runbook", or "reviewed the support ticket" unless you actually retrieved that artifact in this conversation
+- Do not present a response as satisfying a skill unless you successfully retrieved and followed the skill
+- If the user asks for a health check, cluster audit, Analyzer review, or support-package style finding, prefer the relevant skill and Analyzer-backed evidence over ad hoc live Redis diagnostics unless the user explicitly names a live instance/cluster or target discovery returns an exact live match
+- If the request only includes a hostname and it does not resolve exactly as a live target, ask for package/account/cluster context or continue with the Analyzer/skill workflow instead of guessing
+- Support-package findings describe captured package contents, not the current live state of a hostname or cluster
 
 Only call categories that are available in your current tool list.
 
@@ -126,6 +139,8 @@ Only call categories that are available in your current tool list.
 - Start with the most likely source of relevant info
 - Be conversational about what you're finding and what you'll check next
 - For truly exhaustive multi-topic analysis, suggest "deep triage"
+
+{REDIS_COMMAND_SEMANTICS_GUARDRAILS}
 
 ## Redis Enterprise / Redis Cloud Notes
 - For managed Redis, INFO output can be misleading
@@ -514,14 +529,7 @@ class ChatAgent:
                 if startup_system_prompt is None or (
                     iteration_count == 0 and not startup_prompt_initialized
                 ):
-                    context_query = ""
-                    for message in reversed(messages):
-                        if isinstance(message, HumanMessage):
-                            context_query = str(message.content or "")
-                            break
-
                     startup_context = await build_startup_knowledge_context(
-                        query=context_query,
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
                     )
@@ -539,7 +547,11 @@ class ChatAgent:
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             with tracer.start_as_current_span("chat_agent_node"):
-                response = await runtime["llm_with_expand"].ainvoke(messages)
+                response = await guarded_ainvoke(
+                    runtime["llm_with_expand"],
+                    messages,
+                    request_kind="chat_agent.agent_node",
+                )
 
             # Persist only the original workflow state messages plus response.
             # If we injected a SystemMessage just for this invocation, keep it ephemeral.
@@ -770,7 +782,6 @@ class ChatAgent:
 
             # Build initial messages with shared startup context (pinned docs, skills, tool usage)
             startup_context = await build_startup_knowledge_context(
-                query=query,
                 version="latest",
                 available_tools=tools,
             )
@@ -886,18 +897,12 @@ User Query: {query}"""
                     tool_envelopes = final_state.get("signals_envelopes", [])
 
                     messages = final_state.get("messages", [])
-                    if messages:
-                        last_message = messages[-1]
-                        if isinstance(last_message, AIMessage):
-                            response = AgentResponse(
-                                response=last_message.content,
-                                tool_envelopes=tool_envelopes,
-                            )
-                        else:
-                            response = AgentResponse(
-                                response=str(last_message.content),
-                                tool_envelopes=tool_envelopes,
-                            )
+                    response_text = extract_last_ai_response(messages, terminal_only=True)
+                    if response_text:
+                        response = AgentResponse(
+                            response=response_text,
+                            tool_envelopes=tool_envelopes,
+                        )
                         await prepared_memory.persist_response_fail_open(response.response)
                         return response
 
@@ -993,15 +998,10 @@ User Query: {query}"""
 
                     tool_envelopes = final_state.get("signals_envelopes", [])
                     messages = final_state.get("messages", [])
-                    if messages:
-                        last_message = messages[-1]
-                        if isinstance(last_message, AIMessage):
-                            return AgentResponse(
-                                response=last_message.content,
-                                tool_envelopes=tool_envelopes,
-                            )
+                    response_text = extract_last_ai_response(messages, terminal_only=True)
+                    if response_text:
                         return AgentResponse(
-                            response=str(last_message.content),
+                            response=response_text,
                             tool_envelopes=tool_envelopes,
                         )
 

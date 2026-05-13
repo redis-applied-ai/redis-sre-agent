@@ -1,0 +1,43 @@
+max_iterations: 50
+
+# Runtime MCP configuration for the Redis SRE Agent adapter checkout.
+# Runtime deployments are built from a source overlay, so keep the MCP catalog
+# here and inject secrets through the shared runtime env secret.
+mcp_servers:
+  re_analyzer:
+    command: node
+    args:
+      - /workspace/vendor/re-analyzer-mcp/dist/src/index.js
+    env:
+      ANALYZER_BASE_URL: ${ANALYZER_BASE_URL}
+      ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN}
+    tools:
+      analyzer_list_accounts: &analyzer_read_tool
+        capability: diagnostics
+        action_kind: read
+      analyzer_search_accounts: *analyzer_read_tool
+      analyzer_get_account: *analyzer_read_tool
+      analyzer_list_clusters: *analyzer_read_tool
+      analyzer_get_cluster: *analyzer_read_tool
+      analyzer_list_packages: *analyzer_read_tool
+      analyzer_get_package_by_hash: *analyzer_read_tool
+      analyzer_get_package: *analyzer_read_tool
+      analyzer_resolve_package: *analyzer_read_tool
+      analyzer_get_package_messages: *analyzer_read_tool
+      analyzer_get_cluster_packages: *analyzer_read_tool
+      analyzer_get_latest_cluster_package: *analyzer_read_tool
+      analyzer_get_package_overview: *analyzer_read_tool
+      analyzer_get_package_alerts: *analyzer_read_tool
+      analyzer_get_package_health_checks: *analyzer_read_tool
+      analyzer_get_package_events: *analyzer_read_tool
+      analyzer_get_package_databases: *analyzer_read_tool
+      analyzer_get_database_slowlog: *analyzer_read_tool
+      analyzer_get_database_commands: *analyzer_read_tool
+      analyzer_get_package_nodes: *analyzer_read_tool
+      analyzer_get_package_topology: *analyzer_read_tool
+      analyzer_get_package_time_series: *analyzer_read_tool
+      analyzer_export_package_json: *analyzer_read_tool
+# Runtime deployments rely on runner-provided RAK_* identity and auth env vars.
+# Skills are fetched through the runtime-owned Skills facade, not directly from AFS.
+skill_backend_kind: custom
+skill_backend_class: redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend

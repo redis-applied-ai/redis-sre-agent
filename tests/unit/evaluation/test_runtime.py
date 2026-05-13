@@ -1659,7 +1659,6 @@ async def test_run_full_turn_scenario_installs_fixture_knowledge_backend_for_tur
         )
 
         startup_context = await build_startup_knowledge_context(
-            query=kwargs["message"],
             version="latest",
             available_tools=[],
         )

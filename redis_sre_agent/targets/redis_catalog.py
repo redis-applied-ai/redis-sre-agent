@@ -8,6 +8,27 @@ from .contracts import DiscoveryCandidate, DiscoveryRequest, DiscoveryResponse
 from .registry import get_target_integration_registry
 
 
+def _select_catalog_candidates(
+    limited: List[DiscoveryCandidate],
+    exact_ranked: List[DiscoveryCandidate],
+    *,
+    allow_multiple: bool,
+    max_results: int,
+) -> tuple[List[DiscoveryCandidate], bool]:
+    selection_limit = min(3, max_results)
+
+    if exact_ranked:
+        if allow_multiple:
+            return exact_ranked[:selection_limit], False
+
+        top_exact = exact_ranked[0]
+        if len(exact_ranked) > 1 and exact_ranked[1].score >= top_exact.score - 0.75:
+            return exact_ranked[:selection_limit], True
+        return [top_exact], False
+
+    return limited[:selection_limit], True
+
+
 class RedisCatalogDiscoveryBackend:
     """Resolve Redis targets from the built-in target catalog."""
 
@@ -16,7 +37,10 @@ class RedisCatalogDiscoveryBackend:
     async def resolve(self, request: DiscoveryRequest) -> DiscoveryResponse:
         from redis_sre_agent.core.targets import (
             _confidence_from_score,
+            _exact_target_terms,
+            _normalize,
             _parse_query_hints,
+            _query_mentions_exact_target,
             _score_target_doc,
             build_public_match_from_doc,
             get_target_catalog,
@@ -27,8 +51,10 @@ class RedisCatalogDiscoveryBackend:
             return DiscoveryResponse(status="no_match")
 
         registry = get_target_integration_registry()
+        normalized_query = _normalize(request.query)
         hints = _parse_query_hints(request.query)
         ranked: List[DiscoveryCandidate] = []
+        exact_ranked: List[DiscoveryCandidate] = []
         for doc in docs:
             score, reasons = _score_target_doc(
                 request.query,
@@ -44,37 +70,36 @@ class RedisCatalogDiscoveryBackend:
                 match_reasons=reasons,
                 score=score,
             )
-            ranked.append(
-                DiscoveryCandidate(
-                    public_match=public_match,
-                    binding_strategy=registry.default_binding_strategy,
-                    binding_subject=doc.resource_id,
-                    private_binding_ref={"target_kind": doc.target_kind},
-                    discovery_backend=self.backend_name,
-                    score=score,
-                    confidence=public_match.confidence,
-                )
+            candidate = DiscoveryCandidate(
+                public_match=public_match,
+                binding_strategy=registry.default_binding_strategy,
+                binding_subject=doc.resource_id,
+                private_binding_ref={"target_kind": doc.target_kind},
+                discovery_backend=self.backend_name,
+                score=score,
+                confidence=public_match.confidence,
             )
+            ranked.append(candidate)
+            exact_query_match = normalized_query and normalized_query in _exact_target_terms(doc)
+            if exact_query_match or (
+                request.allow_multiple and _query_mentions_exact_target(doc, hints)
+            ):
+                exact_ranked.append(candidate)
 
         ranked.sort(key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
+        exact_ranked.sort(
+            key=lambda candidate: (candidate.score, candidate.confidence), reverse=True
+        )
         limited = ranked[: max(1, min(request.max_results, 10))]
         if not limited:
             return DiscoveryResponse(status="no_match")
 
-        top = limited[0]
-        selected: List[DiscoveryCandidate] = []
-        clarification_required = False
-
-        if request.allow_multiple:
-            selected = [
-                candidate for candidate in limited if candidate.score >= max(3.0, top.score - 1.5)
-            ][: min(3, request.max_results)]
-        else:
-            if len(limited) > 1 and limited[1].score >= top.score - 0.75:
-                clarification_required = True
-                selected = limited[: min(3, request.max_results)]
-            else:
-                selected = [top]
+        selected, clarification_required = _select_catalog_candidates(
+            limited,
+            exact_ranked,
+            allow_multiple=request.allow_multiple,
+            max_results=request.max_results,
+        )
 
         return DiscoveryResponse(
             status=(

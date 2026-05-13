@@ -131,7 +131,6 @@ class TestKnowledgeAgent:
         assert "STARTUP_CONTEXT" in (initial_state["startup_system_prompt"] or "")
         assert initial_state["tool_call_budget_override"] == 7
         mock_build_startup_context.assert_awaited_once_with(
-            query="who runs AOP?",
             version="latest",
             available_tools=[],
         )
@@ -275,6 +274,76 @@ class TestKnowledgeAgent:
             )
 
         assert response.response.startswith("I gathered relevant evidence")
+        prepared_memory.persist_response_fail_open.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_prefers_ai_summary_over_terminal_tool_output(
+        self, mock_create_llm, mock_tool_manager_cls, mock_build_startup_context
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="s1",
+            user_id="u1",
+            query="who runs AOP?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                return {
+                    "messages": [
+                        AIMessage(content="Useful knowledge summary", tool_calls=[]),
+                        ToolMessage(content='{"status":"ok"}', tool_call_id="tc-1"),
+                    ],
+                    "knowledge_search_results": [],
+                    "signals_envelopes": [],
+                }
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = KnowledgeOnlyAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            response = await agent.process_query(
+                query="who runs AOP?", session_id="s1", user_id="u1"
+            )
+
+        assert response.response == "Useful knowledge summary"
         prepared_memory.persist_response_fail_open.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -524,7 +593,6 @@ class TestKnowledgeAgentMethods:
         assert isinstance(sent_messages[0], SystemMessage)
         assert "STARTUP_CONTEXT" in sent_messages[0].content
         mock_build_startup_context.assert_awaited_once_with(
-            query="follow-up question",
             version="latest",
             available_tools=[],
         )
@@ -720,7 +788,6 @@ class TestKnowledgeAgentMethods:
         assert "FRESH_CONTEXT" in sent_messages[0].content
         assert "STALE_CONTEXT" not in sent_messages[0].content
         mock_build_startup_context.assert_awaited_once_with(
-            query="new question",
             version="latest",
             available_tools=[],
         )

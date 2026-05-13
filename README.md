@@ -64,6 +64,13 @@ docker compose exec -T sre-agent uv run redis-sre-agent \
 
 For compatibility details and fallback behavior, see [Operational Notes](docs/operations/gotchas.md#redis-enterprise-vs-redis-oss).
 
+### Optional Outbound PII Remediation
+
+If you need prompt sanitization before outbound LLM requests, enable `PII_REMEDIATION_MODE` in
+`.env`. The built-in default runs OpenAI Privacy Filter locally and can `detect`, `redact`, or
+`block` request text before the main LLM call. This path uses the local runtime only; it does not
+send candidate PII to a second remote LLM for classification.
+
 ## Deployment Paths
 
 - Local demo: [docs/quickstarts/local.md](docs/quickstarts/local.md)

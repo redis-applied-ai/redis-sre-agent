@@ -17,7 +17,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from opentelemetry import trace
 
-from ..helpers import log_preflight_messages, sanitize_messages_for_llm
+from ...core.llm_request_guard import GuardedMemoizeLLMProxy, guarded_ainvoke
+from ..helpers import ensure_tool_bound_llm, log_preflight_messages, sanitize_messages_for_llm
 from ..models import CorrectionResult
 
 logger = logging.getLogger(__name__)
@@ -46,14 +47,31 @@ def build_safety_fact_corrector(
     """
 
     tool_node = ToolNode(tool_adapters)
+    llm_with_tools = ensure_tool_bound_llm(base_llm, tool_adapters)
+    memoized_loop_llm = (
+        GuardedMemoizeLLMProxy(
+            llm_with_tools,
+            request_kind="safety_fact_corrector.loop",
+        )
+        if memoize
+        else None
+    )
 
     async def llm_node(state: CorrectorState) -> CorrectorState:
         messages = sanitize_messages_for_llm(state.get("messages", []))
         log_preflight_messages(messages, label="Corrector preflight LLM", logger=logger)
         if memoize:
-            resp = await memoize("corrector_llm", base_llm, messages)
+            resp = await memoize(
+                "corrector_llm",
+                memoized_loop_llm,
+                messages,
+            )
         else:
-            resp = await base_llm.ainvoke(messages)
+            resp = await guarded_ainvoke(
+                llm_with_tools,
+                messages,
+                request_kind="safety_fact_corrector.loop",
+            )
         out: CorrectorState = {
             "messages": messages + [resp],
             "budget": int(state.get("budget", max_tool_steps)),
@@ -93,6 +111,15 @@ def build_safety_fact_corrector(
     async def synth_node(state: CorrectorState) -> CorrectorState:
         # Final strict edit-only synthesis
         structured_llm = base_llm.with_structured_output(CorrectionResult)
+        memoized_synth_llm = (
+            GuardedMemoizeLLMProxy(
+                structured_llm,
+                request_kind="safety_fact_corrector.synth",
+                cache_identity_source=base_llm,
+            )
+            if memoize
+            else None
+        )
         sys = SystemMessage(
             content=(
                 "You are a Redis SRE Corrector. Edit ONLY the given response to fix safety and factual errors.\n"
@@ -113,9 +140,17 @@ def build_safety_fact_corrector(
             )
         )
         if memoize:
-            rec = await memoize("corrector_synth", structured_llm, [sys, human])
+            rec = await memoize(
+                "corrector_synth",
+                memoized_synth_llm,
+                [sys, human],
+            )
         else:
-            rec = await structured_llm.ainvoke([sys, human])
+            rec = await guarded_ainvoke(
+                structured_llm,
+                [sys, human],
+                request_kind="safety_fact_corrector.synth",
+            )
         result = rec if isinstance(rec, dict) else rec.model_dump()
         return {**state, "result": result}
 

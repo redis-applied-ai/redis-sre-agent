@@ -210,6 +210,12 @@ Common settings:
 | `skill_roots` | `SKILL_ROOTS` | `[]` | Extra filesystem roots to scan for Agent Skills packages during ingestion |
 | `skill_backend_kind` | `SKILL_BACKEND_KIND` | `redis` | Select `redis` for the shipped backend or `custom` for a user-provided backend |
 | `skill_backend_class` | `SKILL_BACKEND_CLASS` | `null` | Import path for a custom backend class when `skill_backend_kind=custom` |
+| `skills_api_base_url` | `SKILLS_API_BASE_URL` | `null` | Base URL for the runtime-owned Skills facade used by the proxy-backed workspace backend |
+| `skills_api_tenant_id` | `SKILLS_API_TENANT_ID` | `null` | Tenant id to send to the runtime-owned Skills facade |
+| `skills_api_project_id` | `SKILLS_API_PROJECT_ID` | `null` | Project id to send to the runtime-owned Skills facade |
+| `skills_api_agent_id` | `SKILLS_API_AGENT_ID` | `null` | Agent app id to send to the runtime-owned Skills facade |
+| `skills_api_token` | `SKILLS_API_TOKEN` | `null` | Optional bearer token for the runtime-owned Skills facade |
+| `skills_api_timeout_seconds` | `SKILLS_API_TIMEOUT_SECONDS` | `15.0` | HTTP timeout for the runtime-owned Skills facade |
 | `skill_reference_char_budget` | `SKILL_REFERENCE_CHAR_BUDGET` | `12000` | Maximum characters returned by `get_skill_resource` before truncation |
 
 Example YAML:
@@ -229,6 +235,37 @@ To use your own central skill service, implement the runtime `SkillBackend` cont
 skill_backend_kind: custom
 skill_backend_class: my_company.skills.backend.CompanySkillBackend
 ```
+
+To use the shipped proxy-backed workspace backend so the runtime sees the same skills the
+Agent Workspace UI writes into AFS, point the runtime at the control-plane Skills facade
+rather than at AFS directly:
+
+```yaml
+skill_backend_kind: custom
+skill_backend_class: redis_sre_agent.skills.afs_workspace_backend.AFSWorkspaceSkillBackend
+skills_api_base_url: https://rar-api.example.internal
+skills_api_tenant_id: tenant_123
+skills_api_project_id: proj_123
+skills_api_agent_id: redis-sre-agent
+skills_api_timeout_seconds: 15
+```
+
+Authentication is required:
+
+```yaml
+skills_api_token: ${RAR_SKILLS_API_TOKEN}
+```
+
+Notes:
+- `skills_api_base_url` must point at the runtime-owned Skills facade in `apps/api`, not at the
+  AFS gateway directly.
+- The facade itself is responsible for talking to the AFS gateway and keeping the runtime aligned
+  with the Skills page storage model. The worker does not read skills directly from AFS.
+- For compatibility with existing deployments, the shipped backend also honors
+  `RAR_SKILLS_API_BASE_URL`, `RAR_SKILLS_API_TENANT_ID`, `RAR_SKILLS_API_PROJECT_ID`,
+  `RAR_SKILLS_API_AGENT_ID`, `RAR_SKILLS_API_TOKEN`, and `RAR_SKILLS_API_TIMEOUT_SECONDS`.
+- In runtime-managed deployments the preferred wiring is to provide a valid runtime API key via
+  `RAR_RUNTIME_SERVICE_TOKEN`, which the runner maps into `RAK_API_TOKEN` for the worker.
 
 The shipped runtime keeps execution separate from retrieval. Even with a custom backend, Agent Skills
 skill scripts are not executed by this agent in v1.
@@ -334,6 +371,7 @@ The agent uses embeddings for the knowledge base vector search. You can configur
 | `embedding_model` | `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name (provider-specific) |
 | `vector_dim` | `VECTOR_DIM` | `1536` | Vector dimensions (must match model) |
 | `embeddings_cache_ttl` | `EMBEDDINGS_CACHE_TTL` | `604800` (7 days) | Cache TTL in seconds |
+| `vectorizer_factory` | `VECTORIZER_FACTORY` | `None` | Dot-path to a custom vectorizer factory |
 
 #### OpenAI embeddings (default)
 
@@ -371,6 +409,33 @@ Available local models:
 
 !!! warning "Vector dimensions must match"
     The `VECTOR_DIM` setting must match the output dimensions of your chosen model. Mismatched dimensions will cause indexing and search failures.
+
+#### Custom vectorizer factories
+
+If you need to override vectorizer construction entirely, set `VECTORIZER_FACTORY` to a dot-path
+import string:
+
+```bash
+VECTORIZER_FACTORY=mypackage.embeddings.custom_vectorizer_factory
+```
+
+Or in a config file:
+
+```yaml
+vectorizer_factory: mypackage.embeddings.custom_vectorizer_factory
+```
+
+The factory receives:
+
+- `provider`: resolved embedding provider such as `openai` or `local`
+- `model`: embedding model name
+- `config`: effective `Settings` object
+- `cache`: prepared Redis-backed `EmbeddingsCache`
+
+It must return an object implementing the async methods used by the runtime:
+
+- `aembed()`
+- `aembed_many()`
 
 #### Switching providers
 

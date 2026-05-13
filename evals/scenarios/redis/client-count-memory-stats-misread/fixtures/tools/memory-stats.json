@@ -1,0 +1,26 @@
+{
+  "status": "success",
+  "stats": {
+    "peak.allocated": 1465123456,
+    "total.allocated": 1329876544,
+    "dataset.bytes": 1184567296,
+    "fragmentation": 1.11,
+    "clients.normal": 72696,
+    "clients.slaves": 0
+  },
+  "interpretation_notes": [
+    "MEMORY STATS reports memory-accounting metrics, not connection counts.",
+    "Fields such as clients.normal and clients.slaves are client-related memory overhead in bytes.",
+    "Use INFO clients or CLIENT LIST to measure current connected clients."
+  ],
+  "canonical_sources": {
+    "memory_breakdown": [
+      "MEMORY STATS",
+      "INFO memory"
+    ],
+    "client_counts": [
+      "INFO clients",
+      "CLIENT LIST"
+    ]
+  }
+}

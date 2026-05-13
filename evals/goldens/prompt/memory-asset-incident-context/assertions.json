@@ -1,0 +1,4 @@
+{
+  "required_findings": ["OOM", "prior incident"],
+  "forbidden_claims": ["no prior incidents", "no history of memory issues"]
+}

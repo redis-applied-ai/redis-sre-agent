@@ -17,7 +17,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from opentelemetry import trace
 
-from ..helpers import log_preflight_messages, sanitize_messages_for_llm
+from ...core.llm_request_guard import GuardedMemoizeLLMProxy, guarded_ainvoke
+from ..helpers import ensure_tool_bound_llm, log_preflight_messages, sanitize_messages_for_llm
 from ..models import Recommendation
 
 logger = logging.getLogger(__name__)
@@ -57,15 +58,32 @@ def build_recommendation_worker(
     """
 
     tool_node = ToolNode(knowledge_tool_adapters)
+    llm_with_tools = ensure_tool_bound_llm(base_llm, knowledge_tool_adapters)
+    memoized_loop_llm = (
+        GuardedMemoizeLLMProxy(
+            llm_with_tools,
+            request_kind="recommendation_worker.loop",
+        )
+        if memoize
+        else None
+    )
 
     async def llm_node(state: RecState) -> RecState:
         messages = sanitize_messages_for_llm(state.get("messages", []))
         # Preflight log (centralized)
         log_preflight_messages(messages, label="RecWorker preflight LLM", logger=logger)
         if memoize:
-            resp = await memoize("rec_worker_llm", base_llm, messages)
+            resp = await memoize(
+                "rec_worker_llm",
+                memoized_loop_llm,
+                messages,
+            )
         else:
-            resp = await base_llm.ainvoke(messages)
+            resp = await guarded_ainvoke(
+                llm_with_tools,
+                messages,
+                request_kind="recommendation_worker.loop",
+            )
         out: RecState = {
             "messages": messages + [resp],
             "budget": int(state.get("budget", max_tool_steps)),
@@ -109,12 +127,19 @@ def build_recommendation_worker(
     async def synth_node(state: RecState) -> RecState:
         # Final structured synthesis without further tool calls.
         # Build a focused prompt that includes the topic and evidence envelopes.
+        structured_llm = base_llm.with_structured_output(Recommendation)
+        memoized_synth_llm = (
+            GuardedMemoizeLLMProxy(
+                structured_llm,
+                request_kind="recommendation_worker.synth",
+                cache_identity_source=base_llm,
+            )
+            if memoize
+            else None
+        )
         topic = state.get("topic") or {}
         evidence = state.get("evidence", [])
         instance = state.get("instance") or {}
-
-        # Use structured output to eliminate brittle JSON parsing
-        structured_llm = base_llm.with_structured_output(Recommendation)
 
         sys = SystemMessage(
             content=(
@@ -141,9 +166,17 @@ def build_recommendation_worker(
             )
         )
         if memoize:
-            rec = await memoize("rec_worker_synth", structured_llm, [sys, human])
+            rec = await memoize(
+                "rec_worker_synth",
+                memoized_synth_llm,
+                [sys, human],
+            )
         else:
-            rec = await structured_llm.ainvoke([sys, human])
+            rec = await guarded_ainvoke(
+                structured_llm,
+                [sys, human],
+                request_kind="recommendation_worker.synth",
+            )
         # rec is already a pydantic model or compatible dict
         if isinstance(rec, dict):
             result = rec

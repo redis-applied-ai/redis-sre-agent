@@ -49,6 +49,7 @@ def test_committed_redis_scenarios_load_with_goldens_and_refs():
     slowlog = _load_committed_scenario("slowlog-anti-pattern")
     maintenance = _load_committed_scenario("enterprise-maintenance-mode")
     cluster = _load_committed_scenario("enterprise-cluster-health-vs-info-misread")
+    client_counts = _load_committed_scenario("client-count-memory-stats-misread")
 
     assert memory.execution.lane is ExecutionLane.FULL_TURN
     assert memory.execution.agent == "redis_chat"
@@ -70,11 +71,18 @@ def test_committed_redis_scenarios_load_with_goldens_and_refs():
     assert cluster.scope.bound_targets == ["tgt_cluster_checkout_global"]
     assert cluster.resolve_fixture_path("fixtures/tools/list-databases.json").exists()
 
+    assert client_counts.execution.lane is ExecutionLane.FULL_TURN
+    assert client_counts.execution.agent == "redis_chat"
+    assert client_counts.scope.bound_targets == ["tgt_instance_runtime_cache"]
+    assert client_counts.resolve_fixture_path("fixtures/tools/memory-stats.json").exists()
+    assert client_counts.resolve_fixture_path("fixtures/tools/info-clients.json").exists()
+
     for scenario_id, scenario in (
         ("memory-pressure-oss", memory),
         ("slowlog-anti-pattern", slowlog),
         ("enterprise-maintenance-mode", maintenance),
         ("enterprise-cluster-health-vs-info-misread", cluster),
+        ("client-count-memory-stats-misread", client_counts),
     ):
         metadata = yaml.safe_load(
             (REPO_ROOT / golden_metadata_path("redis", scenario_id)).read_text(encoding="utf-8")
@@ -151,10 +159,12 @@ async def test_committed_redis_corpus_serves_docs_skills_and_tickets():
     memory = _load_committed_scenario("memory-pressure-oss")
     maintenance = _load_committed_scenario("enterprise-maintenance-mode")
     cluster = _load_committed_scenario("enterprise-cluster-health-vs-info-misread")
+    client_counts = _load_committed_scenario("client-count-memory-stats-misread")
 
     memory_backend = build_fixture_knowledge_backend(memory)
     maintenance_backend = build_fixture_knowledge_backend(maintenance)
     cluster_backend = build_fixture_knowledge_backend(cluster)
+    client_count_backend = build_fixture_knowledge_backend(client_counts)
 
     memory_runbook = await memory_backend.get_all_document_fragments(
         document_hash="memory-pressure-runbook",
@@ -172,8 +182,13 @@ async def test_committed_redis_corpus_serves_docs_skills_and_tickets():
         document_hash="cluster-health-triage",
         version="latest",
     )
+    client_count_runbook = await client_count_backend.get_all_document_fragments(
+        document_hash="client-count-source-discipline",
+        version="latest",
+    )
 
     assert memory_runbook["document_hash"] == "memory-pressure-runbook"
     assert maintenance_skill["skill_name"] == "redis-enterprise-maintenance-checklist"
     assert maintenance_ticket["tickets"][0]["ticket_id"] == "RET-5032"
     assert cluster_runbook["document_hash"] == "cluster-health-triage"
+    assert client_count_runbook["document_hash"] == "client-count-source-discipline"

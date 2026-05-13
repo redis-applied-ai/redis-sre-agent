@@ -1,5 +1,6 @@
 """Unit tests for MCP connection pool."""
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -98,6 +99,62 @@ class TestMCPConnectionPool:
 
         assert status == {"eval-server": True}
         mock_connect.assert_awaited_once_with("eval-server", eval_config)
+
+    @pytest.mark.asyncio
+    async def test_connect_server_expands_environment_variables_in_url_and_headers(self):
+        """Pool-backed MCP URLs should expand ${VAR} placeholders before transport setup."""
+        pool = MCPConnectionPool.get_instance()
+        config = MCPServerConfig(
+            url="${TEST_MCP_URL}",
+            transport="streamable_http",
+            headers={"Authorization": "Bearer ${TEST_MCP_TOKEN}"},
+        )
+        seen: dict[str, object] = {}
+
+        @asynccontextmanager
+        async def _fake_streamablehttp_client(url: str, headers: dict[str, str] | None = None):
+            seen["url"] = url
+            seen["headers"] = headers
+            yield ("read-stream", "write-stream", lambda: None)
+
+        class _FakeSession:
+            async def __aenter__(self) -> "_FakeSession":
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            async def initialize(self) -> None:
+                return None
+
+            async def list_tools(self) -> MagicMock:
+                return MagicMock(tools=[])
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TEST_MCP_URL": "http://afs-gateway.example/mcp",
+                    "TEST_MCP_TOKEN": "secret-token",
+                },
+                clear=False,
+            ),
+            patch(
+                "redis_sre_agent.tools.mcp.pool.streamablehttp_client",
+                _fake_streamablehttp_client,
+            ),
+            patch(
+                "redis_sre_agent.tools.mcp.pool.ClientSession",
+                side_effect=lambda read_stream, write_stream: _FakeSession(),
+            ),
+        ):
+            connection = await pool._connect_server("afs_gateway", config)
+
+        assert connection.server_name == "afs_gateway"
+        assert seen == {
+            "url": "http://afs-gateway.example/mcp",
+            "headers": {"Authorization": "Bearer secret-token"},
+        }
 
     @pytest.mark.asyncio
     async def test_get_connection_after_start(self):

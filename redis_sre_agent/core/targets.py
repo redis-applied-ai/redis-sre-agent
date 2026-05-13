@@ -46,6 +46,9 @@ from redis_sre_agent.targets.contracts import (
 logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+_HOSTNAME_RE = re.compile(
+    r"\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\b"
+)
 _ENV_ALIASES = {
     "prod": "production",
     "production": "production",
@@ -1080,7 +1083,8 @@ async def list_known_targets(
 
 def _parse_query_hints(query: str) -> Dict[str, Any]:
     normalized = _normalize(query)
-    tokens = set(_tokenize(normalized))
+    token_list = _tokenize(normalized)
+    tokens = set(token_list)
     environments = {_ENV_ALIASES[token] for token in tokens if token in _ENV_ALIASES}
     usages = {token for token in tokens if token in _USAGE_TERMS}
     preferred_kinds = set()
@@ -1089,14 +1093,75 @@ def _parse_query_hints(query: str) -> Dict[str, Any]:
     if tokens & _CLUSTER_HINTS:
         preferred_kinds.add("cluster")
     target_types = {_TYPE_HINTS[token] for token in tokens if token in _TYPE_HINTS}
+    hostname_terms = {
+        _normalize(match.group(0))
+        for match in _HOSTNAME_RE.finditer(normalized)
+        if _looks_like_hostname_term(match.group(0))
+    }
     return {
         "normalized": normalized,
+        "token_list": token_list,
         "tokens": tokens,
         "environments": environments,
         "usages": usages,
         "preferred_kinds": preferred_kinds,
         "target_types": target_types,
+        "hostname_terms": hostname_terms,
     }
+
+
+def _exact_target_terms(doc: TargetCatalogDoc) -> set[str]:
+    """Return exact-match-safe identifiers for high-confidence discovery."""
+    values = {
+        doc.display_name,
+        doc.name,
+        doc.resource_id,
+        doc.monitoring_identifier,
+        doc.logging_identifier,
+        doc.redis_cloud_database_name,
+    }
+    values.update(doc.search_aliases)
+    return {normalized for value in values if (normalized := _normalize(value))}
+
+
+def _looks_like_hostname_term(value: str) -> bool:
+    """Accept dotted hostnames while ignoring version-like dotted tokens."""
+    labels = [label for label in _normalize(value).split(".") if label]
+    if len(labels) < 2 or all(label.isdigit() for label in labels):
+        return False
+    if labels[-1].isdigit():
+        return False
+    if len(labels) >= 3:
+        return True
+    return any("-" in label or any(ch.isdigit() for ch in label) for label in labels)
+
+
+def _contains_token_sequence(haystack: Sequence[str], needle: Sequence[str]) -> bool:
+    """Return True when `needle` appears contiguously inside `haystack`."""
+    if not needle or len(needle) > len(haystack):
+        return False
+    needle_list = list(needle)
+    window = len(needle_list)
+    for index in range(len(haystack) - window + 1):
+        if list(haystack[index : index + window]) == needle_list:
+            return True
+    return False
+
+
+def _query_mentions_exact_target(doc: TargetCatalogDoc, hints: Dict[str, Any]) -> bool:
+    """Detect exact target mentions embedded inside a larger user query."""
+    normalized = hints["normalized"]
+    query_token_list = hints.get("token_list") or _tokenize(normalized)
+    exact_terms = _exact_target_terms(doc)
+    if normalized and normalized in exact_terms:
+        return True
+    for term in exact_terms:
+        term_tokens = _tokenize(term)
+        if len(term_tokens) < 2:
+            continue
+        if _contains_token_sequence(query_token_list, term_tokens):
+            return True
+    return False
 
 
 def _score_target_doc(
@@ -1109,6 +1174,7 @@ def _score_target_doc(
     hints = hints or _parse_query_hints(query)
     normalized = hints["normalized"]
     query_tokens = hints["tokens"]
+    hostname_terms = set(hints.get("hostname_terms") or [])
     reasons: List[str] = []
     score = 0.0
 
@@ -1116,6 +1182,22 @@ def _score_target_doc(
     alias_tokens = set()
     for alias in doc.search_aliases:
         alias_tokens.update(_tokenize(alias))
+
+    exact_target_mentioned = _query_mentions_exact_target(doc, hints)
+    if hostname_terms:
+        exact_terms = _exact_target_terms(doc)
+        exact_hostname_matches = sorted(hostname_terms & exact_terms)
+        if not exact_hostname_matches and not exact_target_mentioned:
+            return 0.0, []
+        if exact_hostname_matches:
+            score += 8.5
+            reasons.append(f"matched hostname={exact_hostname_matches[0]}")
+    else:
+        exact_hostname_matches = []
+
+    if exact_target_mentioned and not exact_hostname_matches:
+        score += 7.5
+        reasons.append("matched exact target reference")
 
     if normalized and normalized in {_normalize(doc.display_name), _normalize(doc.name)}:
         score += 8.0
@@ -1411,6 +1493,23 @@ async def attach_target_matches(
         generation=generation,
         active_handle=active_handle,
     )
+
+    if selected_bindings:
+        thread = await thread_manager.get_thread(thread_id)
+        thread_ctx = (thread.context if thread else None) or {}
+        existing_refs: List[Dict] = list(thread_ctx.get("referenced_assets") or [])
+        existing_handles = {a["target_handle"] for a in existing_refs if isinstance(a, dict)}
+        new_refs = [
+            {
+                "label": b.display_name,
+                "target_handle": b.target_handle,
+                "target_kind": b.target_kind,
+            }
+            for b in selected_bindings
+            if b.target_handle not in existing_handles
+        ]
+        if new_refs:
+            context_updates["referenced_assets"] = existing_refs + new_refs
 
     await thread_manager.update_thread_context(thread_id, context_updates, merge=True)
     return selected_bindings, generation

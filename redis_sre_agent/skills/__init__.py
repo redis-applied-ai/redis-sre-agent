@@ -1,5 +1,6 @@
 """Skill package models, discovery, and backend interfaces."""
 
+from .afs_workspace_backend import AFSWorkspaceSkillBackend
 from .backend import RedisSkillBackend, SkillBackend, get_skill_backend
 from .discovery import discover_skill_packages, load_skill_package, skill_package_to_documents
 from .models import SkillPackage, SkillProtocol, SkillResource, SkillResourceKind
@@ -8,6 +9,7 @@ from .scaffold import scaffold_skill_package_from_markdown
 __all__ = [
     "RedisSkillBackend",
     "SkillBackend",
+    "AFSWorkspaceSkillBackend",
     "SkillPackage",
     "SkillProtocol",
     "SkillResource",

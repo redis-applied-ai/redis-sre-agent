@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
 import { ConfirmDialog } from "../components/Modal";
 import ReactMarkdown from "react-markdown";
+import MemoryPanel from "../components/MemoryPanel";
 import TaskMonitor from "../components/TaskMonitor";
 import sreAgentApi, {
   ApprovalRecord,
@@ -103,6 +104,19 @@ const Triage = () => {
   const [expandedCitations, setExpandedCitations] = useState<Set<string>>(
     new Set(),
   );
+  const [showMemoryPanel, setShowMemoryPanel] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("triage.showMemoryPanel") === "1";
+  });
+  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      "triage.showMemoryPanel",
+      showMemoryPanel ? "1" : "0",
+    );
+  }, [showMemoryPanel]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -851,6 +865,16 @@ const Triage = () => {
             </p>
           </div>
         </div>
+        {activeThreadId && (
+          <Button
+            variant={showMemoryPanel ? "primary" : "outline"}
+            size="sm"
+            onClick={() => setShowMemoryPanel((v) => !v)}
+            title={showMemoryPanel ? "Hide memory panel" : "Show memory panel"}
+          >
+            🧠 Memory
+          </Button>
+        )}
       </div>
 
       {/* Main Content Area */}
@@ -1157,6 +1181,7 @@ const Triage = () => {
                         if (activeThreadId) {
                           await selectThread(activeThreadId);
                         }
+                        setMemoryRefreshKey((k) => k + 1);
                       }}
                     />
                   ) : (
@@ -1586,6 +1611,17 @@ const Triage = () => {
             )}
           </Card>
         </div>
+
+        {/* Memory Panel - right rail */}
+        {activeThreadId && showMemoryPanel && (
+          <div className="flex w-full md:w-96 md:min-w-96 md:max-w-96 flex-col h-full">
+            <MemoryPanel
+              threadId={activeThreadId}
+              onClose={() => setShowMemoryPanel(false)}
+              refreshKey={memoryRefreshKey}
+            />
+          </div>
+        )}
       </div>
 
       {/* Delete Confirmation Dialog */}

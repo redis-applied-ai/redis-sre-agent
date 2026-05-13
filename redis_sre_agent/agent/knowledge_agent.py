@@ -11,8 +11,8 @@ knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus
 import logging
 from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
@@ -20,13 +20,19 @@ from opentelemetry import trace
 from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
 from redis_sre_agent.core.progress import (
     NullEmitter,
     ProgressEmitter,
 )
 from redis_sre_agent.tools.manager import ToolManager
 
-from .helpers import build_result_envelope, extract_citations
+from .helpers import (
+    build_result_envelope,
+    coerce_response_text,
+    extract_citations,
+    extract_last_ai_response,
+)
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 
@@ -126,7 +132,7 @@ class KnowledgeOnlyAgent:
         logger.info("Knowledge-only agent initialized (tools loaded per-query)")
 
     def _build_workflow(
-        self, tool_mgr: ToolManager, llm_with_tools: ChatOpenAI, emitter: ProgressEmitter
+        self, tool_mgr: ToolManager, llm_with_tools: BaseChatModel, emitter: ProgressEmitter
     ) -> StateGraph:
         """Build the LangGraph workflow for knowledge-only queries.
 
@@ -162,13 +168,7 @@ class KnowledgeOnlyAgent:
                 if startup_system_prompt is None or (
                     iteration_count == 0 and not startup_prompt_initialized
                 ):
-                    context_query = ""
-                    for message in reversed(messages):
-                        if isinstance(message, HumanMessage):
-                            context_query = str(message.content or "")
-                            break
                     startup_context = await build_startup_knowledge_context(
-                        query=context_query,
                         version="latest",
                         available_tools=list(tooldefs_by_name.values()),
                     )
@@ -240,7 +240,11 @@ class KnowledgeOnlyAgent:
                 with tracer.start_as_current_span(
                     "llm.call", attributes={"llm.component": "knowledge"}
                 ):
-                    response = await llm_to_use.ainvoke(messages)
+                    response = await guarded_ainvoke(
+                        llm_to_use,
+                        messages,
+                        request_kind="knowledge_agent.agent_node",
+                    )
                 record_llm_call_metrics(
                     component="knowledge", llm=llm_with_tools, response=response, start_time=_t0
                 )
@@ -550,7 +554,6 @@ class KnowledgeOnlyAgent:
 
             # Build startup context once per query and seed initial SystemMessage.
             startup_context = await build_startup_knowledge_context(
-                query=query,
                 version="latest",
                 available_tools=tools,
             )
@@ -648,37 +651,17 @@ class KnowledgeOnlyAgent:
 
                 return AgentResponse(response=error_response, search_results=[], tool_envelopes=[])
 
-    @staticmethod
-    def _coerce_response_text(content: Any) -> str:
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict):
-                    text = item.get("text")
-                    if isinstance(text, str) and text.strip():
-                        parts.append(text.strip())
-                elif isinstance(item, str) and item.strip():
-                    parts.append(item.strip())
-            return "\n".join(parts).strip()
-        if content is None:
-            return ""
-        return str(content).strip()
-
     @classmethod
     def _extract_final_response(cls, messages: List[BaseMessage]) -> str:
         if not messages:
             return ""
 
-        for message in reversed(messages):
-            if isinstance(message, AIMessage):
-                candidate = cls._coerce_response_text(message.content)
-                if candidate:
-                    return candidate
+        candidate = extract_last_ai_response(messages)
+        if candidate:
+            return candidate
 
         last_message = messages[-1]
-        candidate = cls._coerce_response_text(getattr(last_message, "content", None))
+        candidate = coerce_response_text(getattr(last_message, "content", None))
         if candidate:
             return candidate
 

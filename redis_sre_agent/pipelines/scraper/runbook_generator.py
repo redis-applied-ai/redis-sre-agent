@@ -11,6 +11,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from ...core.llm_helpers import create_async_openai_client
+from ...core.llm_request_guard import guarded_chat_completions_create
 from .base import (
     ArtifactStorage,
     BaseScraper,
@@ -255,7 +256,8 @@ SOURCE CONTENT TO STANDARDIZE:
         try:
             prompt = self.standardization_prompt.format(source_content=raw_content)
 
-            response = await self.openai_client.chat.completions.create(
+            response = await guarded_chat_completions_create(
+                self.openai_client,
                 model=self.config["openai_model"],
                 messages=[
                     {
@@ -264,6 +266,7 @@ SOURCE CONTENT TO STANDARDIZE:
                     },
                     {"role": "user", "content": prompt},
                 ],
+                request_kind="pipeline.runbook_generator.standardize",
                 max_tokens=4000,
             )
 
@@ -540,7 +543,8 @@ Content to analyze:
 Respond with only the JSON array, no other text.
 """
 
-            response = await self.openai_client.chat.completions.create(
+            response = await guarded_chat_completions_create(
+                self.openai_client,
                 model=self.config["openai_model"],
                 messages=[
                     {
@@ -548,6 +552,7 @@ Respond with only the JSON array, no other text.
                         "content": topic_analysis_prompt.format(content=content[:8000]),
                     }  # Limit content length
                 ],
+                request_kind="pipeline.runbook_generator.identify_topics",
                 temperature=0.3,
                 max_tokens=1500,
             )
@@ -617,7 +622,8 @@ Source Content:
 Return only the extracted relevant content, preserving formatting and structure.
 """
 
-            response = await self.openai_client.chat.completions.create(
+            response = await guarded_chat_completions_create(
+                self.openai_client,
                 model=self.config["openai_model"],
                 messages=[
                     {
@@ -630,6 +636,7 @@ Return only the extracted relevant content, preserving formatting and structure.
                         ),
                     }
                 ],
+                request_kind="pipeline.runbook_generator.extract_topic_content",
                 temperature=0.1,  # Low temperature for accurate extraction
                 max_tokens=4000,
             )
@@ -682,9 +689,11 @@ Content to convert:
 Generate a complete, professional runbook following the standard format.
 """
 
-            response = await self.openai_client.chat.completions.create(
+            response = await guarded_chat_completions_create(
+                self.openai_client,
                 model=self.config["openai_model"],
                 messages=[{"role": "user", "content": focused_prompt}],
+                request_kind="pipeline.runbook_generator.generate_focused_runbook",
                 temperature=0.3,
                 max_tokens=3000,
             )

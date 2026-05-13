@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.progress import ProgressEmitter
@@ -18,10 +20,9 @@ SKIP_MEMORY_USER_IDS = {"", "unknown", "system", "mcp-user", "scheduler"}
 
 try:
     from agent_memory_client import MemoryAPIClient, MemoryClientConfig
+    from agent_memory_client.exceptions import MemoryNotFoundError
     from agent_memory_client.filters import Entities, Namespace, UserId
     from agent_memory_client.models import MemoryMessage, MemoryStrategyConfig, WorkingMemory
-
-    AMS_SDK_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised only when dependency is absent
 
     class _Shim:
@@ -30,57 +31,49 @@ except ImportError:  # pragma: no cover - exercised only when dependency is abse
 
     MemoryAPIClient = None  # type: ignore[assignment]
     MemoryClientConfig = _Shim  # type: ignore[assignment]
+    MemoryNotFoundError = Exception  # type: ignore[misc,assignment]
     Entities = _Shim  # type: ignore[assignment]
     Namespace = _Shim  # type: ignore[assignment]
     UserId = _Shim  # type: ignore[assignment]
     MemoryMessage = _Shim  # type: ignore[assignment]
     MemoryStrategyConfig = _Shim  # type: ignore[assignment]
     WorkingMemory = _Shim  # type: ignore[assignment]
-    AMS_SDK_AVAILABLE = False
 
 
-DEFAULT_CUSTOM_PROMPT = """Extract only durable Redis SRE memory from the conversation.
+DEFAULT_CUSTOM_PROMPT = """Extract only durable user-scoped Redis SRE memory.
 
-Persist only the following categories when they are explicitly supported by the conversation:
-- operator interaction preferences
-- stable Redis environment facts
-- notable episodic incidents and outcomes
-- recurring operational context that will matter in future troubleshooting
-
-When a target Redis instance or cluster is identified, include exact entity tags such as:
-- instance:<instance_id>
-- cluster:<cluster_id>
+Persist only:
+- explicit user preferences
+- reporting preferences
+- user-specific workflow habits
+- durable operating style
 
 Do not persist:
-- raw transcripts
-- raw logs
-- raw tool outputs
-- secrets or credentials
-- speculative diagnoses
-- one-off filler or casual chatter
+- asset incidents
+- asset configuration or environment facts
+- ownership or inventory facts
+- request narration
+- raw transcripts, logs, tool outputs, or secrets
+
+If content is mixed or ambiguous, do not persist it.
 
 Current datetime: {current_datetime}
 Conversation: {message}"""
 
-ASSET_CUSTOM_PROMPT = """Extract only durable shared operational memory about the Redis asset from the conversation.
+ASSET_CUSTOM_PROMPT = """Extract only durable shared operational memory about the Redis asset.
 
 Persist only:
-- stable Redis environment facts
-- notable episodic incidents and outcomes
+- asset incidents and outcomes
+- configuration or environment facts
 - recurring operational context that will matter in future troubleshooting
 
-When a target Redis instance or cluster is identified, include exact entity tags such as:
-- instance:<instance_id>
-- cluster:<cluster_id>
-
 Do not persist:
-- operator interaction preferences
-- user-personalized habits or response styles
-- raw transcripts
-- raw logs
-- raw tool outputs
-- secrets or credentials
-- speculative diagnoses
+- user preferences
+- workflow habits
+- request narration
+- raw transcripts, logs, tool outputs, or secrets
+
+If content is mixed or ambiguous, do not persist it.
 
 Current datetime: {current_datetime}
 Conversation: {message}"""
@@ -96,6 +89,39 @@ class TurnMemoryContext:
     long_term_count: int = 0
     status: str = "disabled"
     error: Optional[str] = None
+
+
+@dataclass
+class WorkingMemoryResult:
+    """Outcome of a working-memory fetch.
+
+    `memory` is the AMS WorkingMemory object (or None when the session does
+    not exist and creation was not requested). `created` is True when the
+    underlying call created a new session.
+    """
+
+    memory: Any = None
+    created: bool = False
+
+
+@dataclass
+class LongTermSearchResult:
+    """Outcome of a long-term memory search.
+
+    `memories` is the list of MemoryRecord-like objects from AMS, already
+    scope-filtered (e.g. operator-preference filter for asset scope).
+    `total` is the AMS-reported total when present, otherwise the page
+    length. `next_offset` is the offset to request the next page or None
+    when the current page is the last.
+    """
+
+    memories: List[Any] = None  # type: ignore[assignment]
+    total: int = 0
+    next_offset: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.memories is None:
+            self.memories = []
 
 
 @dataclass
@@ -137,6 +163,55 @@ class PreparedAgentTurnMemory:
 class AgentMemoryService:
     """Thin AMS adapter for turn-scoped retrieval and persistence."""
 
+    _PREFERENCE_PATTERNS = (
+        "prefers",
+        "preference",
+        "likes ",
+        "wants ",
+        "i prefer",
+        "i want",
+        "i like",
+        "i'd prefer",
+        "i'd like",
+        "i'd want",
+        "interactive session",
+        "interactive workflow",
+        "executive-summary-first",
+        "exec-summary-first",
+        "top-line risk",
+        "metrics-first",
+        "metric-heavy",
+        "root-cause-first",
+        "remediation-first",
+        "explanation-first",
+        "summary-first",
+    )
+    _ASSET_PATTERNS = (
+        "redis",
+        "instance",
+        "cluster",
+        "service-",
+        "latency",
+        "backup",
+        "failover",
+        "replica",
+        "replication",
+        "oom",
+        "out of memory",
+        "incident",
+        "config",
+        "configuration",
+        "environment",
+        "production",
+        "development",
+        "memory",
+        "cpu",
+        "shard",
+        "cache",
+        "error",
+    )
+    _MIXED_SPLIT_MARKERS = (" when ", " while ", " during ", " after ", " before ")
+
     def __init__(self) -> None:
         self._enabled = bool(settings.agent_memory_enabled and settings.agent_memory_base_url)
 
@@ -168,21 +243,84 @@ class AgentMemoryService:
             config={"custom_prompt": ASSET_CUSTOM_PROMPT},
         )
 
-    @staticmethod
-    def _is_operator_preference_memory(text: Optional[str]) -> bool:
+    @classmethod
+    def _is_operator_preference_memory(cls, text: Optional[str]) -> bool:
         if not text:
             return False
         lowered = text.lower()
-        preference_markers = (
-            "prefers",
-            "preference",
-            "likes ",
-            "wants ",
-            "root-cause-first",
-            "remediation-first",
-            "explanation-first",
-        )
-        return any(marker in lowered for marker in preference_markers)
+        return any(marker in lowered for marker in cls._PREFERENCE_PATTERNS)
+
+    @classmethod
+    def _contains_asset_signal(cls, text: Optional[str]) -> bool:
+        if not text:
+            return False
+        lowered = text.lower()
+        return any(marker in lowered for marker in cls._ASSET_PATTERNS)
+
+    @staticmethod
+    def _split_sentences(text: Optional[str]) -> List[str]:
+        if not text:
+            return []
+        normalized = re.sub(r"\s+", " ", text.strip())
+        if not normalized:
+            return []
+        parts = re.split(r"(?<=[.!?])\s+", normalized)
+        return [part.strip() for part in parts if part.strip()]
+
+    @classmethod
+    def _scope_messages(
+        cls,
+        *,
+        user_message: str,
+        assistant_message: str,
+        include_user_scope: bool,
+        include_asset_scope: bool,
+    ) -> Dict[str, Dict[str, List[str]]]:
+        scoped: Dict[str, Dict[str, List[str]]] = {
+            "user": {"user": [], "assistant": []},
+            "asset": {"user": [], "assistant": []},
+        }
+
+        def _split_mixed_sentence(sentence: str) -> tuple[Optional[str], Optional[str]]:
+            lowered = sentence.lower()
+            for marker in cls._MIXED_SPLIT_MARKERS:
+                if marker not in lowered:
+                    continue
+                index = lowered.index(marker)
+                user_fragment = sentence[:index].strip(" ,.")
+                asset_fragment = sentence[index + len(marker) :].strip(" ,.")
+                if not user_fragment or not asset_fragment:
+                    continue
+                if not cls._is_operator_preference_memory(user_fragment):
+                    continue
+                if not cls._contains_asset_signal(asset_fragment):
+                    continue
+                return user_fragment, asset_fragment
+            return None, None
+
+        def _classify(sentences: List[str], role: str) -> None:
+            for sentence in sentences:
+                is_user = include_user_scope and cls._is_operator_preference_memory(sentence)
+                is_asset = include_asset_scope and cls._contains_asset_signal(sentence)
+
+                if is_user and is_asset:
+                    user_fragment, asset_fragment = _split_mixed_sentence(sentence)
+                    if user_fragment and asset_fragment:
+                        scoped["user"][role].append(user_fragment)
+                        scoped["asset"][role].append(asset_fragment)
+                    else:
+                        scoped["user"][role].append(sentence)
+                    continue
+
+                if is_user:
+                    scoped["user"][role].append(sentence)
+                    continue
+                if is_asset:
+                    scoped["asset"][role].append(sentence)
+
+        _classify(cls._split_sentences(user_message), "user")
+        _classify(cls._split_sentences(assistant_message), "assistant")
+        return scoped
 
     @classmethod
     def _filter_asset_memories(cls, memories: List[Any]) -> List[Any]:
@@ -272,6 +410,22 @@ class AgentMemoryService:
         except Exception as exc:  # pragma: no cover - best effort only
             logger.warning("Failed to emit agent-memory progress update: %s", exc)
 
+    @asynccontextmanager
+    async def open_session(self) -> AsyncIterator["MemorySession"]:
+        """Open an AMS client session and yield a MemorySession.
+
+        All AMS retrieval should go through this. The session keeps a
+        single MemoryAPIClient connection open for the duration of the
+        block; multiple scoped reads share that connection.
+
+        Raises:
+            RuntimeError: when AMS is not enabled or the SDK is missing.
+        """
+        if not self.enabled:
+            raise RuntimeError("Agent memory is not enabled")
+        async with MemoryAPIClient(self._config()) as client:
+            yield MemorySession(self, client)
+
     async def prepare_turn_context(
         self,
         *,
@@ -298,62 +452,52 @@ class AgentMemoryService:
             return TurnMemoryContext(system_prompt=None, status="missing_scope")
 
         try:
-            async with MemoryAPIClient(self._config()) as client:
+            async with self.open_session() as session:
                 prompt_sections: List[tuple[str, Any, List[Any], bool]] = []
                 total_memories = 0
                 user_working_memory = None
                 asset_working_memory = None
                 created_any = False
+                limit = settings.agent_memory_retrieval_limit
 
                 if user_scope:
-                    created, user_working_memory = await client.get_or_create_working_memory(
+                    user_wm = await session.get_user_working_memory(
                         session_id=session_id,
                         user_id=user_id,
-                        namespace=settings.agent_memory_namespace,
-                        model_name=settings.agent_memory_model_name,
-                        long_term_memory_strategy=self._strategy(),
+                        create_if_missing=True,
                     )
-                    user_memories_result = await client.search_long_term_memory(
-                        text=query,
-                        user_id=UserId(eq=user_id),
-                        namespace=Namespace(eq=settings.agent_memory_namespace),
-                        limit=settings.agent_memory_retrieval_limit,
+                    user_working_memory = user_wm.memory
+                    created_any = created_any or user_wm.created
+                    user_search = await session.search_user_long_term(
+                        query=query,
+                        user_id=user_id,
+                        limit=limit,
                     )
-                    user_memories = list(getattr(user_memories_result, "memories", []) or [])
                     prompt_sections.append(
-                        ("User-scoped memory", user_working_memory, user_memories, True)
+                        ("User-scoped memory", user_working_memory, user_search.memories, True)
                     )
-                    total_memories += len(user_memories)
-                    created_any = created_any or created
+                    total_memories += len(user_search.memories)
 
                 if asset_scope:
-                    asset_session_id = (
-                        self._asset_session_id(
-                            instance_id=instance_id,
-                            cluster_id=cluster_id,
-                        )
-                        or session_id
+                    asset_wm = await session.get_asset_working_memory(
+                        instance_id=instance_id,
+                        cluster_id=cluster_id,
+                        fallback_session_id=session_id,
+                        create_if_missing=True,
                     )
-                    created, asset_working_memory = await client.get_or_create_working_memory(
-                        session_id=asset_session_id,
-                        namespace=settings.agent_memory_asset_namespace,
-                        model_name=settings.agent_memory_model_name,
-                        long_term_memory_strategy=self._asset_strategy(),
-                    )
-                    asset_memories_result = await client.search_long_term_memory(
-                        text=query,
-                        namespace=Namespace(eq=settings.agent_memory_asset_namespace),
-                        entities=Entities(any=entities),
-                        limit=settings.agent_memory_retrieval_limit,
-                    )
-                    asset_memories = self._filter_asset_memories(
-                        list(getattr(asset_memories_result, "memories", []) or [])
+                    asset_working_memory = asset_wm.memory
+                    created_any = created_any or asset_wm.created
+                    asset_search = await session.search_asset_long_term(
+                        query=query,
+                        instance_id=instance_id,
+                        cluster_id=cluster_id,
+                        limit=limit,
+                        filter_preferences=True,
                     )
                     prompt_sections.append(
-                        ("Asset-scoped memory", asset_working_memory, asset_memories, False)
+                        ("Asset-scoped memory", asset_working_memory, asset_search.memories, False)
                     )
-                    total_memories += len(asset_memories)
-                    created_any = created_any or created
+                    total_memories += len(asset_search.memories)
 
                 await self._emit(
                     emitter,
@@ -418,19 +562,12 @@ class AgentMemoryService:
                 turn_timestamp = datetime.now(timezone.utc)
                 recent_limit = max(2, int(settings.agent_memory_recent_message_limit))
 
-                def _message_pair() -> List[Any]:
-                    return [
-                        MemoryMessage(
-                            role="user",
-                            content=user_message,
-                            created_at=turn_timestamp,
-                        ),
-                        MemoryMessage(
-                            role="assistant",
-                            content=assistant_message,
-                            created_at=turn_timestamp,
-                        ),
-                    ]
+                scoped_payloads = self._scope_messages(
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    include_user_scope=user_scope,
+                    include_asset_scope=asset_scope,
+                )
 
                 async def _put_memory(
                     *,
@@ -442,6 +579,14 @@ class AgentMemoryService:
                     include_user_label: bool,
                 ) -> None:
                     nonlocal client
+
+                    scope_key = "user" if scope_user_id is not None else "asset"
+                    scoped_user_text = "\n".join(scoped_payloads[scope_key]["user"]).strip()
+                    scoped_assistant_text = "\n".join(
+                        scoped_payloads[scope_key]["assistant"]
+                    ).strip()
+                    if not scoped_user_text and not scoped_assistant_text:
+                        return
 
                     if working_memory is None:
                         kwargs: Dict[str, Any] = {
@@ -455,7 +600,22 @@ class AgentMemoryService:
                         _, working_memory = await client.get_or_create_working_memory(**kwargs)
 
                     existing_messages = list(getattr(working_memory, "messages", []) or [])
-                    existing_messages.extend(_message_pair())
+                    if scoped_user_text:
+                        existing_messages.append(
+                            MemoryMessage(
+                                role="user",
+                                content=scoped_user_text,
+                                created_at=turn_timestamp,
+                            )
+                        )
+                    if scoped_assistant_text:
+                        existing_messages.append(
+                            MemoryMessage(
+                                role="assistant",
+                                content=scoped_assistant_text,
+                                created_at=turn_timestamp,
+                            )
+                        )
                     trimmed_messages = existing_messages[-recent_limit:]
 
                     target_context = []
@@ -598,3 +758,162 @@ async def prepare_agent_turn_memory(
         cluster_id=cluster_id,
         emitter=emitter,
     )
+
+
+class MemorySession:
+    """An open Agent Memory Server session.
+
+    Wraps a single MemoryAPIClient connection and exposes scope-aware
+    methods for working memory and long-term memory. Use
+    AgentMemoryService.open_session() to create one — multiple scoped
+    reads then share the same connection for the duration of the block.
+    """
+
+    def __init__(self, service: AgentMemoryService, client: Any) -> None:
+        self._service = service
+        self._client = client
+
+    @property
+    def client(self) -> Any:
+        """Underlying MemoryAPIClient. For advanced calls not exposed here."""
+        return self._client
+
+    async def get_user_working_memory(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        create_if_missing: bool = True,
+    ) -> WorkingMemoryResult:
+        """Get user-scoped working memory for a session.
+
+        When `create_if_missing` is True (default), uses
+        get_or_create_working_memory and may create a new session. When
+        False, returns memory=None for missing sessions instead of
+        creating one.
+        """
+        if create_if_missing:
+            created, memory = await self._client.get_or_create_working_memory(
+                session_id=session_id,
+                user_id=user_id,
+                namespace=settings.agent_memory_namespace,
+                model_name=settings.agent_memory_model_name,
+                long_term_memory_strategy=self._service._strategy(),
+            )
+            return WorkingMemoryResult(memory=memory, created=created)
+        try:
+            memory = await self._client.get_working_memory(
+                session_id=session_id,
+                user_id=user_id,
+                namespace=settings.agent_memory_namespace,
+            )
+            return WorkingMemoryResult(memory=memory, created=False)
+        except MemoryNotFoundError:
+            return WorkingMemoryResult(memory=None, created=False)
+
+    async def get_asset_working_memory(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        fallback_session_id: Optional[str] = None,
+        create_if_missing: bool = True,
+    ) -> WorkingMemoryResult:
+        """Get asset-scoped working memory for an instance or cluster.
+
+        The asset session id is derived from instance_id/cluster_id; when
+        neither is set, falls back to fallback_session_id (if provided).
+        Returns memory=None when no session id can be determined.
+        """
+        asset_session_id = (
+            self._service._asset_session_id(instance_id=instance_id, cluster_id=cluster_id)
+            or fallback_session_id
+        )
+        if asset_session_id is None:
+            return WorkingMemoryResult(memory=None, created=False)
+        if create_if_missing:
+            created, memory = await self._client.get_or_create_working_memory(
+                session_id=asset_session_id,
+                namespace=settings.agent_memory_asset_namespace,
+                model_name=settings.agent_memory_model_name,
+                long_term_memory_strategy=self._service._asset_strategy(),
+            )
+            return WorkingMemoryResult(memory=memory, created=created)
+        try:
+            memory = await self._client.get_working_memory(
+                session_id=asset_session_id,
+                namespace=settings.agent_memory_asset_namespace,
+            )
+            return WorkingMemoryResult(memory=memory, created=False)
+        except MemoryNotFoundError:
+            return WorkingMemoryResult(memory=None, created=False)
+
+    async def search_user_long_term(
+        self,
+        *,
+        query: str,
+        user_id: str,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> LongTermSearchResult:
+        """Search user-scoped long-term memories filtered by user_id."""
+        result = await self._client.search_long_term_memory(
+            text=query,
+            user_id=UserId(eq=user_id),
+            namespace=Namespace(eq=settings.agent_memory_namespace),
+            limit=limit,
+            offset=offset,
+        )
+        return self._wrap_search_result(result, limit=limit, offset=offset)
+
+    async def search_asset_long_term(
+        self,
+        *,
+        query: str,
+        instance_id: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        limit: int = 10,
+        offset: int = 0,
+        filter_preferences: bool = True,
+    ) -> LongTermSearchResult:
+        """Search asset-scoped long-term memories.
+
+        Returns an empty result when neither instance_id nor cluster_id
+        is provided. When `filter_preferences` is True (default), removes
+        operator-preference-shaped memories from the result so the
+        asset/user scope boundary is enforced consistently across
+        callers.
+        """
+        entities = self._service._target_entities(instance_id=instance_id, cluster_id=cluster_id)
+        if not entities:
+            return LongTermSearchResult(memories=[], total=0, next_offset=None)
+        result = await self._client.search_long_term_memory(
+            text=query,
+            namespace=Namespace(eq=settings.agent_memory_asset_namespace),
+            entities=Entities(any=entities),
+            limit=limit,
+            offset=offset,
+        )
+        wrapped = self._wrap_search_result(result, limit=limit, offset=offset)
+        if not filter_preferences:
+            return wrapped
+        filtered = self._service._filter_asset_memories(wrapped.memories)
+        # Report wrapped.total as-is. Subtracting the per-page removed count
+        # gives an unstable estimate (the denominator shifts each page and
+        # never converges on the true filtered total). Keeping the raw AMS
+        # total is a stable upper bound; the UI shows slightly fewer items
+        # than the count but the count itself does not move across pages.
+        return LongTermSearchResult(
+            memories=filtered,
+            total=wrapped.total,
+            next_offset=wrapped.next_offset,
+        )
+
+    @staticmethod
+    def _wrap_search_result(result: Any, *, limit: int, offset: int) -> LongTermSearchResult:
+        memories = list(getattr(result, "memories", []) or [])
+        total = getattr(result, "total", None)
+        if total is None:
+            total = len(memories)
+        next_offset = offset + len(memories) if len(memories) >= limit else None
+        return LongTermSearchResult(memories=memories, total=total, next_offset=next_offset)

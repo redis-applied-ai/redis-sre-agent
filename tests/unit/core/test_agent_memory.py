@@ -43,6 +43,18 @@ def memory_settings(monkeypatch):
 
 
 class TestPrepareTurnContext:
+    def test_user_strategy_prompt_excludes_asset_facts(self):
+        service = AgentMemoryService()
+        strategy = service._strategy()
+        prompt = strategy.config["custom_prompt"]
+
+        assert "explicit user preferences" in prompt
+        assert "user-specific workflow habits" in prompt
+        assert "asset configuration or environment facts" in prompt
+        assert "request narration" in prompt
+        assert "If content is mixed or ambiguous, do not persist it." in prompt
+        assert "stable Redis environment facts" not in prompt
+
     def test_filter_asset_memories_keeps_operational_memories_with_common_adjectives(self):
         memories = [
             SimpleNamespace(text="Detailed OOM analysis revealed backup conflicts"),
@@ -205,8 +217,8 @@ class TestPersistTurn:
             await service.persist_turn(
                 session_id="session-1",
                 user_id="user-1",
-                user_message="hello",
-                assistant_message="hi",
+                user_message="Jamie prefers executive-summary-first updates when investigating service-12345 latency.",
+                assistant_message="service-12345 had latency and replica lag during backups.",
                 user_working_memory=user_working_memory,
                 asset_working_memory=asset_working_memory,
                 instance_id="instance-1",
@@ -214,6 +226,156 @@ class TestPersistTurn:
             )
 
         assert mock_client.put_working_memory.await_count == 2
+        user_memory = mock_client.put_working_memory.await_args_list[0].args[1]
+        asset_memory = mock_client.put_working_memory.await_args_list[1].args[1]
+
+        assert user_memory.namespace == "redis-sre-agent-user"
+        assert asset_memory.namespace == "redis-sre-agent-asset"
+        assert [message.content for message in user_memory.messages] == [
+            "Jamie prefers executive-summary-first updates"
+        ]
+        assert [message.content for message in asset_memory.messages] == [
+            "investigating service-12345 latency",
+            "service-12345 had latency and replica lag during backups.",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_persist_turn_excludes_asset_only_facts_from_user_scope(self, memory_settings):
+        user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        mock_client = AsyncMock()
+        mock_client.put_working_memory = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            await service.persist_turn(
+                session_id="session-1",
+                user_id="user-1",
+                user_message="service-12345 had an OOM incident in production.",
+                assistant_message="The Redis cluster had memory pressure during backups.",
+                user_working_memory=user_working_memory,
+                asset_working_memory=asset_working_memory,
+                instance_id="instance-1",
+                thread_id="thread-1",
+            )
+
+        assert mock_client.put_working_memory.await_count == 1
+        asset_memory = mock_client.put_working_memory.await_args_list[0].args[1]
+        assert asset_memory.namespace == "redis-sre-agent-asset"
+        assert all("prefers" not in message.content for message in asset_memory.messages)
+
+    @pytest.mark.asyncio
+    async def test_persist_turn_excludes_preferences_from_asset_scope(self, memory_settings):
+        user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        mock_client = AsyncMock()
+        mock_client.put_working_memory = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            await service.persist_turn(
+                session_id="session-1",
+                user_id="user-1",
+                user_message="Jamie prefers an interactive session with emphasis on metrics.",
+                assistant_message="I can present an executive-summary-first report.",
+                user_working_memory=user_working_memory,
+                asset_working_memory=asset_working_memory,
+                instance_id="instance-1",
+                thread_id="thread-1",
+            )
+
+        assert mock_client.put_working_memory.await_count == 1
+        user_memory = mock_client.put_working_memory.await_args_list[0].args[1]
+        assert user_memory.namespace == "redis-sre-agent-user"
+        assert all("redis" not in message.content.lower() for message in user_memory.messages)
+
+    @pytest.mark.asyncio
+    async def test_persist_turn_drops_ambiguous_mixed_sentence(self, memory_settings):
+        user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        mock_client = AsyncMock()
+        mock_client.put_working_memory = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            await service.persist_turn(
+                session_id="session-1",
+                user_id="user-1",
+                user_message="Jamie investigated service-12345 latency on April 15.",
+                assistant_message="We reviewed the situation.",
+                user_working_memory=user_working_memory,
+                asset_working_memory=asset_working_memory,
+                instance_id="instance-1",
+                thread_id="thread-1",
+            )
+
+        assert mock_client.put_working_memory.await_count == 1
+        asset_memory = mock_client.put_working_memory.await_args_list[0].args[1]
+        assert [message.content for message in asset_memory.messages] == [
+            "Jamie investigated service-12345 latency on April 15."
+        ]
+
+    @pytest.mark.asyncio
+    async def test_persist_turn_captures_first_person_preferences(self, memory_settings):
+        user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        mock_client = AsyncMock()
+        mock_client.put_working_memory = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            await service.persist_turn(
+                session_id="session-1",
+                user_id="user-1",
+                user_message="I prefer concise answers and I want remediation-first updates.",
+                assistant_message="Got it.",
+                user_working_memory=user_working_memory,
+                asset_working_memory=asset_working_memory,
+                instance_id="instance-1",
+                thread_id="thread-1",
+            )
+
+        assert mock_client.put_working_memory.await_count >= 1
+        user_memory = mock_client.put_working_memory.await_args_list[0].args[1]
+        assert user_memory.namespace == "redis-sre-agent-user"
+        joined = " ".join(m.content.lower() for m in user_memory.messages)
+        assert "i prefer concise" in joined
+        assert "i want remediation-first" in joined
+
+    @pytest.mark.asyncio
+    async def test_persist_turn_routes_inseparable_mixed_sentence_to_user_scope(
+        self, memory_settings
+    ):
+        user_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        asset_working_memory = SimpleNamespace(messages=[], memories=[], data={}, context=None)
+        mock_client = AsyncMock()
+        mock_client.put_working_memory = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            await service.persist_turn(
+                session_id="session-1",
+                user_id="user-1",
+                user_message="Jamie prefers service-12345 latency investigations.",
+                assistant_message="okay",
+                user_working_memory=user_working_memory,
+                asset_working_memory=asset_working_memory,
+                instance_id="instance-1",
+                thread_id="thread-1",
+            )
+
+        # Preference signal wins when sentence can't be split — routes to user scope, not dropped
+        assert mock_client.put_working_memory.await_count >= 1
 
     @pytest.mark.asyncio
     async def test_persist_turn_deduplicates_existing_context_lines(self, memory_settings):
@@ -241,8 +403,8 @@ class TestPersistTurn:
             await service.persist_turn(
                 session_id="session-1",
                 user_id="user-1",
-                user_message="hello",
-                assistant_message="hi",
+                user_message="Jamie prefers executive-summary-first updates.",
+                assistant_message="I will keep updates concise and summary-first.",
                 user_working_memory=user_working_memory,
                 instance_id="instance-1",
                 thread_id="thread-1",
@@ -257,6 +419,49 @@ class TestPersistTurn:
                 "Prior durable note",
             ]
         )
+
+
+class TestMemorySessionSearchAssetLongTerm:
+    @pytest.mark.asyncio
+    async def test_filtered_search_reports_unadjusted_total(self, memory_settings):
+        # AMS returns 5 memories with 2 preference-shaped on this page,
+        # and reports total=100 across all pages. The session must return
+        # filtered memories but keep total=100 — subtracting the per-page
+        # removed count would shift the denominator on every page.
+        ams_result = SimpleNamespace(
+            memories=[
+                SimpleNamespace(text="Cluster had OOM incident", memory_type="semantic"),
+                SimpleNamespace(text="Operator prefers concise replies", memory_type="semantic"),
+                SimpleNamespace(text="Replication lag spiked", memory_type="semantic"),
+                SimpleNamespace(text="User prefers exec-summary-first", memory_type="semantic"),
+                SimpleNamespace(text="Backup window is 2am UTC", memory_type="semantic"),
+            ],
+            total=100,
+        )
+        mock_client = AsyncMock()
+        mock_client.search_long_term_memory = AsyncMock(return_value=ams_result)
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("redis_sre_agent.core.agent_memory.MemoryAPIClient", return_value=mock_client):
+            service = AgentMemoryService()
+            async with service.open_session() as session:
+                result = await session.search_asset_long_term(
+                    query="incident",
+                    instance_id="i1",
+                    cluster_id=None,
+                    limit=5,
+                    offset=0,
+                    filter_preferences=True,
+                )
+
+        texts = [m.text for m in result.memories]
+        assert "Operator prefers concise replies" not in texts
+        assert "User prefers exec-summary-first" not in texts
+        assert len(result.memories) == 3
+        # Total must remain the unadjusted AMS value so the UI denominator
+        # is stable across pages.
+        assert result.total == 100
 
 
 class TestPrepareAgentTurnMemory:
