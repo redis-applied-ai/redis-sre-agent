@@ -34,6 +34,42 @@ Defaults:
 2. Time series: cluster scope, interval=5m (add node scope if the cluster view suggests node imbalance)
 3. Health checks
 
+## Execution checklist
+
+This is a complex, multi-step health-check workflow. Track progress against this checklist as you work. If your runtime supports separate progress updates, copy this checklist into those progress updates and check items off as they are completed. Do not include this checklist in the final customer-facing report; the final answer must follow the Output structure section exactly.
+
+```text
+Health Check Progress:
+- [ ] Step 1: Resolve the support package with the narrowest reliable lookup
+- [ ] Step 2: Gather overview, non-OK health checks, databases, alerts, events, nodes, topology, and cluster time series
+- [ ] Step 3: Gather node time series when cluster metrics suggest node imbalance
+- [ ] Step 4: Build the WARNING and CRITICAL findings set from Analyzer health checks
+- [ ] Step 5: Run required drill-downs, including raw slowlog retrieval for every Slowlog finding
+- [ ] Step 6: Draft the customer-facing report in the exact required markdown structure
+- [ ] Step 7: Validate the draft against the output checklist, repair any gaps, and only then finalize
+```
+
+Step 1: Resolve the support package with the narrowest reliable lookup.
+Use exact package ids, explicit hashes, or exact account and cluster context as described in the package-resolution workflow. Do not invent direct hostname lookup behavior.
+
+Step 2: Gather the base and proactive context.
+Before forming conclusions, pull overview, health checks, databases, alerts, events, nodes, topology, and cluster-scope time series at 5m interval. Use all severities for events with limit=200.
+
+Step 3: Gather node time series when needed.
+If cluster metrics, topology, node status, shard placement, or health checks suggest node imbalance, pull node-scope time series for the affected node or nodes before finalizing.
+
+Step 4: Build the findings set from Analyzer evidence.
+Include WARNING and CRITICAL health-check results, skip OK results, and preserve skipped checks for the audit trail. Do not invent findings that Analyzer did not support with tool evidence.
+
+Step 5: Run targeted drill-downs.
+For every Slowlog health check, call `analyzer_get_database_slowlog` and analyze the raw entries before writing the finding. Use the other drill-down tools described below for placement, node, task, CRDT, alert, or broad package context.
+
+Step 6: Draft the final markdown report.
+Use the exact required heading order, package metadata lines, severity counts, finding sections, rollup subsections, TAM manual review section, and skipped-check section.
+
+Step 7: Validate and repair before finalizing.
+Review the draft against the validation loop below. If any item fails, revise the report and run the validation loop again.
+
 ## Tool map
 
 Use these tool names directly:
@@ -313,6 +349,22 @@ Return one markdown document in this shape:
 
 ## Skipped Checks
 ```
+
+## Final report validation loop
+
+Before returning the final answer, validate the draft report against this checklist. If any item fails, fix the draft and repeat this validation loop until all items pass.
+
+- The final answer is one markdown document and starts with `# Cluster Health Check: <cluster name>`.
+- The metadata block contains exactly these bold labels in this order: `Package ID`, `Cluster`, `Software version`, `Nodes`, `Databases`, `Analysis date`.
+- The required top-level sections appear in this order: `Summary`, `Cluster-level findings`, `Node-level findings`, `Database-level findings`, `Common Issues Rollup`, `TAM Manual Review Required`, `Skipped Checks`.
+- The `Summary` section includes a 1-2 sentence summary and a findings count by severity with `Critical`, `Warning`, and `Informational`.
+- The `Common Issues Rollup` section includes the exact subsections `Server Side`, `Client Side`, and `Operational`.
+- Every database finding uses `<database name> (<id>)`, not a bare database id.
+- Every Slowlog finding is based on raw slowlog entries and includes the dominant category, top 3 commands by count with count, average duration, max duration, any bad pattern, and a direct recommendation.
+- The report mentions cluster-scope time-series evidence and node-scope time-series evidence when node imbalance was indicated.
+- The `TAM Manual Review Required` section contains the manual review checklist, populated with observed evidence when available and marked for TAM follow-up when the MCP surface does not expose the field.
+- The `Skipped Checks` section lists checks that returned `SKIP`, especially when missing `sys_info` explains downstream skipped node checks.
+- The final report does not include the internal execution checklist, validation checklist, tool-call trace, or notes about drafting and repair.
 
 ## Rollup mapping
 
