@@ -22,7 +22,7 @@ on:
       - published
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -107,6 +107,157 @@ jobs:
 
       - name: Image digest
         run: echo ${{ steps.meta.outputs.digest }}
+
+  publish-knowledge-pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.7"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Set release metadata
+        run: |
+          echo "RELEASE_TAG=${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag }}" >> "$GITHUB_ENV"
+          echo "REPO_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "BATCH_DATE=$(date -u +%F)" >> "$GITHUB_ENV"
+
+      - name: Prepare release corpus artifacts
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+        run: |
+          uv run redis-sre-agent pipeline prepare-sources \
+            --batch-date "$BATCH_DATE" \
+            --prepare-only \
+            --artifacts-path ./artifacts
+          uv run redis-sre-agent pipeline scrape \
+            --batch-date "$BATCH_DATE" \
+            --artifacts-path ./artifacts \
+            --scrapers redis_docs_local,redis_kb,redis_cloud_api \
+            --latest-only \
+            --docs-path ./redis-docs
+
+      - name: Ingest release corpus with default embeddings
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EMBEDDING_PROVIDER: openai
+          EMBEDDING_MODEL: text-embedding-3-small
+          VECTOR_DIM: 1536
+        run: |
+          uv run redis-sre-agent pipeline ingest \
+            --batch-date "$BATCH_DATE" \
+            --artifacts-path ./artifacts \
+            --latest-only
+
+      - name: Build standard knowledge pack
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EMBEDDING_PROVIDER: openai
+          EMBEDDING_MODEL: text-embedding-3-small
+          VECTOR_DIM: 1536
+        run: |
+          mkdir -p dist
+          uv run redis-sre-agent knowledge-pack build \
+            --batch-date "$BATCH_DATE" \
+            --artifacts-path ./artifacts \
+            --output "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}.zip" \
+            --release-tag "$RELEASE_TAG" \
+            --repo-sha "$REPO_SHA" \
+            --scrapers-run source_documents,redis_docs_local,redis_kb,redis_cloud_api \
+            --profile runtime
+
+      - name: Ingest release corpus with air-gap embeddings
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/1
+          EMBEDDING_PROVIDER: local
+          EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+          VECTOR_DIM: 384
+        run: |
+          uv run redis-sre-agent pipeline ingest \
+            --batch-date "$BATCH_DATE" \
+            --artifacts-path ./artifacts \
+            --latest-only
+
+      - name: Build air-gap knowledge pack
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/1
+          EMBEDDING_PROVIDER: local
+          EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+          VECTOR_DIM: 384
+        run: |
+          uv run redis-sre-agent knowledge-pack build \
+            --batch-date "$BATCH_DATE" \
+            --artifacts-path ./artifacts \
+            --output "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}-airgap.zip" \
+            --release-tag "$RELEASE_TAG" \
+            --repo-sha "$REPO_SHA" \
+            --scrapers-run source_documents,redis_docs_local,redis_kb,redis_cloud_api \
+            --profile airgap
+
+      - name: Smoke-test knowledge pack restores
+        run: |
+          uv run redis-sre-agent knowledge-pack inspect \
+            --pack "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}.zip"
+          REDIS_URL=redis://127.0.0.1:6379/2 \
+          OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+          EMBEDDING_PROVIDER=openai \
+          EMBEDDING_MODEL=text-embedding-3-small \
+          VECTOR_DIM=1536 \
+          uv run redis-sre-agent knowledge-pack load \
+            --pack "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}.zip" \
+            --mode restore \
+            --artifacts-path ./artifacts \
+            --json
+          EMBEDDING_PROVIDER=local \
+          EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2 \
+          VECTOR_DIM=384 \
+          uv run redis-sre-agent knowledge-pack inspect \
+            --pack "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}-airgap.zip"
+          REDIS_URL=redis://127.0.0.1:6379/3 \
+          EMBEDDING_PROVIDER=local \
+          EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2 \
+          VECTOR_DIM=384 \
+          uv run redis-sre-agent knowledge-pack load \
+            --pack "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}-airgap.zip" \
+            --mode restore \
+            --artifacts-path ./artifacts \
+            --json
+
+      - name: Upload knowledge-pack workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-packs-${{ env.RELEASE_TAG }}
+          path: dist/*.zip
+
+      - name: Upload knowledge packs to release
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$RELEASE_TAG" dist/*.zip --clobber
 
   publish-ui:
     runs-on: ubuntu-latest

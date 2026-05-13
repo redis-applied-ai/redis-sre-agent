@@ -153,10 +153,13 @@ def start(concurrency: int):
         # Initialize Redis infrastructure (creates indices if they don't exist)
         try:
             from redis_sre_agent.core.redis import create_indices
+            from redis_sre_agent.knowledge_pack.loader import auto_load_configured_knowledge_pack
 
             indices_created = await create_indices()
             if indices_created:
                 logger.info("✅ Redis indices initialized")
+                auto_load_result = await auto_load_configured_knowledge_pack(settings)
+                logger.info("Knowledge-pack auto-load status: %s", auto_load_result)
             else:
                 logger.warning("⚠️ Failed to create some Redis indices")
         except Exception as e:
