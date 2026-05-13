@@ -29,5 +29,6 @@
     "memory-pressure-runbook",
     "evidence-first-triage"
   ],
-  "expected_routing_decision": "chat"
+  "expected_routing_decision": "chat",
+  "required_response_patterns": []
 }

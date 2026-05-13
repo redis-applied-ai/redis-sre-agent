@@ -76,15 +76,9 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
         if stripped:
             preamble.append(stripped)
 
-    required_order = [
-        line.strip()
-        for line in template_lines
-        if line.strip().startswith("## ")
-    ]
+    required_order = [line.strip() for line in template_lines if line.strip().startswith("## ")]
     required_subsections = [
-        line.strip()
-        for line in template_lines
-        if line.strip().startswith("### ")
+        line.strip() for line in template_lines if line.strip().startswith("### ")
     ]
 
     required_patterns: list[dict[str, str]] = []
@@ -92,9 +86,7 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
     preamble_segment = "\n".join(preamble_segment_lines).rstrip()
     if preamble_segment:
         metadata_labels = [
-            _line_prefix_before_placeholder(line)
-            for line in preamble
-            if line.startswith("**")
+            _line_prefix_before_placeholder(line) for line in preamble if line.startswith("**")
         ]
         metadata_labels = [label for label in metadata_labels if label]
         preamble_description = (
@@ -128,8 +120,7 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
             {
                 "pattern": r"(?m)^### .+ \([^)]+\)$",
                 "description": (
-                    "Include per-database subsection headings such as "
-                    "`### orders-cache (bdb-101)`."
+                    "Include per-database subsection headings such as `### orders-cache (bdb-101)`."
                 ),
             }
         )
@@ -138,8 +129,7 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
             {
                 "pattern": r"(?m)^- \*\*[^*]+\*\*: .+",
                 "description": (
-                    "Write findings as markdown bullets in the form "
-                    "`- **<finding label>**: ...`."
+                    "Write findings as markdown bullets in the form `- **<finding label>**: ...`."
                 ),
             }
         )
@@ -173,9 +163,7 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
             "Confirm Database-level findings uses `### <database name> (<id>)` subsections."
         )
     if "- **<finding label>**:" in template_text:
-        validation_checklist.append(
-            "Confirm findings are markdown bullets, not numbered lists."
-        )
+        validation_checklist.append("Confirm findings are markdown bullets, not numbered lists.")
     if required_order:
         validation_checklist.append(
             f"Confirm the document ends after `{required_order[-1]}` with no footer."
@@ -198,7 +186,7 @@ def _template_segment_to_pattern(segment: str) -> str:
     pattern_parts: list[str] = []
     cursor = 0
     for match in _PLACEHOLDER_RE.finditer(segment):
-        pattern_parts.append(re.escape(segment[cursor:match.start()]))
+        pattern_parts.append(re.escape(segment[cursor : match.start()]))
         pattern_parts.append(r".+?")
         cursor = match.end()
     pattern_parts.append(re.escape(segment[cursor:]))
@@ -303,10 +291,7 @@ def extract_output_contract(
     if validation_patterns:
         contract["validation_patterns"] = validation_patterns
     template = str(
-        raw.get("template")
-        or raw.get("markdown_template")
-        or inferred.get("template")
-        or ""
+        raw.get("template") or raw.get("markdown_template") or inferred.get("template") or ""
     ).strip()
     if template:
         contract["template"] = template
@@ -375,9 +360,7 @@ def build_contract_summary(
             output_contract.get("required_preamble_lines")
         )
         if required_preamble_lines:
-            summary.append(
-                "Required opening lines: " + " | ".join(required_preamble_lines) + "."
-            )
+            summary.append("Required opening lines: " + " | ".join(required_preamble_lines) + ".")
         instructions = _normalize_string_list(output_contract.get("instructions"))
         for instruction in instructions[:5]:
             summary.append(f"Output rule: {instruction}")

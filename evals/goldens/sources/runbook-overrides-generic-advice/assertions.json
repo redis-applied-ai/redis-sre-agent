@@ -11,5 +11,6 @@
   "required_sources": [
     "runbook-overrides-generic-advice",
     "memory-pressure-runbook"
-  ]
+  ],
+  "required_response_patterns": []
 }

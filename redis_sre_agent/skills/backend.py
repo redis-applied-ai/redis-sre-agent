@@ -29,7 +29,9 @@ def normalize_skill_search_type(
     normalized = str(search_type or default_when_queried).strip().lower() or default_when_queried
     if normalized not in SUPPORTED_SKILL_SEARCH_TYPES:
         supported = ", ".join(SUPPORTED_SKILL_SEARCH_TYPES)
-        raise ValueError(f"Unsupported skill search_type '{normalized}'. Expected one of: {supported}")
+        raise ValueError(
+            f"Unsupported skill search_type '{normalized}'. Expected one of: {supported}"
+        )
     return cast(SkillSearchType, normalized)
 
 

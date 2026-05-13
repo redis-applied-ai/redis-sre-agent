@@ -28,5 +28,6 @@
     "cluster-health-triage",
     "maintenance-mode-guidance"
   ],
-  "expected_routing_decision": "triage"
+  "expected_routing_decision": "triage",
+  "required_response_patterns": []
 }

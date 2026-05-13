@@ -11,5 +11,6 @@
     "iterative-diagnostics-runbook",
     "knowledge-only-boundary",
     "legacy-eviction-guidance"
-  ]
+  ],
+  "required_response_patterns": []
 }

@@ -21,5 +21,6 @@
   "required_sources": [
     "no-live-instance-claims",
     "RET-9001"
-  ]
+  ],
+  "required_response_patterns": []
 }

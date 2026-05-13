@@ -227,7 +227,9 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
         "required_tool_calls": ["inspect_maintenance_mode"],
         "progress_checklist": ["Read maintenance state first."],
     }
-    assert agent_skill["contract_summary"][0].startswith("This skill defines a binding output contract.")
+    assert agent_skill["contract_summary"][0].startswith(
+        "This skill defines a binding output contract."
+    )
     assert (
         "Output pattern: Include the `**Findings count by severity:**` block with Critical, Warning, and Informational bullets under Summary."
         in agent_skill["contract_summary"]

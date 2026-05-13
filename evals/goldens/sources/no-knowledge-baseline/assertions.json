@@ -7,5 +7,6 @@
   "forbidden_claims": [
     "according to the runbook"
   ],
-  "required_sources": []
+  "required_sources": [],
+  "required_response_patterns": []
 }

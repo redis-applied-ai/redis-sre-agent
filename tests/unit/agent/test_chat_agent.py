@@ -356,7 +356,9 @@ class TestSkillContractRuntimeRepair:
         ]
         messages = [
             HumanMessage(content="Review package"),
-            AIMessage(content="## Summary\nBrief summary\n\n## Skipped Checks\nNone\n\nSkill used: redis-cluster-health-check"),
+            AIMessage(
+                content="## Summary\nBrief summary\n\n## Skipped Checks\nNone\n\nSkill used: redis-cluster-health-check"
+            ),
         ]
 
         repair = chat_agent_module._build_skill_contract_repair_message(envelopes, messages)
@@ -365,8 +367,14 @@ class TestSkillContractRuntimeRepair:
         content = str(repair.content)
         assert "Do not finalize yet" in content
         assert "`analyzer_get_package_time_series`" in content
-        assert "Always fetch cluster-scope time series with interval=5m before finalizing the report." in content
-        assert "End the document after the `## Skipped Checks` section without adding a footer." in content
+        assert (
+            "Always fetch cluster-scope time series with interval=5m before finalizing the report."
+            in content
+        )
+        assert (
+            "End the document after the `## Skipped Checks` section without adding a footer."
+            in content
+        )
 
     def test_skill_contract_needs_followup_only_when_tools_are_missing(self):
         envelopes = [
@@ -399,9 +407,7 @@ class TestSkillContractRuntimeRepair:
             AIMessage(content="## Skipped Checks\nNone\n\nSkill used: redis-cluster-health-check"),
         ]
 
-        assert (
-            chat_agent_module._skill_contract_needs_followup(envelopes, messages) is False
-        )
+        assert chat_agent_module._skill_contract_needs_followup(envelopes, messages) is False
 
     @pytest.mark.asyncio
     async def test_repair_response_to_skill_contract_uses_llm_for_output_only_rewrite(self):

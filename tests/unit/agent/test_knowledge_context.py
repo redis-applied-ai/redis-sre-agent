@@ -128,7 +128,10 @@ async def test_startup_context_renders_skill_title_with_lookup_slug():
     ):
         context = await build_startup_knowledge_context(version="latest")
 
-    assert "Redis Cluster Health Check (`redis-cluster-health-check`): Run a fast cluster health check." in context
+    assert (
+        "Redis Cluster Health Check (`redis-cluster-health-check`): Run a fast cluster health check."
+        in context
+    )
 
 
 @pytest.mark.asyncio

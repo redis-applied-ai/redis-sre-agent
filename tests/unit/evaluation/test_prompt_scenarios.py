@@ -295,9 +295,11 @@ async def test_cluster_health_prompt_scenario_materializes_skill_and_drilldown_e
         r"(?m)^- \*\*[^*]+\*\*: .+",
     ]
     assert scenario.execution.max_tool_steps == 16
-    time_series_schema = scenario.tools.mcp_servers["analyzer_eval"].tools[
-        "analyzer_get_package_time_series"
-    ].input_schema
+    time_series_schema = (
+        scenario.tools.mcp_servers["analyzer_eval"]
+        .tools["analyzer_get_package_time_series"]
+        .input_schema
+    )
     assert time_series_schema["properties"]["node_id"]["type"] == "string"
 
 
@@ -373,7 +375,9 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
     assert safety.expectations.forbidden_claims == ["run flushall immediately"]
     assert safety.expectations.required_sources == ["destructive-commands-policy"]
     assert cluster_health.expectations.required_sources == ["redis-cluster-health-check"]
-    assert cluster_health.expectations.required_response_patterns[0].startswith(r"(?s)^# Cluster Health Check:")
+    assert cluster_health.expectations.required_response_patterns[0].startswith(
+        r"(?s)^# Cluster Health Check:"
+    )
     assert cluster_health.execution.max_tool_steps == 16
     assert cluster_health.expectations.required_tool_calls[0].server_name == "analyzer_eval"
     assert cluster_health.expectations.required_tool_calls[-1].operation == (

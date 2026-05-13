@@ -9,5 +9,6 @@
   ],
   "forbidden_claims": [
     "run flushall immediately"
-  ]
+  ],
+  "required_response_patterns": []
 }

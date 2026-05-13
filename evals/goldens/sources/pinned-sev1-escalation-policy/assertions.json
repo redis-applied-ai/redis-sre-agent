@@ -11,5 +11,6 @@
   ],
   "required_sources": [
     "sev1-escalation-policy"
-  ]
+  ],
+  "required_response_patterns": []
 }
