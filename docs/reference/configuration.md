@@ -49,6 +49,7 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `embedding_model` | `EMBEDDING_MODEL` | `str` | `text-embedding-3-small` | Embedding model name. |
 | `vector_dim` | `VECTOR_DIM` | `int` | `1536` | Must match embedding model output dimensions. |
 | `embeddings_cache_ttl` | `EMBEDDINGS_CACHE_TTL` | `int \| None` | `604800` | Embedding cache TTL in seconds; `None` means no expiration. |
+| `vectorizer_factory` | `VECTORIZER_FACTORY` | `str \| None` | `None` | Dot-path to custom vectorizer factory returning an object with `aembed()`/`aembed_many()`. |
 
 ### Task Queue
 
@@ -88,6 +89,7 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `llm_timeout` | `LLM_TIMEOUT` | `float` | `180.0` | LLM HTTP timeout in seconds. |
 | `llm_factory` | `LLM_FACTORY` | `str \| None` | `None` | Dot-path to custom LangChain chat model factory. |
 | `async_openai_client_factory` | `ASYNC_OPENAI_CLIENT_FACTORY` | `str \| None` | `None` | Dot-path to custom AsyncOpenAI-compatible client factory. |
+| `vectorizer_factory` | `VECTORIZER_FACTORY` | `str \| None` | `None` | Dot-path to custom embeddings/vectorizer factory. |
 
 ### Monitoring
 

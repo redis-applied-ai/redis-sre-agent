@@ -79,39 +79,31 @@ class TestRedisInfrastructure:
         # from_url should be called TWICE (no caching)
         assert mock_redis.from_url.call_count == 2
 
-    @patch("redis_sre_agent.core.redis.EmbeddingsCache")
-    @patch("redis_sre_agent.core.redis.HFTextVectorizer")
-    @patch("redis_sre_agent.core.redis.OpenAITextVectorizer")
-    def test_get_vectorizer(self, mock_openai_vectorizer, mock_hf_vectorizer, mock_cache):
-        """Test vectorizer creation (no caching - creates fresh each time)."""
-        from redis_sre_agent.core.config import settings
-
-        mock_cache_instance = Mock()
-        mock_cache.return_value = mock_cache_instance
-
+    @patch("redis_sre_agent.core.redis.create_vectorizer")
+    def test_get_vectorizer(self, mock_create_vectorizer):
+        """Test vectorizer creation delegates to the helper on each call."""
         mock_vectorizer_instance = Mock()
-        # Set return value for whichever vectorizer is used based on settings
-        mock_openai_vectorizer.return_value = mock_vectorizer_instance
-        mock_hf_vectorizer.return_value = mock_vectorizer_instance
+        mock_create_vectorizer.return_value = mock_vectorizer_instance
 
-        # Determine which mock to check based on settings
-        if settings.embedding_provider.lower() == "local":
-            expected_vectorizer_mock = mock_hf_vectorizer
-        else:
-            expected_vectorizer_mock = mock_openai_vectorizer
-
-        # First call creates vectorizer
         vectorizer1 = get_vectorizer()
         assert vectorizer1 == mock_vectorizer_instance
-        mock_cache.assert_called_once()
-        expected_vectorizer_mock.assert_called_once()
+        mock_create_vectorizer.assert_called_once_with(config=None)
 
-        # Second call creates NEW instance (no caching to avoid event loop issues)
         vectorizer2 = get_vectorizer()
         assert vectorizer2 == mock_vectorizer_instance
-        # Should be called TWICE (no caching)
-        assert mock_cache.call_count == 2
-        assert expected_vectorizer_mock.call_count == 2
+        assert mock_create_vectorizer.call_count == 2
+
+    @patch("redis_sre_agent.core.redis.create_vectorizer")
+    def test_get_vectorizer_passes_explicit_config(self, mock_create_vectorizer):
+        """Test get_vectorizer forwards explicit config for dependency injection."""
+        mock_vectorizer_instance = Mock()
+        mock_create_vectorizer.return_value = mock_vectorizer_instance
+        config = Mock()
+
+        result = get_vectorizer(config=config)
+
+        assert result is mock_vectorizer_instance
+        mock_create_vectorizer.assert_called_once_with(config=config)
 
     @pytest.mark.asyncio
     async def test_get_knowledge_index(self):

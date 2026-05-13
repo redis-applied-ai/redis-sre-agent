@@ -371,6 +371,7 @@ The agent uses embeddings for the knowledge base vector search. You can configur
 | `embedding_model` | `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name (provider-specific) |
 | `vector_dim` | `VECTOR_DIM` | `1536` | Vector dimensions (must match model) |
 | `embeddings_cache_ttl` | `EMBEDDINGS_CACHE_TTL` | `604800` (7 days) | Cache TTL in seconds |
+| `vectorizer_factory` | `VECTORIZER_FACTORY` | `None` | Dot-path to a custom vectorizer factory |
 
 #### OpenAI embeddings (default)
 
@@ -408,6 +409,33 @@ Available local models:
 
 !!! warning "Vector dimensions must match"
     The `VECTOR_DIM` setting must match the output dimensions of your chosen model. Mismatched dimensions will cause indexing and search failures.
+
+#### Custom vectorizer factories
+
+If you need to override vectorizer construction entirely, set `VECTORIZER_FACTORY` to a dot-path
+import string:
+
+```bash
+VECTORIZER_FACTORY=mypackage.embeddings.custom_vectorizer_factory
+```
+
+Or in a config file:
+
+```yaml
+vectorizer_factory: mypackage.embeddings.custom_vectorizer_factory
+```
+
+The factory receives:
+
+- `provider`: resolved embedding provider such as `openai` or `local`
+- `model`: embedding model name
+- `config`: effective `Settings` object
+- `cache`: prepared Redis-backed `EmbeddingsCache`
+
+It must return an object implementing the async methods used by the runtime:
+
+- `aembed()`
+- `aembed_many()`
 
 #### Switching providers
 

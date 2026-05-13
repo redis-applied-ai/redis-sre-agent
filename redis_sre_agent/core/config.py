@@ -369,6 +369,16 @@ class Settings(BaseSettings):
         default=86400 * 7,  # 7 days
         description="TTL in seconds for cached embeddings. None means no expiration.",
     )
+    vectorizer_factory: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dot-path to a custom vectorizer factory function. The function must accept "
+            "(provider: str, model: str | None, config: Settings, cache: EmbeddingsCache, "
+            "**kwargs) and return an object implementing aembed()/aembed_many(). "
+            "Example: 'mypackage.embeddings.custom_vectorizer_factory'. "
+            "If not set, uses the default OpenAI or HuggingFace RedisVL vectorizer factory."
+        ),
+    )
 
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")

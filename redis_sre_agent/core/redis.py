@@ -1,17 +1,18 @@
 """Redis connection management - no caching to avoid event loop issues."""
 
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from redis.asyncio import Redis
-from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
+from redisvl.extensions.cache.embeddings.embeddings import (
+    EmbeddingsCache as EmbeddingsCache,  # noqa: F401
+)
 from redisvl.index.index import AsyncSearchIndex
-from redisvl.utils.vectorize import HFTextVectorizer, OpenAITextVectorizer
+from redisvl.utils.vectorize import HFTextVectorizer as HFTextVectorizer  # noqa: F401
+from redisvl.utils.vectorize import OpenAITextVectorizer as OpenAITextVectorizer  # noqa: F401
 
 from redis_sre_agent.core.config import Settings, settings
-
-# Type alias for vectorizers
-Vectorizer = Union[OpenAITextVectorizer, HFTextVectorizer]
+from redis_sre_agent.core.vectorizer_helpers import Vectorizer, create_vectorizer
 
 logger = logging.getLogger(__name__)
 
@@ -491,8 +492,10 @@ def get_redis_client(
 def get_vectorizer(config: Optional[Settings] = None) -> Vectorizer:
     """Get vectorizer with Redis-backed embeddings cache.
 
-    Returns either an OpenAI or HuggingFace vectorizer based on settings.embedding_provider.
-    Callers should use aembed/aembed_many for async operations.
+    Returns the configured vectorizer. By default this is either an OpenAI or
+    HuggingFace RedisVL vectorizer based on settings.embedding_provider, but it
+    can be overridden with VECTORIZER_FACTORY. Callers should use aembed/aembed_many
+    for async operations.
 
     Args:
         config: Optional Settings object. If not provided, uses global settings.
@@ -503,47 +506,10 @@ def get_vectorizer(config: Optional[Settings] = None) -> Vectorizer:
         - 'openai': Uses OpenAI API (requires OPENAI_API_KEY and network access)
         - 'local': Uses HuggingFace sentence-transformers (no API needed, air-gap compatible)
 
-    The embeddings cache uses a stable key namespace ("sre_embeddings_cache")
-    so that embeddings are shared across vectorizer instances. Cache keys
-    include the model name, so different models won't conflict.
-
-    TTL is configurable via settings.embeddings_cache_ttl (default: 7 days).
+    The default implementation uses a stable Redis-backed embeddings cache with
+    TTL configured by settings.embeddings_cache_ttl.
     """
-    cfg = config or settings
-    redis_url = cfg.redis_url.get_secret_value()
-
-    # Name the cache to keep a stable key namespace
-    # TTL prevents stale embeddings if model changes
-    cache = EmbeddingsCache(
-        name="sre_embeddings_cache",
-        redis_url=redis_url,
-        ttl=cfg.embeddings_cache_ttl,
-    )
-
-    provider = cfg.embedding_provider.lower()
-
-    if provider == "local":
-        # Use HuggingFace sentence-transformers (air-gap compatible)
-        logger.info(f"Using local HuggingFace vectorizer with model: {cfg.embedding_model}")
-        return HFTextVectorizer(
-            model=cfg.embedding_model,
-            cache=cache,
-        )
-    elif provider == "openai":
-        # Use OpenAI API (default)
-        logger.debug(f"Vectorizer created with embeddings cache (ttl={cfg.embeddings_cache_ttl}s)")
-        return OpenAITextVectorizer(
-            model=cfg.embedding_model,
-            cache=cache,
-            api_config={
-                "api_key": cfg.openai_api_key,
-                **({"base_url": cfg.openai_base_url} if cfg.openai_base_url else {}),
-            },
-        )
-    else:
-        raise ValueError(
-            f"Unknown embedding_provider: '{provider}'. Supported values: 'openai', 'local'"
-        )
+    return create_vectorizer(config=config)
 
 
 async def get_knowledge_index(config: Optional[Settings] = None) -> AsyncSearchIndex:

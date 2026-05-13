@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -21,7 +22,6 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_openai import ChatOpenAI
 from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
@@ -367,7 +367,7 @@ def _mask_redis_url_credentials(url: str) -> str:
 
 async def _detect_instance_type_with_llm(
     instance: Any,
-    llm: Optional[ChatOpenAI] = None,
+    llm: Optional[BaseChatModel] = None,
     memoize: Optional[Callable[[str, Any, List[BaseMessage]], Any]] = None,
 ) -> str:
     """Use LLM to detect Redis instance type from metadata.
