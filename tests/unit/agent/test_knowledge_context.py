@@ -104,6 +104,25 @@ async def test_startup_context_mentions_truncated_skill_inventory():
     assert "search for related skills" in context
 
 
+def test_skills_toc_lines_caps_rendered_rows_and_remaining_count():
+    lines = knowledge_context_module._skills_toc_lines(
+        [
+            {"name": "Skill One", "summary": "First."},
+            {"name": "Skill Two", "summary": "Second."},
+            {"name": "Skill Three", "summary": "Third."},
+        ],
+        total_skills=10,
+        displayed_limit=2,
+    )
+
+    rendered = "\n".join(lines)
+
+    assert "2 skills shown, 8 more available" in rendered
+    assert "- Skill One: First." in rendered
+    assert "- Skill Two: Second." in rendered
+    assert "Skill Three" not in rendered
+
+
 @pytest.mark.asyncio
 async def test_startup_context_renders_skill_title_with_lookup_slug():
     with (

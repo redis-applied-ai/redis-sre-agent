@@ -60,6 +60,12 @@ def _skills_toc_lines(
     if not skills:
         return []
 
+    displayed_skills = skills
+    if displayed_limit is not None:
+        displayed_skills = skills[: max(displayed_limit, 0)]
+    if not displayed_skills:
+        return []
+
     lines = [
         "Skills you know:",
         "Skill inventory rules:",
@@ -67,17 +73,18 @@ def _skills_toc_lines(
         "- If a listed skill matches the request, retrieve it with `get_skill` before claiming that you used, followed, or executed it.",
         "- If you use any retrieved skills during your turn, add a note to your answer saying which skill(s) you used.",
     ]
-    if total_skills is not None and total_skills > len(skills):
-        remaining = total_skills - len(skills)
-        shown = len(skills)
-        if displayed_limit is not None:
-            shown = min(displayed_limit, len(skills))
+    effective_total_skills = total_skills
+    if effective_total_skills is None and len(skills) > len(displayed_skills):
+        effective_total_skills = len(skills)
+    if effective_total_skills is not None and effective_total_skills > len(displayed_skills):
+        shown = len(displayed_skills)
+        remaining = effective_total_skills - shown
         lines.append(
             "- This startup inventory is truncated: "
             f"{shown} skill{'s' if shown != 1 else ''} shown, {remaining} more available in the backend. "
             "If you need a related skill that is not listed here, search for related skills before concluding there is no relevant match."
         )
-    for skill in skills:
+    for skill in displayed_skills:
         title = str(skill.get("title", "")).strip() or str(skill.get("name", "")).strip()
         lookup_name = str(skill.get("name", "")).strip()
         summary = str(skill.get("summary", "")).strip() or str(skill.get("description", "")).strip()
