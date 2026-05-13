@@ -16,6 +16,7 @@ class TestVectorizerHelpers:
     def teardown_method(self):
         """Reset vectorizer factory state after each test."""
         vectorizer_helpers._vectorizer_factory = None
+        vectorizer_helpers._settings_vectorizer_factory = None
         vectorizer_helpers._factory_initialized = False
 
     def test_get_vectorizer_factory_returns_none_by_default(self):
@@ -190,6 +191,49 @@ class TestVectorizerHelpers:
         assert kwargs["provider"] == "local"
         assert kwargs["model"] == "sentence-transformers/all-mpnet-base-v2"
         assert kwargs["config"] is config
+
+    def test_explicit_config_factory_wins_after_global_factory_was_loaded(self):
+        """Explicit config factory paths should win even after global settings were initialized."""
+        mock_cache = Mock()
+        settings_vectorizer = Mock(aembed=Mock(), aembed_many=Mock())
+        explicit_vectorizer = Mock(aembed=Mock(), aembed_many=Mock())
+        settings_factory = MagicMock(return_value=settings_vectorizer)
+        explicit_factory = MagicMock(return_value=explicit_vectorizer)
+        config = MagicMock()
+        config.redis_url.get_secret_value.return_value = "redis://localhost:6379/0"
+        config.embeddings_cache_ttl = 45
+        config.embedding_provider = "local"
+        config.embedding_model = "sentence-transformers/all-mpnet-base-v2"
+        config.vectorizer_factory = "custom.explicit_factory"
+
+        def resolve_factory_side_effect(factory_path):
+            if factory_path == "global.settings_factory":
+                return settings_factory
+            if factory_path == "custom.explicit_factory":
+                return explicit_factory
+            raise AssertionError(f"Unexpected factory path: {factory_path}")
+
+        with (
+            patch("redis_sre_agent.core.vectorizer_helpers.settings") as mock_settings,
+            patch(
+                "redis_sre_agent.core.vectorizer_helpers._resolve_factory_from_path",
+                side_effect=resolve_factory_side_effect,
+            ),
+            patch(
+                "redis_sre_agent.core.vectorizer_helpers.EmbeddingsCache", return_value=mock_cache
+            ),
+        ):
+            mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379/0"
+            mock_settings.embeddings_cache_ttl = 30
+            mock_settings.embedding_provider = "openai"
+            mock_settings.embedding_model = "text-embedding-3-small"
+            mock_settings.vectorizer_factory = "global.settings_factory"
+
+            assert create_vectorizer() is settings_vectorizer
+            assert create_vectorizer(config=config) is explicit_vectorizer
+
+        settings_factory.assert_called_once()
+        explicit_factory.assert_called_once()
 
     def test_invalid_factory_path_raises(self):
         """Invalid dot-paths should fail with a clear error."""

@@ -35,6 +35,7 @@ class Vectorizer(Protocol):
 
 
 _vectorizer_factory: Optional[VectorizerFactory] = None
+_settings_vectorizer_factory: Optional[VectorizerFactory] = None
 _factory_initialized: bool = False
 
 
@@ -54,36 +55,38 @@ def _resolve_factory_from_path(factory_path: str) -> VectorizerFactory:
     return factory
 
 
-def _load_factory_from_config() -> None:
+def _load_factory_from_config() -> Optional[VectorizerFactory]:
     """Load the vectorizer factory from global settings if specified."""
-    global _vectorizer_factory, _factory_initialized
+    global _settings_vectorizer_factory, _factory_initialized
 
     if _factory_initialized:
-        return
+        return _settings_vectorizer_factory
 
     _factory_initialized = True
     factory_path = getattr(settings, "vectorizer_factory", None)
     if not factory_path or not isinstance(factory_path, str):
-        return
+        return None
 
     try:
-        _vectorizer_factory = _resolve_factory_from_path(factory_path)
+        _settings_vectorizer_factory = _resolve_factory_from_path(factory_path)
         logger.info("Loaded custom vectorizer factory from %s", factory_path)
     except Exception:
         logger.exception("Failed to load vectorizer factory from '%s'", factory_path)
         raise
+    return _settings_vectorizer_factory
 
 
 def set_vectorizer_factory(factory: Optional[VectorizerFactory]) -> None:
     """Register a custom vectorizer factory function."""
-    global _vectorizer_factory, _factory_initialized
+    global _vectorizer_factory
     _vectorizer_factory = factory
-    _factory_initialized = True
 
 
 def get_vectorizer_factory() -> Optional[VectorizerFactory]:
     """Get the currently registered global vectorizer factory, if any."""
-    return _vectorizer_factory
+    if _vectorizer_factory is not None:
+        return _vectorizer_factory
+    return _settings_vectorizer_factory
 
 
 def _build_embeddings_cache(config: Settings) -> EmbeddingsCache:
@@ -137,17 +140,18 @@ def _default_vectorizer_factory(
 
 def _resolve_factory(config: Settings, *, explicit_config: bool) -> Optional[VectorizerFactory]:
     """Resolve the active factory, respecting explicit per-call config overrides."""
-    if _vectorizer_factory is not None:
-        return _vectorizer_factory
-
     if explicit_config:
         factory_path = getattr(config, "vectorizer_factory", None)
         if factory_path and isinstance(factory_path, str):
             return _resolve_factory_from_path(factory_path)
+        if _vectorizer_factory is not None:
+            return _vectorizer_factory
         return None
 
-    _load_factory_from_config()
-    return _vectorizer_factory
+    if _vectorizer_factory is not None:
+        return _vectorizer_factory
+
+    return _load_factory_from_config()
 
 
 def _validate_vectorizer_instance(vectorizer: Any) -> Vectorizer:
