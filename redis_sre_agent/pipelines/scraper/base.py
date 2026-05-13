@@ -179,6 +179,7 @@ class ArtifactStorage:
     def save_batch_manifest(self, documents: List[ScrapedDocument]) -> Path:
         """Save manifest file with a summary of the full current batch contents."""
         _ = documents
+        self._ensure_dirs()
         stored_documents: List[dict[str, Any]] = []
         if self.current_batch_path.exists():
             for document_path in sorted(self.current_batch_path.rglob("*.json")):

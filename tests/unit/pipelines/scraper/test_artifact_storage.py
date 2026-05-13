@@ -73,3 +73,18 @@ def test_save_batch_manifest_ignores_ingestion_manifest(tmp_path):
     assert manifest["total_documents"] == 1
     assert manifest["categories"] == {"shared": 1}
     assert manifest["document_types"] == {"knowledge": 1}
+
+
+def test_save_batch_manifest_creates_batch_directory_when_empty(tmp_path):
+    storage = ArtifactStorage(tmp_path)
+    storage.set_batch_date("2026-05-12")
+
+    manifest_path = storage.save_batch_manifest([])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest_path.exists()
+    assert manifest_path.parent == tmp_path / "2026-05-12"
+    assert manifest["total_documents"] == 0
+    assert manifest["categories"] == {}
+    assert manifest["document_types"] == {}
+    assert manifest["sources"] == []
