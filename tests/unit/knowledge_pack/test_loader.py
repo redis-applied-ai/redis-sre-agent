@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -15,6 +16,7 @@ from redis_sre_agent.knowledge_pack.checksums import (
 )
 from redis_sre_agent.knowledge_pack.loader import (
     _extract_artifacts_from_pack,
+    _materialize_registry_from_runtime_batch,
     auto_load_configured_knowledge_pack,
     get_restore_compatibility,
     inspect_knowledge_pack,
@@ -25,6 +27,7 @@ from redis_sre_agent.knowledge_pack.models import (
     KnowledgePackManifest,
     RecordCounts,
 )
+from redis_sre_agent.pipelines.scraper.base import ScrapedDocument
 
 
 def _make_manifest(*, provider: str, model: str, vector_dim: int) -> KnowledgePackManifest:
@@ -279,3 +282,82 @@ async def test_extract_artifacts_from_pack_rejects_path_traversal(tmp_path: Path
 
     with pytest.raises(ValueError, match="escapes destination root"):
         await _extract_artifacts_from_pack(zip_path, tmp_path / "artifacts")
+
+
+def test_materialize_registry_from_runtime_batch_uses_runtime_keys(tmp_path: Path):
+    manifest = _make_manifest(
+        provider="openai",
+        model="text-embedding-3-small",
+        vector_dim=1536,
+    )
+    batch_root = tmp_path / manifest.batch_date / "shared"
+    batch_root.mkdir(parents=True)
+    (tmp_path / manifest.batch_date / "batch_manifest.json").write_text(
+        json.dumps({"batch_date": manifest.batch_date, "total_documents": 2}) + "\n",
+        encoding="utf-8",
+    )
+    (batch_root / "knowledge.json").write_text(
+        json.dumps(
+            {
+                "title": "Runtime Doc",
+                "content": "Body from artifacts",
+                "source_url": "source_documents/shared/runtime-doc.md",
+                "category": "shared",
+                "doc_type": "knowledge",
+                "severity": "medium",
+                "content_hash": "stale-pack-hash",
+                "metadata": {
+                    "source_document_path": "source_documents/shared/runtime-doc.md",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (batch_root / "skill.json").write_text(
+        json.dumps(
+            {
+                "title": "Skill Doc",
+                "content": "Ignored by knowledge-pack registry",
+                "source_url": "source_documents/shared/skill.md",
+                "category": "shared",
+                "doc_type": "skill",
+                "severity": "medium",
+                "metadata": {
+                    "source_document_path": "source_documents/shared/skill.md",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = Settings(redis_url="redis://localhost:6379/0")
+    source_document_path = "source_documents/shared/runtime-doc.md"
+    runtime_document_hash = ScrapedDocument.from_dict(
+        {
+            "title": "Runtime Doc",
+            "content": "Body from artifacts",
+            "source_url": source_document_path,
+            "category": "shared",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {
+                "source_document_path": source_document_path,
+            },
+        }
+    ).content_hash
+    source_path_hash = hashlib.sha256(source_document_path.encode("utf-8")).hexdigest()[:16]
+    registry = _materialize_registry_from_runtime_batch(
+        artifacts_path=tmp_path,
+        manifest=manifest,
+        config=config,
+    )
+
+    assert registry.pack_id == manifest.pack_id
+    assert registry.release_tag == manifest.release_tag
+    assert registry.pack_profile == manifest.pack_profile
+    assert registry.batch_date == manifest.batch_date
+    assert registry.chunk_keys == [f"sre_knowledge:{runtime_document_hash}:chunk:0"]
+    assert registry.document_meta_keys == [f"sre_knowledge_meta:{runtime_document_hash}"]
+    assert registry.source_meta_keys == [f"sre_knowledge_meta:source:{source_path_hash}"]

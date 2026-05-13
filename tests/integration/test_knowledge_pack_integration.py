@@ -23,6 +23,7 @@ from redis_sre_agent.knowledge_pack.models import (
     KnowledgePackManifest,
     RecordCounts,
 )
+from redis_sre_agent.pipelines.scraper.base import ScrapedDocument
 
 
 def _write_artifact_batch(root: Path, batch_date: str) -> None:
@@ -201,6 +202,19 @@ async def test_auto_mode_falls_back_to_reingest(
     pack_path = _write_incompatible_pack(tmp_path)
     pack_chunk_key = RedisKeys.knowledge_chunk("content-hash-1", 0)
     pack_document_meta_key = RedisKeys.knowledge_document_meta("content-hash-1")
+    runtime_document_hash = ScrapedDocument.from_dict(
+        {
+            "title": "Release Doc",
+            "content": "Built from a pack",
+            "source_url": "source_documents/shared/release-doc.md",
+            "category": "shared",
+            "doc_type": "knowledge",
+            "severity": "medium",
+            "metadata": {},
+        }
+    ).content_hash
+    runtime_chunk_key = RedisKeys.knowledge_chunk(runtime_document_hash, 0)
+    runtime_document_meta_key = RedisKeys.knowledge_document_meta(runtime_document_hash)
     old_pack_chunk_key = RedisKeys.knowledge_chunk("old-pack-doc", 0)
     old_pack_document_meta_key = RedisKeys.knowledge_document_meta("old-pack-doc")
     unrelated_chunk_key = RedisKeys.knowledge_chunk("user-doc-hash", 0)
@@ -283,23 +297,23 @@ async def test_auto_mode_falls_back_to_reingest(
                 data=[
                     {
                         "id": "chunk-fallback",
-                        "title": "Fallback Doc",
-                        "content": "Loaded via reingest fallback",
+                        "title": "Release Doc",
+                        "content": "Built from a pack",
                         "source": "source_documents/shared/release-doc.md",
                         "category": "shared",
                         "severity": "medium",
-                        "document_hash": "content-hash-1",
+                        "document_hash": runtime_document_hash,
                         "chunk_index": 0,
                         "total_chunks": 1,
                         "vector": vector,
                     }
                 ],
                 id_field="id",
-                keys=[pack_chunk_key],
+                keys=[runtime_chunk_key],
             )
             await async_redis_client.hset(
-                pack_document_meta_key,
-                mapping={"document_hash": "content-hash-1"},
+                runtime_document_meta_key,
+                mapping={"document_hash": runtime_document_hash},
             )
             return {"success": True, "documents_processed": 1, "chunks_indexed": 1}
 
@@ -336,7 +350,9 @@ async def test_auto_mode_falls_back_to_reingest(
         vector_dim=airgap_settings.vector_dim,
         schema_hash=compute_schema_hash(airgap_settings.vector_dim),
     )
-    assert registry.chunk_keys == [pack_chunk_key]
-    assert registry.document_meta_keys == [pack_document_meta_key]
+    assert registry.chunk_keys == [runtime_chunk_key]
+    assert registry.document_meta_keys == [runtime_document_meta_key]
     assert registry.source_meta_keys == []
     assert unrelated_chunk_key not in registry.chunk_keys
+    assert pack_chunk_key != runtime_chunk_key
+    assert pack_document_meta_key != runtime_document_meta_key

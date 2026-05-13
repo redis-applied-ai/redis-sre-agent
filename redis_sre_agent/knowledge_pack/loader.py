@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,9 @@ from zipfile import ZipFile
 from redis_sre_agent.core.config import Settings, settings
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import create_indices, get_knowledge_index
+from redis_sre_agent.pipelines.ingestion.document_processor import DocumentProcessor
 from redis_sre_agent.pipelines.orchestrator import PipelineOrchestrator
+from redis_sre_agent.pipelines.scraper.base import DocumentType, ScrapedDocument
 
 from .builder import compute_embedding_fingerprint, compute_schema_hash
 from .checksums import verify_zip_checksums
@@ -38,6 +41,17 @@ def _iter_ndjson_lines(raw_text: str) -> list[dict[str, Any]]:
         if line:
             records.append(json.loads(line))
     return records
+
+
+def _unique_preserving_order(keys: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for key in keys:
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    return ordered
 
 
 def _current_embedding_fingerprint(cfg: Settings) -> str:
@@ -158,16 +172,57 @@ async def _delete_registry_keys(
     }
 
 
-def _materialize_registry_from_pack(
+def _knowledge_source_meta_key(source_document_path: str) -> str:
+    path_hash = hashlib.sha256(source_document_path.encode("utf-8")).hexdigest()[:16]
+    return RedisKeys.knowledge_source_meta(path_hash)
+
+
+def _artifact_documents_for_batch(batch_root: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for artifact_path in sorted(batch_root.rglob("*.json")):
+        if artifact_path.name in {"batch_manifest.json", "ingestion_manifest.json"}:
+            continue
+        records.append(json.loads(artifact_path.read_text(encoding="utf-8")))
+    return records
+
+
+def _materialize_registry_from_runtime_batch(
     *,
-    registry_payload: ActiveKnowledgePackRegistry,
+    artifacts_path: Path,
+    manifest: KnowledgePackManifest,
     config: Settings,
 ) -> ActiveKnowledgePackRegistry:
+    batch_root = artifacts_path / manifest.batch_date
+    processor = DocumentProcessor()
+    chunk_keys: list[str] = []
+    document_meta_keys: list[str] = []
+    source_meta_keys: list[str] = []
+
+    for artifact_payload in _artifact_documents_for_batch(batch_root):
+        document = ScrapedDocument.from_dict(artifact_payload)
+        if document.doc_type in {DocumentType.SKILL, DocumentType.SUPPORT_TICKET}:
+            continue
+
+        chunks = processor.chunk_document(document)
+        chunk_keys.extend(
+            RedisKeys.knowledge_chunk(document.content_hash, int(chunk["chunk_index"]))
+            for chunk in chunks
+        )
+        document_meta_keys.append(RedisKeys.knowledge_document_meta(document.content_hash))
+
+        source_document_path = str(document.metadata.get("source_document_path") or "").strip()
+        if source_document_path:
+            source_meta_keys.append(_knowledge_source_meta_key(source_document_path))
+
     return ActiveKnowledgePackRegistry(
-        **registry_payload.model_dump(
-            exclude={"loaded_at", "schema_hash", "embedding_fingerprint"}
-        ),
+        pack_id=manifest.pack_id,
+        release_tag=manifest.release_tag,
+        pack_profile=manifest.pack_profile,
         loaded_at=_utcnow(),
+        batch_date=manifest.batch_date,
+        chunk_keys=_unique_preserving_order(chunk_keys),
+        document_meta_keys=_unique_preserving_order(document_meta_keys),
+        source_meta_keys=_unique_preserving_order(source_meta_keys),
         **_runtime_registry_fields(config),
     )
 
@@ -300,15 +355,12 @@ async def _reingest_from_pack(
         )
 
     batch_date = await _extract_artifacts_from_pack(pack_path, artifacts_path)
-    with ZipFile(pack_path) as archive:
-        registry_payload = ActiveKnowledgePackRegistry.model_validate_json(
-            archive.read(KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE)
-        )
 
     orchestrator = PipelineOrchestrator(str(artifacts_path), knowledge_settings=config)
     ingestion_result = await orchestrator.run_ingestion_pipeline(batch_date)
-    registry = _materialize_registry_from_pack(
-        registry_payload=registry_payload,
+    registry = _materialize_registry_from_runtime_batch(
+        artifacts_path=artifacts_path,
+        manifest=manifest,
         config=config,
     )
     await _store_registry(index.client, registry)
