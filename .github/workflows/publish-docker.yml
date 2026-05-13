@@ -22,7 +22,7 @@ on:
       - published
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -111,6 +111,9 @@ jobs:
   publish-knowledge-pack:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: write
+      packages: write
     services:
       redis:
         image: redis:8
