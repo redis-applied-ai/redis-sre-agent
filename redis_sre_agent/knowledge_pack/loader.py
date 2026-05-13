@@ -134,46 +134,41 @@ async def _delete_keys(redis_client: Any, keys: Iterable[str]) -> int:
     return deleted
 
 
-async def _materialize_registry_from_live_index(
-    *,
-    manifest: KnowledgePackManifest,
-    config: Settings,
-) -> ActiveKnowledgePackRegistry:
-    index = await get_knowledge_index(config=config)
-    redis_client = index.client
-
-    chunk_keys: list[str] = []
-    async for key in redis_client.scan_iter(match="sre_knowledge:*:chunk:*"):
-        chunk_keys.append(key.decode("utf-8") if isinstance(key, bytes) else str(key))
-
-    document_meta_keys: list[str] = []
-    source_meta_keys: list[str] = []
-    async for key in redis_client.scan_iter(match="sre_knowledge_meta:*"):
-        normalized_key = key.decode("utf-8") if isinstance(key, bytes) else str(key)
-        if normalized_key.startswith("sre_knowledge_meta:source:"):
-            source_meta_keys.append(normalized_key)
-        else:
-            document_meta_keys.append(normalized_key)
-
-    runtime_schema_hash = compute_schema_hash(config.vector_dim)
-    runtime_embedding_fingerprint = compute_embedding_fingerprint(
+def _runtime_registry_fields(config: Settings) -> dict[str, str]:
+    schema_hash = compute_schema_hash(config.vector_dim)
+    embedding_fingerprint = compute_embedding_fingerprint(
         embedding_provider=config.embedding_provider,
         embedding_model=config.embedding_model,
         vector_dim=config.vector_dim,
-        schema_hash=runtime_schema_hash,
+        schema_hash=schema_hash,
     )
+    return {
+        "schema_hash": schema_hash,
+        "embedding_fingerprint": embedding_fingerprint,
+    }
 
+
+async def _delete_registry_keys(
+    redis_client: Any, registry: ActiveKnowledgePackRegistry
+) -> dict[str, int]:
+    return {
+        "chunk_keys": await _delete_keys(redis_client, registry.chunk_keys),
+        "document_meta_keys": await _delete_keys(redis_client, registry.document_meta_keys),
+        "source_meta_keys": await _delete_keys(redis_client, registry.source_meta_keys),
+    }
+
+
+def _materialize_registry_from_pack(
+    *,
+    registry_payload: ActiveKnowledgePackRegistry,
+    config: Settings,
+) -> ActiveKnowledgePackRegistry:
     return ActiveKnowledgePackRegistry(
-        pack_id=manifest.pack_id,
-        release_tag=manifest.release_tag,
-        pack_profile=manifest.pack_profile,
+        **registry_payload.model_dump(
+            exclude={"loaded_at", "schema_hash", "embedding_fingerprint"}
+        ),
         loaded_at=_utcnow(),
-        batch_date=manifest.batch_date,
-        schema_hash=runtime_schema_hash,
-        embedding_fingerprint=runtime_embedding_fingerprint,
-        chunk_keys=sorted(chunk_keys),
-        document_meta_keys=sorted(document_meta_keys),
-        source_meta_keys=sorted(source_meta_keys),
+        **_runtime_registry_fields(config),
     )
 
 
@@ -197,13 +192,7 @@ async def _restore_from_pack(
     deleted = {"chunk_keys": 0, "document_meta_keys": 0, "source_meta_keys": 0}
 
     if active_registry is not None:
-        deleted["chunk_keys"] = await _delete_keys(redis_client, active_registry.chunk_keys)
-        deleted["document_meta_keys"] = await _delete_keys(
-            redis_client, active_registry.document_meta_keys
-        )
-        deleted["source_meta_keys"] = await _delete_keys(
-            redis_client, active_registry.source_meta_keys
-        )
+        deleted = await _delete_registry_keys(redis_client, active_registry)
     elif current_index_stats["num_docs"] > 0 and not replace_existing:
         raise ValueError(
             "Knowledge index already contains documents with no active knowledge-pack registry. "
@@ -291,18 +280,42 @@ async def _reingest_from_pack(
     pack_path: Path,
     manifest: KnowledgePackManifest,
     artifacts_path: Path,
+    replace_existing: bool,
     config: Settings,
 ) -> dict[str, Any]:
-    batch_date = await _extract_artifacts_from_pack(pack_path, artifacts_path)
     await create_indices(config=config)
+    index = await get_knowledge_index(config=config)
+    redis_client = index.client
+
+    current_index_stats = await _knowledge_index_stats(config)
+    active_registry = await _load_registry(redis_client)
+    deleted = {"chunk_keys": 0, "document_meta_keys": 0, "source_meta_keys": 0}
+
+    if active_registry is not None:
+        deleted = await _delete_registry_keys(redis_client, active_registry)
+    elif current_index_stats["num_docs"] > 0 and not replace_existing:
+        raise ValueError(
+            "Knowledge index already contains documents with no active knowledge-pack registry. "
+            "Pass --replace-existing to proceed without deleting unknown keys."
+        )
+
+    batch_date = await _extract_artifacts_from_pack(pack_path, artifacts_path)
+    with ZipFile(pack_path) as archive:
+        registry_payload = ActiveKnowledgePackRegistry.model_validate_json(
+            archive.read(KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE)
+        )
+
     orchestrator = PipelineOrchestrator(str(artifacts_path), knowledge_settings=config)
     ingestion_result = await orchestrator.run_ingestion_pipeline(batch_date)
-    index = await get_knowledge_index(config=config)
-    registry = await _materialize_registry_from_live_index(manifest=manifest, config=config)
+    registry = _materialize_registry_from_pack(
+        registry_payload=registry_payload,
+        config=config,
+    )
     await _store_registry(index.client, registry)
     return {
         "mode": "reingest",
         "batch_date": batch_date,
+        "deleted": deleted,
         "ingestion": ingestion_result,
     }
 
@@ -340,6 +353,7 @@ async def load_knowledge_pack(
             pack_path=pack_path,
             manifest=manifest,
             artifacts_path=artifacts_path,
+            replace_existing=replace_existing,
             config=cfg,
         )
 
