@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ _GATEWAY_QUERY_STOPWORDS = {
     "what",
     "you",
 }
+_SEMANTIC_SKILL_FETCH_LIMIT = 500
 
 
 def _first_non_empty(
@@ -260,61 +262,46 @@ class AFSWorkspaceSkillBackend:
         offset: int,
         version: str | None,
     ) -> dict[str, Any]:
-        path = self._base_path()
-        params: dict[str, Any] = {"version": version} if version else {}
         if query:
-            path = f"{path}/search"
-            params["q"] = query
-            params["limit"] = max(limit + offset, 1)
-        else:
-            params["limit"] = limit
-            params["offset"] = offset
-        payload = await self._request_json("GET", path, params=params)
+            raw_skills = await self._fetch_api_skill_catalog(
+                version=version,
+                minimum_count=max(limit + offset, 1),
+            )
+            ranked_skills = await self._semantic_rank_skills(raw_skills, query=query)
+            paged_skills = ranked_skills[offset : offset + limit]
+            normalized_skills = [
+                self._normalize_skill_summary(skill, matched_path=None)
+                for skill in paged_skills
+                if isinstance(skill, Mapping)
+            ]
+            return {
+                "query": query,
+                "version": version,
+                "offset": offset,
+                "limit": limit,
+                "results_count": len(normalized_skills),
+                "total_fetched": len(ranked_skills),
+                "skills": normalized_skills,
+            }
+
+        payload = await self._request_json(
+            "GET",
+            self._base_path(),
+            params={
+                "limit": limit,
+                "offset": offset,
+                **({"version": version} if version else {}),
+            },
+        )
         data = self._data_payload(payload)
         raw_skills = data.get("skills", [])
         if not isinstance(raw_skills, list):
             raw_skills = []
-        normalized_skills = (
-            [
-                self._normalize_skill_summary(skill, matched_path=None)
-                for skill in raw_skills[offset : offset + limit]
-                if isinstance(skill, Mapping)
-            ]
-            if query
-            else [
-                self._normalize_skill_summary(skill, matched_path=None)
-                for skill in raw_skills
-                if isinstance(skill, Mapping)
-            ]
-        )
-        if query:
-            matches = data.get("matches", [])
-            if isinstance(matches, list):
-                by_identity = {
-                    (
-                        str(item.get("skillSlug", "")).strip(),
-                        str(item.get("version", "")).strip(),
-                    ): item
-                    for item in matches
-                    if isinstance(item, Mapping)
-                }
-                normalized_skills = [
-                    self._normalize_skill_summary(
-                        skill,
-                        matched_path=str(
-                            by_identity.get(
-                                (
-                                    str(skill.get("skillSlug", "")).strip(),
-                                    str(skill.get("version", "")).strip(),
-                                ),
-                                {},
-                            ).get("path", "")
-                        ).strip()
-                        or None,
-                    )
-                    for skill in raw_skills[offset : offset + limit]
-                    if isinstance(skill, Mapping)
-                ]
+        normalized_skills = [
+            self._normalize_skill_summary(skill, matched_path=None)
+            for skill in raw_skills
+            if isinstance(skill, Mapping)
+        ]
         return {
             "query": query,
             "version": version,
@@ -335,12 +322,7 @@ class AFSWorkspaceSkillBackend:
     ) -> dict[str, Any]:
         raw_skills = await self._gateway_catalog_entries(version=version)
         if query:
-            matched_skills = self._filter_gateway_skills(raw_skills, query=query)
-            # The gateway only exposes catalog reads, not semantic search. When
-            # a free-form prompt does not keyword-match the catalog, fall back to
-            # discovery instead of claiming that no skills exist.
-            if matched_skills:
-                raw_skills = matched_skills
+            raw_skills = await self._semantic_rank_skills(raw_skills, query=query)
         paged = raw_skills[offset : offset + limit]
         normalized_skills = [
             self._normalize_skill_summary(skill, matched_path=None) for skill in paged
@@ -354,6 +336,91 @@ class AFSWorkspaceSkillBackend:
             "total_fetched": len(raw_skills),
             "skills": normalized_skills,
         }
+
+    async def _fetch_api_skill_catalog(
+        self,
+        *,
+        version: str | None,
+        minimum_count: int,
+    ) -> list[Mapping[str, Any]]:
+        initial_limit = min(max(minimum_count, 100), _SEMANTIC_SKILL_FETCH_LIMIT)
+        payload = await self._request_json(
+            "GET",
+            self._base_path(),
+            params={
+                "limit": initial_limit,
+                "offset": 0,
+                **({"version": version} if version else {}),
+            },
+        )
+        data = self._data_payload(payload)
+        raw_skills = data.get("skills", [])
+        if not isinstance(raw_skills, list):
+            raw_skills = []
+
+        total = int(data.get("total", len(raw_skills)))
+        if total > len(raw_skills) and len(raw_skills) < _SEMANTIC_SKILL_FETCH_LIMIT:
+            expanded_limit = min(total, _SEMANTIC_SKILL_FETCH_LIMIT)
+            payload = await self._request_json(
+                "GET",
+                self._base_path(),
+                params={
+                    "limit": expanded_limit,
+                    "offset": 0,
+                    **({"version": version} if version else {}),
+                },
+            )
+            data = self._data_payload(payload)
+            raw_skills = data.get("skills", [])
+            if not isinstance(raw_skills, list):
+                raw_skills = []
+
+        return [skill for skill in raw_skills if isinstance(skill, Mapping)]
+
+    async def _semantic_rank_skills(
+        self,
+        skills: list[Mapping[str, Any]],
+        *,
+        query: str,
+    ) -> list[Mapping[str, Any]]:
+        query_text = query.strip()
+        if not query_text:
+            return list(skills)
+
+        fallback_matches = self._filter_gateway_skills(skills, query=query)
+        if not skills:
+            return []
+
+        try:
+            from redis_sre_agent.core.redis import get_vectorizer
+
+            vectorizer = get_vectorizer()
+            ranking_texts = [self._skill_ranking_text(skill) for skill in skills]
+            embeddings = await vectorizer.aembed_many([query_text, *ranking_texts])
+        except Exception:
+            return fallback_matches or list(skills)
+
+        if len(embeddings) != len(skills) + 1:
+            return fallback_matches or list(skills)
+
+        query_embedding = embeddings[0]
+        scored: list[tuple[float, str, str, Mapping[str, Any]]] = []
+        for skill, embedding in zip(skills, embeddings[1:]):
+            semantic_score = self._cosine_similarity(query_embedding, embedding)
+            lexical_score = self._lexical_overlap_score(skill, query_text)
+            combined_score = semantic_score + (0.05 * lexical_score)
+            scored.append(
+                (
+                    -combined_score,
+                    str(skill.get("displayName", skill.get("skillSlug", ""))).strip().lower(),
+                    str(skill.get("version", "")).strip().lower(),
+                    skill,
+                )
+            )
+
+        scored.sort(key=lambda item: item[:3])
+        ranked = [item[3] for item in scored]
+        return ranked or fallback_matches or list(skills)
 
     def _filter_gateway_skills(
         self,
@@ -385,6 +452,57 @@ class AFSWorkspaceSkillBackend:
             if any(token in haystack for token in query_tokens):
                 token_matches.append(skill)
         return token_matches
+
+    def _skill_ranking_text(self, skill: Mapping[str, Any]) -> str:
+        tags = skill.get("tags", [])
+        tag_values = (
+            [str(tag).strip() for tag in tags if str(tag).strip()] if isinstance(tags, list) else []
+        )
+        return "\n".join(
+            part
+            for part in (
+                str(skill.get("displayName", "")).strip(),
+                str(skill.get("skillSlug", "")).strip(),
+                str(skill.get("description", "")).strip(),
+                " ".join(tag_values),
+            )
+            if part
+        )
+
+    def _lexical_overlap_score(self, skill: Mapping[str, Any], query: str) -> float:
+        haystack = self._skill_ranking_text(skill).lower()
+        query_text = query.strip().lower()
+        if not query_text or not haystack:
+            return 0.0
+        if query_text in haystack:
+            return 1.0
+
+        query_tokens = [
+            token
+            for token in _GATEWAY_QUERY_TOKEN_RE.findall(query_text)
+            if len(token) >= 3 and token not in _GATEWAY_QUERY_STOPWORDS
+        ]
+        if not query_tokens:
+            return 0.0
+
+        matched_tokens = sum(1 for token in query_tokens if token in haystack)
+        return matched_tokens / len(query_tokens)
+
+    def _cosine_similarity(self, left: Any, right: Any) -> float:
+        try:
+            left_values = [float(value) for value in left]
+            right_values = [float(value) for value in right]
+        except Exception:
+            return 0.0
+        if not left_values or len(left_values) != len(right_values):
+            return 0.0
+
+        numerator = sum(a * b for a, b in zip(left_values, right_values))
+        left_norm = math.sqrt(sum(a * a for a in left_values))
+        right_norm = math.sqrt(sum(b * b for b in right_values))
+        if left_norm == 0.0 or right_norm == 0.0:
+            return 0.0
+        return numerator / (left_norm * right_norm)
 
     async def _get_skill_via_api(self, *, skill_name: str, version: str | None) -> dict[str, Any]:
         try:

@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
+from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.knowledge_helpers import (
     get_pinned_documents_helper,
     skills_check_helper,
@@ -49,7 +50,11 @@ def merge_internal_tool_envelopes(
     return merged
 
 
-def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
+def _skills_toc_lines(
+    skills: List[Dict[str, Any]],
+    *,
+    total_skills: Optional[int] = None,
+) -> List[str]:
     """Render the ADR skills table of contents lines."""
     if not skills:
         return []
@@ -61,6 +66,14 @@ def _skills_toc_lines(skills: List[Dict[str, Any]]) -> List[str]:
         "- If a listed skill matches the request, retrieve it with `get_skill` before claiming that you used, followed, or executed it.",
         "- If you use any retrieved skills during your turn, add a note to your answer saying which skill(s) you used.",
     ]
+    if total_skills is not None and total_skills > len(skills):
+        remaining = total_skills - len(skills)
+        shown = len(skills)
+        lines.append(
+            "- This startup inventory is truncated: "
+            f"{shown} skill{'s' if shown != 1 else ''} shown, {remaining} more available in the backend. "
+            "If you need a related skill that is not listed here, search for related skills before concluding there is no relevant match."
+        )
     for skill in skills:
         name = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
         summary = str(skill.get("summary", "")).strip() or str(skill.get("description", "")).strip()
@@ -250,11 +263,11 @@ def _build_internal_startup_skills_envelope(
 
 
 async def build_startup_knowledge_context(
-    query: str,
     version: Optional[str] = "latest",
     pinned_limit: int = 20,
     pinned_content_char_budget: int = 12000,
-    skills_limit: int = 20,
+    skills_limit: Optional[int] = None,
+    skills_query: Optional[str] = None,
     available_tools: Optional[List[Any]] = None,
     knowledge_backend: Optional[EvalKnowledgeBackend] = None,
 ) -> str:
@@ -262,6 +275,10 @@ async def build_startup_knowledge_context(
     sections: List[str] = []
     internal_tool_envelopes: List[Dict[str, Any]] = []
     effective_knowledge_backend = knowledge_backend or get_active_knowledge_backend()
+    effective_skills_limit = max(
+        int(skills_limit if skills_limit is not None else settings.startup_skills_toc_limit),
+        1,
+    )
 
     try:
         if effective_knowledge_backend is not None:
@@ -309,15 +326,15 @@ async def build_startup_knowledge_context(
     try:
         if effective_knowledge_backend is not None:
             skills_result = await effective_knowledge_backend.skills_check(
-                query=query,
-                limit=skills_limit,
+                query=skills_query,
+                limit=effective_skills_limit,
                 offset=0,
                 version=version,
             )
         else:
             skills_result = await skills_check_helper(
-                query=query,
-                limit=skills_limit,
+                query=skills_query,
+                limit=effective_skills_limit,
                 offset=0,
                 version=version,
             )
@@ -325,14 +342,26 @@ async def build_startup_knowledge_context(
         logger.warning("Failed to run startup skills check: %s", exc)
         skills_result = {"skills": []}
 
-    skills_lines = _skills_toc_lines(skills_result.get("skills") or [])
+    skill_rows = skills_result.get("skills") or []
+    total_skills = skills_result.get("total_fetched")
+    if total_skills is None:
+        total_skills = skills_result.get("total")
+    try:
+        normalized_total_skills = int(total_skills) if total_skills is not None else None
+    except (TypeError, ValueError):
+        normalized_total_skills = None
+
+    skills_lines = _skills_toc_lines(
+        skill_rows,
+        total_skills=normalized_total_skills,
+    )
     if skills_lines:
         sections.append("\n".join(skills_lines))
         skills_envelope = _build_internal_startup_skills_envelope(
-            skills_result.get("skills") or [],
-            query=query,
+            skill_rows,
+            query=skills_query or "",
             version=version,
-            skills_limit=skills_limit,
+            skills_limit=effective_skills_limit,
         )
         if skills_envelope:
             internal_tool_envelopes.append(skills_envelope)

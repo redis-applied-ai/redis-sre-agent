@@ -240,7 +240,6 @@ class TestSRELangGraphAgent:
         call_kwargs = mock_build_startup_context.await_args.kwargs
         assert call_kwargs["version"] == "latest"
         assert call_kwargs["available_tools"] == []
-        assert "memory question" in call_kwargs["query"]
 
     @pytest.mark.asyncio
     async def test_process_query_ends_run_cache_when_memory_setup_is_cancelled(
@@ -2665,7 +2664,6 @@ class TestSRELangGraphAgent:
         assert "FRESH_CONTEXT" in sent_messages[0].content
         assert "STALE_CONTEXT" not in sent_messages[0].content
         mock_build_startup_context.assert_awaited_once_with(
-            query="new question",
             version="latest",
             available_tools=[],
         )
