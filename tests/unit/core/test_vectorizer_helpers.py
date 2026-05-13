@@ -36,6 +36,32 @@ class TestVectorizerHelpers:
         set_vectorizer_factory(None)
         assert get_vectorizer_factory() is None
 
+    def test_set_vectorizer_factory_none_suppresses_settings_factory_loading(self):
+        """Clearing a programmatic factory should also suppress later settings loading."""
+        with patch("redis_sre_agent.core.vectorizer_helpers.settings") as mock_settings:
+            mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379/0"
+            mock_settings.embeddings_cache_ttl = 60
+            mock_settings.embedding_provider = "openai"
+            mock_settings.embedding_model = "text-embedding-3-small"
+            mock_settings.openai_api_key = "test-key"
+            mock_settings.openai_base_url = None
+            mock_settings.vectorizer_factory = "my.factories.custom_factory"
+
+            set_vectorizer_factory(None)
+
+            with (
+                patch(
+                    "redis_sre_agent.core.vectorizer_helpers._resolve_factory_from_path"
+                ) as mock_resolve,
+                patch(
+                    "redis_sre_agent.core.redis.OpenAITextVectorizer",
+                    return_value=Mock(aembed=Mock(), aembed_many=Mock()),
+                ),
+            ):
+                create_vectorizer()
+
+        mock_resolve.assert_not_called()
+
     def test_create_vectorizer_openai_defaults(self):
         """Default factory should create an OpenAI RedisVL vectorizer."""
         mock_cache = Mock()
@@ -47,7 +73,7 @@ class TestVectorizerHelpers:
                 "redis_sre_agent.core.vectorizer_helpers.EmbeddingsCache", return_value=mock_cache
             ),
             patch(
-                "redis_sre_agent.core.vectorizer_helpers.OpenAITextVectorizer",
+                "redis_sre_agent.core.redis.OpenAITextVectorizer",
                 return_value=mock_vectorizer,
             ) as mock_openai_vectorizer,
         ):
@@ -82,7 +108,7 @@ class TestVectorizerHelpers:
                 "redis_sre_agent.core.vectorizer_helpers.EmbeddingsCache", return_value=mock_cache
             ),
             patch(
-                "redis_sre_agent.core.vectorizer_helpers.HFTextVectorizer",
+                "redis_sre_agent.core.redis.HFTextVectorizer",
                 return_value=mock_vectorizer,
             ) as mock_hf_vectorizer,
         ):
@@ -191,6 +217,34 @@ class TestVectorizerHelpers:
         assert kwargs["provider"] == "local"
         assert kwargs["model"] == "sentence-transformers/all-mpnet-base-v2"
         assert kwargs["config"] is config
+
+    def test_default_factory_honors_legacy_redis_patch_seam(self):
+        """Patches against core.redis vectorizer aliases should still intercept creation."""
+        mock_cache = Mock()
+        mock_vectorizer = Mock(aembed=Mock(), aembed_many=Mock())
+
+        with (
+            patch("redis_sre_agent.core.vectorizer_helpers.settings") as mock_settings,
+            patch(
+                "redis_sre_agent.core.vectorizer_helpers.EmbeddingsCache", return_value=mock_cache
+            ),
+            patch(
+                "redis_sre_agent.core.redis.OpenAITextVectorizer",
+                return_value=mock_vectorizer,
+            ) as mock_openai_vectorizer,
+        ):
+            mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379/0"
+            mock_settings.embeddings_cache_ttl = 60
+            mock_settings.embedding_provider = "openai"
+            mock_settings.embedding_model = "text-embedding-3-small"
+            mock_settings.openai_api_key = "test-key"
+            mock_settings.openai_base_url = None
+            mock_settings.vectorizer_factory = None
+
+            result = create_vectorizer()
+
+        assert result is mock_vectorizer
+        mock_openai_vectorizer.assert_called_once()
 
     def test_explicit_config_factory_wins_after_global_factory_was_loaded(self):
         """Explicit config factory paths should win even after global settings were initialized."""

@@ -5,7 +5,6 @@ import logging
 from typing import Any, Optional, Protocol
 
 from redisvl.extensions.cache.embeddings.embeddings import EmbeddingsCache
-from redisvl.utils.vectorize import HFTextVectorizer, OpenAITextVectorizer
 
 from redis_sre_agent.core.config import Settings, settings
 
@@ -78,8 +77,10 @@ def _load_factory_from_config() -> Optional[VectorizerFactory]:
 
 def set_vectorizer_factory(factory: Optional[VectorizerFactory]) -> None:
     """Register a custom vectorizer factory function."""
-    global _vectorizer_factory
+    global _vectorizer_factory, _settings_vectorizer_factory, _factory_initialized
     _vectorizer_factory = factory
+    _settings_vectorizer_factory = None
+    _factory_initialized = True
 
 
 def get_vectorizer_factory() -> Optional[VectorizerFactory]:
@@ -107,12 +108,17 @@ def _default_vectorizer_factory(
     **kwargs,
 ) -> Any:
     """Default vectorizer factory using RedisVL's built-in vectorizers."""
+    # Import through core.redis at runtime so existing test patches against
+    # redis_sre_agent.core.redis.{OpenAITextVectorizer,HFTextVectorizer}
+    # continue to intercept construction after the helper refactor.
+    from redis_sre_agent.core import redis as redis_core
+
     resolved_provider = provider.lower()
     resolved_model = model or config.embedding_model
 
     if resolved_provider == "local":
         logger.info("Using local HuggingFace vectorizer with model: %s", resolved_model)
-        return HFTextVectorizer(
+        return redis_core.HFTextVectorizer(
             model=resolved_model,
             cache=cache,
             **kwargs,
@@ -123,7 +129,7 @@ def _default_vectorizer_factory(
             "Vectorizer created with embeddings cache (ttl=%ss)",
             config.embeddings_cache_ttl,
         )
-        return OpenAITextVectorizer(
+        return redis_core.OpenAITextVectorizer(
             model=resolved_model,
             cache=cache,
             api_config={
