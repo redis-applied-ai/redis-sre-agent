@@ -695,7 +695,10 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                     "full_content": entrypoint.content,
                 }
             ui_metadata = dict(entrypoint.ui_metadata or {})
-            output_contract = extract_output_contract(ui_metadata)
+            output_contract = extract_output_contract(
+                ui_metadata,
+                skill_content=entrypoint.content,
+            )
             workflow_contract = extract_workflow_contract(ui_metadata)
             return {
                 "skill_name": entrypoint.name,

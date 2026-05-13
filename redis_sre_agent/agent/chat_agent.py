@@ -221,6 +221,7 @@ def _collect_skill_contract_gaps(
                 "skill_name": contract["skill_name"],
                 "missing_tools": missing_tools,
                 "missing_output": missing_output,
+                "template": str(output_contract.get("template") or "").strip(),
                 "required_followups": [
                     str(item).strip()
                     for item in (workflow_contract.get("required_followups") or [])
@@ -698,6 +699,11 @@ class ChatAgent:
                 lines.extend(f"- {item}" for item in gap["contract_summary"])
             lines.append("Missing output requirements:")
             lines.extend(f"- {item}" for item in gap["missing_output"])
+            if gap["template"]:
+                lines.append("Required markdown template:")
+                lines.append("```markdown")
+                lines.append(gap["template"])
+                lines.append("```")
 
         repair_messages: List[BaseMessage] = [
             SystemMessage(content="\n".join(lines)),
