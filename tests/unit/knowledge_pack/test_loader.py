@@ -212,6 +212,41 @@ async def test_auto_load_configured_knowledge_pack_skips_nonempty_index(
 
 
 @pytest.mark.asyncio
+async def test_auto_load_configured_knowledge_pack_uses_configured_artifacts_path(
+    tmp_path: Path, monkeypatch
+):
+    pack_path = tmp_path / "pack.zip"
+    pack_path.write_text("placeholder", encoding="utf-8")
+    config = Settings(
+        redis_url="redis://localhost:6379/0",
+        knowledge_pack_auto_load=True,
+        knowledge_pack_path=pack_path,
+        knowledge_pack_load_mode="auto",
+        knowledge_pack_artifacts_path=tmp_path / "knowledge-pack-artifacts",
+    )
+
+    async def fake_index_stats(cfg):
+        return {"exists": False, "num_docs": 0}
+
+    load_calls: list[dict[str, object]] = []
+
+    async def fake_load(**kwargs):
+        load_calls.append(kwargs)
+        return {"mode": "reingest", "pack_id": "pack-123"}
+
+    monkeypatch.setattr(
+        "redis_sre_agent.knowledge_pack.loader._knowledge_index_stats", fake_index_stats
+    )
+    monkeypatch.setattr("redis_sre_agent.knowledge_pack.loader.load_knowledge_pack", fake_load)
+
+    result = await auto_load_configured_knowledge_pack(config)
+
+    assert result["status"] == "loaded"
+    assert len(load_calls) == 1
+    assert load_calls[0]["artifacts_path"] == config.knowledge_pack_artifacts_path
+
+
+@pytest.mark.asyncio
 async def test_extract_artifacts_from_pack_rejects_path_traversal(tmp_path: Path):
     manifest = _make_manifest(
         provider="openai",

@@ -384,7 +384,7 @@ async def auto_load_configured_knowledge_pack(
     result = await load_knowledge_pack(
         pack_path=pack_path,
         mode=cfg.knowledge_pack_load_mode,
-        artifacts_path=Path("./artifacts"),
+        artifacts_path=cfg.knowledge_pack_artifacts_path,
         replace_existing=False,
         skip_checksums=False,
         config=cfg,

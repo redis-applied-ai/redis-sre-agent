@@ -52,6 +52,7 @@ services:
       - KNOWLEDGE_PACK_AUTO_LOAD=${KNOWLEDGE_PACK_AUTO_LOAD:-true}
       - KNOWLEDGE_PACK_PATH=${KNOWLEDGE_PACK_PATH:-/app/knowledge-packs/redis-sre-agent-knowledge-pack-airgap.zip}
       - KNOWLEDGE_PACK_LOAD_MODE=${KNOWLEDGE_PACK_LOAD_MODE:-auto}
+      - KNOWLEDGE_PACK_ARTIFACTS_PATH=${KNOWLEDGE_PACK_ARTIFACTS_PATH:-/tmp/redis-sre-agent/knowledge-pack-artifacts}
 
       # Master key for API authentication
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY:-}
@@ -90,6 +91,7 @@ services:
       - KNOWLEDGE_PACK_AUTO_LOAD=${KNOWLEDGE_PACK_AUTO_LOAD:-true}
       - KNOWLEDGE_PACK_PATH=${KNOWLEDGE_PACK_PATH:-/app/knowledge-packs/redis-sre-agent-knowledge-pack-airgap.zip}
       - KNOWLEDGE_PACK_LOAD_MODE=${KNOWLEDGE_PACK_LOAD_MODE:-auto}
+      - KNOWLEDGE_PACK_ARTIFACTS_PATH=${KNOWLEDGE_PACK_ARTIFACTS_PATH:-/tmp/redis-sre-agent/knowledge-pack-artifacts}
     volumes:
       - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml:ro
       - ${ARTIFACTS_PATH:-./artifacts}:/app/artifacts:ro

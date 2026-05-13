@@ -55,6 +55,7 @@ check_knowledge_base() {
 init_knowledge_pack() {
     local pack_path="${KNOWLEDGE_PACK_PATH:-}"
     local pack_mode="${KNOWLEDGE_PACK_LOAD_MODE:-auto}"
+    local pack_artifacts_path="${KNOWLEDGE_PACK_ARTIFACTS_PATH:-/tmp/redis-sre-agent/knowledge-pack-artifacts}"
 
     if [ "${KNOWLEDGE_PACK_AUTO_LOAD:-false}" != "true" ]; then
         return 1
@@ -75,7 +76,7 @@ init_knowledge_pack() {
     if redis-sre-agent knowledge-pack load \
         --pack "$pack_path" \
         --mode "$pack_mode" \
-        --artifacts-path /app/artifacts; then
+        --artifacts-path "$pack_artifacts_path"; then
         success "Knowledge pack loaded successfully"
         return 0
     else

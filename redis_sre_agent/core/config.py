@@ -388,6 +388,13 @@ class Settings(BaseSettings):
             "knowledge index is empty."
         ),
     )
+    knowledge_pack_artifacts_path: Path = Field(
+        default=Path("/tmp/redis-sre-agent/knowledge-pack-artifacts"),
+        description=(
+            "Writable directory used when a configured knowledge pack must fall back to "
+            "reingest from bundled artifacts."
+        ),
+    )
 
     # Docket Task Queue
     task_queue_name: str = Field(default="sre_agent_tasks", description="Task queue name")
