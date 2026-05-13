@@ -182,7 +182,7 @@ class ArtifactStorage:
         stored_documents: List[dict[str, Any]] = []
         if self.current_batch_path.exists():
             for document_path in sorted(self.current_batch_path.rglob("*.json")):
-                if document_path.name == "batch_manifest.json":
+                if document_path.name in {"batch_manifest.json", "ingestion_manifest.json"}:
                     continue
                 try:
                     stored_documents.append(json.loads(document_path.read_text(encoding="utf-8")))
