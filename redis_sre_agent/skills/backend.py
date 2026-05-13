@@ -384,7 +384,10 @@ class RedisSkillBackend:
                 "full_content": str(entrypoint.get("content") or "").strip(),
             }
         ui_metadata = self._extract_ui_metadata(entrypoint.get("metadata", {}))
-        output_contract = extract_output_contract(ui_metadata)
+        output_contract = extract_output_contract(
+            ui_metadata,
+            skill_content=str(entrypoint.get("content") or ""),
+        )
         workflow_contract = extract_workflow_contract(ui_metadata)
         return {
             "skill_name": str(entrypoint.get("skill_name") or normalized_name),
