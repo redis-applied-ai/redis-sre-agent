@@ -14,6 +14,7 @@ from redis_sre_agent.knowledge_pack.checksums import (
     write_checksums_file,
 )
 from redis_sre_agent.knowledge_pack.loader import (
+    _extract_artifacts_from_pack,
     auto_load_configured_knowledge_pack,
     get_restore_compatibility,
     inspect_knowledge_pack,
@@ -208,3 +209,38 @@ async def test_auto_load_configured_knowledge_pack_skips_nonempty_index(
         "reason": "knowledge_index_not_empty",
         "num_docs": 3,
     }
+
+
+@pytest.mark.asyncio
+async def test_extract_artifacts_from_pack_rejects_path_traversal(tmp_path: Path):
+    manifest = _make_manifest(
+        provider="openai",
+        model="text-embedding-3-small",
+        vector_dim=1536,
+    )
+    root = tmp_path / "pack"
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        json.dumps(manifest.model_dump(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    restore_dir = root / "restore"
+    restore_dir.mkdir()
+    for name, payload in {
+        "knowledge_chunks.ndjson": "{}\n",
+        "knowledge_document_meta.ndjson": "{}\n",
+        "knowledge_source_meta.ndjson": "{}\n",
+        "active_pack_registry.json": "{}\n",
+    }.items():
+        (restore_dir / name).write_text(payload, encoding="utf-8")
+    checksums = build_checksums_for_directory(root, exclude={"checksums.txt"})
+    write_checksums_file(root / "checksums.txt", checksums)
+
+    zip_path = tmp_path / "malicious-pack.zip"
+    with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as archive:
+        for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
+            archive.write(path, path.relative_to(root).as_posix())
+        archive.writestr("artifacts/../../escape.txt", "nope")
+
+    with pytest.raises(ValueError, match="escapes destination root"):
+        await _extract_artifacts_from_pack(zip_path, tmp_path / "artifacts")

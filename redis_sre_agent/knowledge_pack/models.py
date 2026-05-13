@@ -13,6 +13,10 @@ AIRGAP_PACK_PROFILE = "airgap"
 AIRGAP_EMBEDDING_PROVIDER = "local"
 AIRGAP_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 AIRGAP_VECTOR_DIM = 384
+KNOWLEDGE_PACK_CHUNK_RECORDS_FILE = "restore/knowledge_chunks.ndjson"
+KNOWLEDGE_PACK_DOCUMENT_META_FILE = "restore/knowledge_document_meta.ndjson"
+KNOWLEDGE_PACK_SOURCE_META_FILE = "restore/knowledge_source_meta.ndjson"
+KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE = "restore/active_pack_registry.json"
 
 
 class RecordCounts(BaseModel):

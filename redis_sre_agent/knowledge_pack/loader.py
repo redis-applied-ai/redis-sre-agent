@@ -17,15 +17,14 @@ from redis_sre_agent.pipelines.orchestrator import PipelineOrchestrator
 from .builder import compute_embedding_fingerprint, compute_schema_hash
 from .checksums import verify_zip_checksums
 from .models import (
+    KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE,
+    KNOWLEDGE_PACK_CHUNK_RECORDS_FILE,
+    KNOWLEDGE_PACK_DOCUMENT_META_FILE,
+    KNOWLEDGE_PACK_SOURCE_META_FILE,
     ActiveKnowledgePackRegistry,
     KnowledgePackInspection,
     KnowledgePackManifest,
 )
-
-_CHUNK_RECORDS_FILE = "restore/knowledge_chunks.ndjson"
-_DOCUMENT_META_FILE = "restore/knowledge_document_meta.ndjson"
-_SOURCE_META_FILE = "restore/knowledge_source_meta.ndjson"
-_ACTIVE_REGISTRY_FILE = "restore/active_pack_registry.json"
 
 
 def _utcnow() -> str:
@@ -204,13 +203,17 @@ async def _restore_from_pack(
         )
 
     with ZipFile(pack_path) as archive:
-        chunk_records = _iter_ndjson_lines(archive.read(_CHUNK_RECORDS_FILE).decode("utf-8"))
-        document_meta_records = _iter_ndjson_lines(
-            archive.read(_DOCUMENT_META_FILE).decode("utf-8")
+        chunk_records = _iter_ndjson_lines(
+            archive.read(KNOWLEDGE_PACK_CHUNK_RECORDS_FILE).decode("utf-8")
         )
-        source_meta_records = _iter_ndjson_lines(archive.read(_SOURCE_META_FILE).decode("utf-8"))
+        document_meta_records = _iter_ndjson_lines(
+            archive.read(KNOWLEDGE_PACK_DOCUMENT_META_FILE).decode("utf-8")
+        )
+        source_meta_records = _iter_ndjson_lines(
+            archive.read(KNOWLEDGE_PACK_SOURCE_META_FILE).decode("utf-8")
+        )
         registry_payload = ActiveKnowledgePackRegistry.model_validate_json(
-            archive.read(_ACTIVE_REGISTRY_FILE)
+            archive.read(KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE)
         )
 
     batch_size = 200
@@ -255,6 +258,7 @@ async def _restore_from_pack(
 async def _extract_artifacts_from_pack(pack_path: Path, artifacts_path: Path) -> str:
     artifacts_path.mkdir(parents=True, exist_ok=True)
     batch_date = ""
+    artifacts_root = artifacts_path.resolve()
     with ZipFile(pack_path) as archive:
         for member in archive.infolist():
             if not member.filename.startswith("artifacts/") or member.is_dir():
@@ -262,7 +266,11 @@ async def _extract_artifacts_from_pack(pack_path: Path, artifacts_path: Path) ->
             relative_path = Path(member.filename).relative_to("artifacts")
             if not batch_date and relative_path.parts:
                 batch_date = relative_path.parts[0]
-            target_path = artifacts_path / relative_path
+            target_path = (artifacts_root / relative_path).resolve()
+            if artifacts_root not in target_path.parents and target_path != artifacts_root:
+                raise ValueError(
+                    f"Knowledge pack artifact path escapes destination root: {member.filename}"
+                )
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_bytes(archive.read(member.filename))
     if not batch_date:

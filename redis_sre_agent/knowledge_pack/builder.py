@@ -22,16 +22,16 @@ from .models import (
     AIRGAP_EMBEDDING_PROVIDER,
     AIRGAP_PACK_PROFILE,
     AIRGAP_VECTOR_DIM,
+    KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE,
+    KNOWLEDGE_PACK_CHUNK_RECORDS_FILE,
+    KNOWLEDGE_PACK_DOCUMENT_META_FILE,
+    KNOWLEDGE_PACK_SOURCE_META_FILE,
     STANDARD_PACK_PROFILE,
     ActiveKnowledgePackRegistry,
     KnowledgePackManifest,
     RecordCounts,
 )
 
-_CHUNK_RECORDS_FILE = "restore/knowledge_chunks.ndjson"
-_DOCUMENT_META_FILE = "restore/knowledge_document_meta.ndjson"
-_SOURCE_META_FILE = "restore/knowledge_source_meta.ndjson"
-_ACTIVE_REGISTRY_FILE = "restore/active_pack_registry.json"
 _MANIFEST_FILE = "manifest.json"
 _CHECKSUMS_FILE = "checksums.txt"
 
@@ -186,7 +186,21 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def _copy_batch_artifacts(source_batch_path: Path, destination_root: Path) -> int:
     target_batch_path = destination_root / "artifacts" / source_batch_path.name
     shutil.copytree(source_batch_path, target_batch_path)
-    return sum(1 for path in target_batch_path.rglob("*.json") if path.is_file())
+    manifest_path = target_batch_path / "batch_manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            total_documents = manifest_payload.get("total_documents")
+            if isinstance(total_documents, int) and total_documents >= 0:
+                return total_documents
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    return sum(
+        1
+        for path in target_batch_path.rglob("*.json")
+        if path.is_file() and path.name != "batch_manifest.json"
+    )
 
 
 def _build_source_revisions(repo_root: Path, repo_sha: str | None) -> dict[str, Any]:
@@ -290,10 +304,10 @@ async def build_knowledge_pack(
     with tempfile.TemporaryDirectory(prefix="knowledge-pack-build-") as tmpdir:
         root = Path(tmpdir)
         artifact_documents = _copy_batch_artifacts(source_batch_path, root)
-        _write_ndjson(root / _CHUNK_RECORDS_FILE, chunk_records)
-        _write_ndjson(root / _DOCUMENT_META_FILE, document_meta_records)
-        _write_ndjson(root / _SOURCE_META_FILE, source_meta_records)
-        _write_json(root / _ACTIVE_REGISTRY_FILE, active_registry.model_dump())
+        _write_ndjson(root / KNOWLEDGE_PACK_CHUNK_RECORDS_FILE, chunk_records)
+        _write_ndjson(root / KNOWLEDGE_PACK_DOCUMENT_META_FILE, document_meta_records)
+        _write_ndjson(root / KNOWLEDGE_PACK_SOURCE_META_FILE, source_meta_records)
+        _write_json(root / KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE, active_registry.model_dump())
 
         manifest = KnowledgePackManifest(
             pack_id=pack_id,
