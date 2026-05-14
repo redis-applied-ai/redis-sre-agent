@@ -121,6 +121,29 @@ def _required_pattern_entries(output_contract: Dict[str, Any]) -> List[Dict[str,
     return entries
 
 
+_CONTRACT_PLACEHOLDER_RE = re.compile(r"<[^>\n]+>")
+
+
+def _contract_template_token_pattern(token: str) -> str:
+    parts: List[str] = []
+    cursor = 0
+    for match in _CONTRACT_PLACEHOLDER_RE.finditer(token):
+        parts.append(re.escape(token[cursor : match.start()]))
+        parts.append(r".+")
+        cursor = match.end()
+    parts.append(re.escape(token[cursor:]))
+    return "".join(parts)
+
+
+def _contract_template_token_matches(token: str, response_text: str) -> bool:
+    if _CONTRACT_PLACEHOLDER_RE.search(token):
+        return (
+            re.search(rf"(?m)^{_contract_template_token_pattern(token)}$", response_text)
+            is not None
+        )
+    return token in response_text
+
+
 def _missing_output_contract_items(
     output_contract: Dict[str, Any],
     response_text: str,
@@ -149,8 +172,12 @@ def _missing_output_contract_items(
 
     for heading in output_contract.get("required_subsections") or []:
         token = str(heading or "").strip()
-        if token and token not in response_text:
-            missing.append(f"Include subsection `{token}`.")
+        if not token or _contract_template_token_matches(token, response_text):
+            continue
+        if _CONTRACT_PLACEHOLDER_RE.search(token):
+            missing.append(f"Include a subsection matching `{token}`.")
+            continue
+        missing.append(f"Include subsection `{token}`.")
 
     for pattern_entry in _required_pattern_entries(output_contract):
         try:

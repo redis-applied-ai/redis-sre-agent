@@ -355,6 +355,24 @@ class TestSkillContractRuntimeRepair:
 
         assert missing == ["Include the required malformed-pattern section."]
 
+    def test_missing_output_contract_items_matches_placeholder_subsections(self):
+        output_contract = {
+            "required_subsections": ["### <database name> (<id>)"],
+        }
+
+        assert (
+            chat_agent_module._missing_output_contract_items(
+                output_contract,
+                "## Database-level findings\n\n### orders-cache (bdb-101)\nHealthy.",
+            )
+            == []
+        )
+
+        assert chat_agent_module._missing_output_contract_items(
+            output_contract,
+            "## Database-level findings\n\nNo database subsections.",
+        ) == ["Include a subsection matching `### <database name> (<id>)`."]
+
     def test_build_skill_contract_repair_message_mentions_missing_requirements(self):
         envelopes = [
             {
