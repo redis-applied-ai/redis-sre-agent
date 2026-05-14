@@ -1,5 +1,6 @@
 """Tests for Agent Skills packages in the fixture-backed eval knowledge backend."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -196,8 +197,8 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
                 "pattern": "(?m)^- \\*\\*[^*]+\\*\\*: .+",
             },
             {
-                "description": "End the document after the required `## Actions` section without adding a footer.",
-                "pattern": "(?s)\\#\\#\\ Actions\\s*$",
+                "description": "End the document in the required `## Actions` section without adding another `##` section.",
+                "pattern": "(?s)\\#\\#\\ Actions(?:(?!\\n##\\s).)*\\s*$",
             },
         ],
         "must_include_even_if_empty": True,
@@ -223,6 +224,18 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
             ]
         ),
     }
+    final_section_pattern = agent_skill["output_contract"]["required_patterns"][-1]["pattern"]
+    assert re.search(
+        final_section_pattern,
+        "## Summary\nok\n\n## Actions\n\n### orders-cache (bdb-101)\n\n- **ok**: keep watching.",
+    )
+    assert (
+        re.search(
+            final_section_pattern,
+            "## Summary\nok\n\n## Actions\n\n- **ok**: keep watching.\n\n## Footer\nextra",
+        )
+        is None
+    )
     assert agent_skill["workflow_contract"] == {
         "required_tool_calls": ["inspect_maintenance_mode"],
         "progress_checklist": ["Read maintenance state first."],

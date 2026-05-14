@@ -137,10 +137,10 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
         last_heading = re.escape(required_order[-1])
         required_patterns.append(
             {
-                "pattern": rf"(?s){last_heading}\s*$",
+                "pattern": rf"(?s){last_heading}(?:(?!\n##\s).)*\s*$",
                 "description": (
-                    f"End the document after the required `{required_order[-1]}` section "
-                    "without adding a footer."
+                    f"End the document in the required `{required_order[-1]}` section "
+                    "without adding another `##` section."
                 ),
             }
         )
