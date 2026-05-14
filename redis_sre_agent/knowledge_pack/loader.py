@@ -162,13 +162,31 @@ def _runtime_registry_fields(config: Settings) -> dict[str, str]:
     }
 
 
+def _registry_key_set(registry: ActiveKnowledgePackRegistry | None) -> set[str]:
+    if registry is None:
+        return set()
+    return (
+        set(registry.chunk_keys) | set(registry.document_meta_keys) | set(registry.source_meta_keys)
+    )
+
+
 async def _delete_registry_keys(
-    redis_client: Any, registry: ActiveKnowledgePackRegistry
+    redis_client: Any,
+    registry: ActiveKnowledgePackRegistry,
+    *,
+    preserve_keys: Iterable[str] = (),
 ) -> dict[str, int]:
+    preserved = set(preserve_keys)
     return {
-        "chunk_keys": await _delete_keys(redis_client, registry.chunk_keys),
-        "document_meta_keys": await _delete_keys(redis_client, registry.document_meta_keys),
-        "source_meta_keys": await _delete_keys(redis_client, registry.source_meta_keys),
+        "chunk_keys": await _delete_keys(
+            redis_client, (key for key in registry.chunk_keys if key not in preserved)
+        ),
+        "document_meta_keys": await _delete_keys(
+            redis_client, (key for key in registry.document_meta_keys if key not in preserved)
+        ),
+        "source_meta_keys": await _delete_keys(
+            redis_client, (key for key in registry.source_meta_keys if key not in preserved)
+        ),
     }
 
 
@@ -346,23 +364,37 @@ async def _reingest_from_pack(
     active_registry = await _load_registry(redis_client)
     deleted = {"chunk_keys": 0, "document_meta_keys": 0, "source_meta_keys": 0}
 
-    if active_registry is not None:
-        deleted = await _delete_registry_keys(redis_client, active_registry)
-    elif current_index_stats["num_docs"] > 0 and not replace_existing:
+    if active_registry is None and current_index_stats["num_docs"] > 0 and not replace_existing:
         raise ValueError(
             "Knowledge index already contains documents with no active knowledge-pack registry. "
             "Pass --replace-existing to proceed without deleting unknown keys."
         )
 
     batch_date = await _extract_artifacts_from_pack(pack_path, artifacts_path)
-
-    orchestrator = PipelineOrchestrator(str(artifacts_path), knowledge_settings=config)
-    ingestion_result = await orchestrator.run_ingestion_pipeline(batch_date)
     registry = _materialize_registry_from_runtime_batch(
         artifacts_path=artifacts_path,
         manifest=manifest,
         config=config,
     )
+
+    orchestrator = PipelineOrchestrator(str(artifacts_path), knowledge_settings=config)
+    try:
+        ingestion_result = await orchestrator.run_ingestion_pipeline(batch_date)
+    except Exception:
+        if active_registry is not None or current_index_stats["num_docs"] == 0:
+            await _delete_registry_keys(
+                redis_client,
+                registry,
+                preserve_keys=_registry_key_set(active_registry),
+            )
+        raise
+
+    if active_registry is not None:
+        deleted = await _delete_registry_keys(
+            redis_client,
+            active_registry,
+            preserve_keys=_registry_key_set(registry),
+        )
     await _store_registry(index.client, registry)
     return {
         "mode": "reingest",

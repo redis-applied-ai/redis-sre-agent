@@ -17,12 +17,14 @@ from redis_sre_agent.knowledge_pack.checksums import (
 from redis_sre_agent.knowledge_pack.loader import (
     _extract_artifacts_from_pack,
     _materialize_registry_from_runtime_batch,
+    _reingest_from_pack,
     auto_load_configured_knowledge_pack,
     get_restore_compatibility,
     inspect_knowledge_pack,
     load_knowledge_pack,
 )
 from redis_sre_agent.knowledge_pack.models import (
+    ActiveKnowledgePackRegistry,
     KnowledgePackInspection,
     KnowledgePackManifest,
     RecordCounts,
@@ -361,3 +363,101 @@ def test_materialize_registry_from_runtime_batch_uses_runtime_keys(tmp_path: Pat
     assert registry.chunk_keys == [f"sre_knowledge:{runtime_document_hash}:chunk:0"]
     assert registry.document_meta_keys == [f"sre_knowledge_meta:{runtime_document_hash}"]
     assert registry.source_meta_keys == [f"sre_knowledge_meta:source:{source_path_hash}"]
+
+
+@pytest.mark.asyncio
+async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Path, monkeypatch):
+    manifest = _make_manifest(
+        provider="openai",
+        model="text-embedding-3-small",
+        vector_dim=1536,
+    )
+    active_registry = ActiveKnowledgePackRegistry(
+        pack_id="old-pack",
+        loaded_at="2026-05-12T00:00:00+00:00",
+        batch_date="2026-05-12",
+        schema_hash=manifest.schema_hash,
+        embedding_fingerprint=manifest.embedding_fingerprint,
+        chunk_keys=["old-chunk"],
+        document_meta_keys=["old-meta"],
+        source_meta_keys=[],
+    )
+    replacement_registry = ActiveKnowledgePackRegistry(
+        pack_id=manifest.pack_id,
+        loaded_at="2026-05-13T00:00:00+00:00",
+        batch_date=manifest.batch_date,
+        schema_hash=manifest.schema_hash,
+        embedding_fingerprint=manifest.embedding_fingerprint,
+        chunk_keys=["new-chunk"],
+        document_meta_keys=["new-meta"],
+        source_meta_keys=[],
+    )
+    deleted_keys: list[str] = []
+    stored_registries: list[str] = []
+
+    class FakeRedis:
+        async def delete(self, *keys):
+            deleted_keys.extend(keys)
+            return len(keys)
+
+        async def set(self, key, value):
+            stored_registries.append(f"{key}:{value}")
+
+    class FakeIndex:
+        client = FakeRedis()
+
+    class FailingOrchestrator:
+        def __init__(self, artifacts_path: str, knowledge_settings):
+            self.artifacts_path = artifacts_path
+            self.knowledge_settings = knowledge_settings
+
+        async def run_ingestion_pipeline(self, batch_date: str):
+            raise RuntimeError("ingestion failed")
+
+    async def noop_create_indices(**kwargs):
+        return None
+
+    async def fake_get_index(**kwargs):
+        return FakeIndex()
+
+    async def fake_index_stats(config):
+        return {"exists": True, "num_docs": 2}
+
+    async def fake_load_registry(redis_client):
+        return active_registry
+
+    async def fake_extract_artifacts(pack_path: Path, artifacts_path: Path):
+        return manifest.batch_date
+
+    monkeypatch.setattr("redis_sre_agent.knowledge_pack.loader.create_indices", noop_create_indices)
+    monkeypatch.setattr("redis_sre_agent.knowledge_pack.loader.get_knowledge_index", fake_get_index)
+    monkeypatch.setattr(
+        "redis_sre_agent.knowledge_pack.loader._knowledge_index_stats", fake_index_stats
+    )
+    monkeypatch.setattr("redis_sre_agent.knowledge_pack.loader._load_registry", fake_load_registry)
+    monkeypatch.setattr(
+        "redis_sre_agent.knowledge_pack.loader._extract_artifacts_from_pack",
+        fake_extract_artifacts,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.knowledge_pack.loader._materialize_registry_from_runtime_batch",
+        lambda **kwargs: replacement_registry,
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.knowledge_pack.loader.PipelineOrchestrator",
+        FailingOrchestrator,
+    )
+
+    with pytest.raises(RuntimeError, match="ingestion failed"):
+        await _reingest_from_pack(
+            pack_path=tmp_path / "pack.zip",
+            manifest=manifest,
+            artifacts_path=tmp_path / "artifacts",
+            replace_existing=False,
+            config=Settings(redis_url="redis://localhost:6379/0"),
+        )
+
+    assert deleted_keys == ["new-chunk", "new-meta"]
+    assert "old-chunk" not in deleted_keys
+    assert "old-meta" not in deleted_keys
+    assert stored_registries == []
