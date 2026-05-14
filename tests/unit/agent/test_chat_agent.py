@@ -329,6 +329,32 @@ class TestSkillContractRuntimeRepair:
             "Always fetch cluster-scope time series with interval=5m before finalizing the report."
         ]
 
+    def test_tool_requirement_matches_normalized_dotted_operation(self):
+        envelope = {
+            "tool_key": "mcp_analyzer_eval_123abc_analyzer_get_package",
+            "name": "analyzer_get_package",
+        }
+
+        assert chat_agent_module._tool_requirement_matches("analyzer.get_package", envelope)
+        assert chat_agent_module._tool_requirement_matches(
+            {"operation": "analyzer.get_package", "server_name": "analyzer"}, envelope
+        )
+
+    def test_missing_output_contract_items_treats_invalid_regex_as_missing(self):
+        missing = chat_agent_module._missing_output_contract_items(
+            {
+                "required_patterns": [
+                    {
+                        "pattern": "[",
+                        "description": "Include the required malformed-pattern section.",
+                    }
+                ]
+            },
+            "## Summary\nok",
+        )
+
+        assert missing == ["Include the required malformed-pattern section."]
+
     def test_build_skill_contract_repair_message_mentions_missing_requirements(self):
         envelopes = [
             {

@@ -91,9 +91,7 @@ def _tool_requirement_matches(requirement: Any, envelope: Dict[str, Any]) -> boo
             return False
         for candidate in candidates:
             if not (
-                candidate == required_operation
-                or candidate.endswith(f"_{required_operation}")
-                or candidate.endswith(f".{required_operation}")
+                candidate == required_operation or candidate.endswith(f"_{required_operation}")
             ):
                 continue
             if required_server and required_server not in candidate:
@@ -105,10 +103,7 @@ def _tool_requirement_matches(requirement: Any, envelope: Dict[str, Any]) -> boo
     if not required:
         return False
     return any(
-        candidate == required
-        or candidate.endswith(f"_{required}")
-        or candidate.endswith(f".{required}")
-        for candidate in candidates
+        candidate == required or candidate.endswith(f"_{required}") for candidate in candidates
     )
 
 
@@ -158,8 +153,11 @@ def _missing_output_contract_items(
             missing.append(f"Include subsection `{token}`.")
 
     for pattern_entry in _required_pattern_entries(output_contract):
-        if re.search(pattern_entry["pattern"], response_text):
-            continue
+        try:
+            if re.search(pattern_entry["pattern"], response_text):
+                continue
+        except re.error:
+            pass
         missing.append(pattern_entry["description"])
 
     return missing
