@@ -180,15 +180,15 @@ def _extract_active_skill_contracts(
             continue
         contracts.append(
             {
-                "skill_name": str(data.get("skill_name") or envelope.get("name") or "skill").strip(),
+                "skill_name": str(
+                    data.get("skill_name") or envelope.get("name") or "skill"
+                ).strip(),
                 "output_contract": output_contract if isinstance(output_contract, dict) else {},
                 "workflow_contract": (
                     workflow_contract if isinstance(workflow_contract, dict) else {}
                 ),
                 "contract_summary": [
-                    str(item).strip()
-                    for item in (contract_summary or [])
-                    if str(item).strip()
+                    str(item).strip() for item in (contract_summary or []) if str(item).strip()
                 ],
             }
         )
@@ -210,9 +210,7 @@ def _collect_skill_contract_gaps(
             if not any(_tool_requirement_matches(requirement, envelope) for envelope in envelopes)
         ]
         missing_output = (
-            _missing_output_contract_items(output_contract, response_text)
-            if response_text
-            else []
+            _missing_output_contract_items(output_contract, response_text) if response_text else []
         )
         if not missing_tools and not missing_output:
             continue
@@ -250,7 +248,8 @@ def _build_skill_contract_repair_message(
         lines.append(f"Skill: `{gap['skill_name']}`")
         if gap["missing_tools"]:
             lines.append(
-                "Missing required tool calls: " + ", ".join(f"`{name}`" for name in gap["missing_tools"])
+                "Missing required tool calls: "
+                + ", ".join(f"`{name}`" for name in gap["missing_tools"])
             )
         if gap["required_followups"]:
             lines.append("Required follow-up rules:")

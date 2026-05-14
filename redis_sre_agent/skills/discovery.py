@@ -310,8 +310,8 @@ def skill_package_to_documents(
 
     source_root = source_root.resolve()
     root_label = str(source_root_label or source_root.name or "skills").strip().strip("/")
-    package_hash = (
-        str(package.metadata.get("document_hash") or "").strip() or _package_hash(package)
+    package_hash = str(package.metadata.get("document_hash") or "").strip() or _package_hash(
+        package
     )
     manifest_json = json.dumps(_skill_package_manifest(package), sort_keys=True)
     documents: list[ScrapedDocument] = []
