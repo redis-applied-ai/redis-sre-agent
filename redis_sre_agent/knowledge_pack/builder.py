@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -31,13 +30,10 @@ from .models import (
     KnowledgePackManifest,
     RecordCounts,
 )
+from .utils import utcnow
 
 _MANIFEST_FILE = "manifest.json"
 _CHECKSUMS_FILE = "checksums.txt"
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _git_rev_parse(target: str, cwd: Path) -> str | None:
@@ -292,7 +288,7 @@ async def build_knowledge_pack(
         pack_id=pack_id,
         release_tag=release_tag,
         pack_profile=manifest_profile["pack_profile"],
-        loaded_at=_utcnow(),
+        loaded_at=utcnow(),
         batch_date=batch_date,
         schema_hash=schema_hash,
         embedding_fingerprint=embedding_fingerprint,
@@ -314,7 +310,7 @@ async def build_knowledge_pack(
             pack_profile=manifest_profile["pack_profile"],
             release_tag=release_tag,
             repo_sha=effective_repo_sha,
-            created_at=_utcnow(),
+            created_at=utcnow(),
             batch_date=batch_date,
             schema_hash=schema_hash,
             embedding_provider=manifest_profile["embedding_provider"],

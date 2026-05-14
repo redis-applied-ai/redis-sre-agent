@@ -524,10 +524,23 @@ async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Pa
     deleted_keys: list[str] = []
     stored_registries: list[str] = []
     orchestrator_scrapers: list[list[str] | None] = []
+    hashes: dict[str, dict[str, str]] = {
+        "old-chunk": {"id": "old-chunk", "title": "Old chunk"},
+        "old-meta": {"title": "Old meta"},
+    }
 
     class FakeRedis:
+        async def hgetall(self, key):
+            return dict(hashes.get(key, {}))
+
+        async def hset(self, key, mapping):
+            hashes[key] = dict(mapping)
+            return len(mapping)
+
         async def delete(self, *keys):
             deleted_keys.extend(keys)
+            for key in keys:
+                hashes.pop(key, None)
             return len(keys)
 
         async def set(self, key, value):
@@ -543,6 +556,10 @@ async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Pa
             orchestrator_scrapers.append(scrapers)
 
         async def run_ingestion_pipeline(self, batch_date: str):
+            assert "old-chunk" not in hashes
+            assert "old-meta" not in hashes
+            hashes["new-chunk"] = {"id": "new-chunk", "title": "New chunk"}
+            hashes["new-meta"] = {"title": "New meta"}
             raise RuntimeError("ingestion failed")
 
     async def noop_create_indices(**kwargs):
@@ -588,8 +605,10 @@ async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Pa
             config=Settings(redis_url="redis://localhost:6379/0"),
         )
 
-    assert deleted_keys == ["new-chunk", "new-meta"]
-    assert "old-chunk" not in deleted_keys
-    assert "old-meta" not in deleted_keys
+    assert deleted_keys == ["old-chunk", "old-meta", "new-chunk", "new-meta"]
+    assert hashes == {
+        "old-chunk": {"id": "old-chunk", "title": "Old chunk"},
+        "old-meta": {"title": "Old meta"},
+    }
     assert stored_registries == []
     assert orchestrator_scrapers == [[]]

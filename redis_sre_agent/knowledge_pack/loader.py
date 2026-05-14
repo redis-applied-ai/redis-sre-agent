@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 from zipfile import ZipFile
@@ -28,10 +27,7 @@ from .models import (
     KnowledgePackInspection,
     KnowledgePackManifest,
 )
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .utils import utcnow
 
 
 def _iter_ndjson_lines(raw_text: str) -> list[dict[str, Any]]:
@@ -190,6 +186,24 @@ async def _delete_registry_keys(
     }
 
 
+async def _snapshot_registry_hashes(
+    redis_client: Any, registry: ActiveKnowledgePackRegistry | None
+) -> dict[str, dict[Any, Any]]:
+    if registry is None:
+        return {}
+    snapshots: dict[str, dict[Any, Any]] = {}
+    for key in _registry_key_set(registry):
+        mapping = await redis_client.hgetall(key)
+        if mapping:
+            snapshots[key] = dict(mapping)
+    return snapshots
+
+
+async def _restore_hash_snapshots(redis_client: Any, snapshots: dict[str, dict[Any, Any]]) -> None:
+    for key, mapping in snapshots.items():
+        await redis_client.hset(key, mapping=mapping)
+
+
 def _knowledge_source_meta_key(source_document_path: str) -> str:
     path_hash = hashlib.sha256(source_document_path.encode("utf-8")).hexdigest()[:16]
     return RedisKeys.knowledge_source_meta(path_hash)
@@ -236,7 +250,7 @@ def _materialize_registry_from_runtime_batch(
         pack_id=manifest.pack_id,
         release_tag=manifest.release_tag,
         pack_profile=manifest.pack_profile,
-        loaded_at=_utcnow(),
+        loaded_at=utcnow(),
         batch_date=manifest.batch_date,
         chunk_keys=_unique_preserving_order(chunk_keys),
         document_meta_keys=_unique_preserving_order(document_meta_keys),
@@ -286,7 +300,7 @@ async def _restore_from_pack(
 
     registry = ActiveKnowledgePackRegistry(
         **registry_payload.model_dump(exclude={"loaded_at"}),
-        loaded_at=_utcnow(),
+        loaded_at=utcnow(),
     )
 
     batch_size = 200
@@ -385,6 +399,8 @@ async def _reingest_from_pack(
             "Pass --replace-existing to proceed without deleting unknown keys."
         )
 
+    active_registry_snapshots = await _snapshot_registry_hashes(redis_client, active_registry)
+
     batch_date = await _extract_artifacts_from_pack(pack_path, artifacts_path)
     registry = _materialize_registry_from_runtime_batch(
         artifacts_path=artifacts_path,
@@ -398,23 +414,19 @@ async def _reingest_from_pack(
         scrapers=[],
     )
     try:
+        if active_registry is not None:
+            deleted = await _delete_registry_keys(redis_client, active_registry)
         ingestion_result = await orchestrator.run_ingestion_pipeline(batch_date)
+        await _store_registry(redis_client, registry)
     except Exception:
         if active_registry is not None or current_index_stats["num_docs"] == 0:
             await _delete_registry_keys(
                 redis_client,
                 registry,
-                preserve_keys=_registry_key_set(active_registry),
             )
+        await _restore_hash_snapshots(redis_client, active_registry_snapshots)
         raise
 
-    if active_registry is not None:
-        deleted = await _delete_registry_keys(
-            redis_client,
-            active_registry,
-            preserve_keys=_registry_key_set(registry),
-        )
-    await _store_registry(index.client, registry)
     return {
         "mode": "reingest",
         "batch_date": batch_date,
