@@ -268,7 +268,10 @@ def _skill_contract_needs_followup(
     envelopes: List[Dict[str, Any]],
     messages: List[BaseMessage],
 ) -> bool:
-    return bool(_collect_skill_contract_gaps(envelopes, messages))
+    return any(
+        gap["missing_output"] and not gap["missing_tools"]
+        for gap in _collect_skill_contract_gaps(envelopes, messages)
+    )
 
 
 def _format_exception_message(exc: Exception) -> str:

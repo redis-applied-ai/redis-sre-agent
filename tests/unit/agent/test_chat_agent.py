@@ -449,6 +449,34 @@ class TestSkillContractRuntimeRepair:
             chat_agent_module._skill_contract_needs_followup(envelopes, satisfied_messages) is False
         )
 
+    def test_skill_contract_followup_ignores_missing_tool_gaps(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "redis-cluster-health-check",
+                    "output_contract": {
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Skipped Checks\s*$",
+                                "description": "End the document after the `## Skipped Checks` section.",
+                            }
+                        ]
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["analyzer_get_package"],
+                    },
+                },
+            }
+        ]
+        messages = [
+            HumanMessage(content="Review package"),
+            AIMessage(content="## Summary\nNo required tool call or skipped checks section."),
+        ]
+
+        assert chat_agent_module._skill_contract_needs_followup(envelopes, messages) is False
+
     @pytest.mark.asyncio
     async def test_repair_response_to_skill_contract_uses_llm_for_output_only_rewrite(self):
         agent = ChatAgent.__new__(ChatAgent)
