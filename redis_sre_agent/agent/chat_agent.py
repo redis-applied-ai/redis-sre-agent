@@ -284,8 +284,7 @@ def _format_exception_message(exc: Exception) -> str:
     return type(exc).__name__
 
 
-CHAT_SYSTEM_PROMPT = f"""Formatting re-enabled
-You are a Redis SRE agent with access to tools for investigating Redis deployments.
+CHAT_SYSTEM_PROMPT = f"""You are a Redis SRE agent with access to tools for investigating Redis deployments.
 
 ## Your Approach - ITERATIVE INVESTIGATION
 
@@ -684,7 +683,6 @@ class ChatAgent:
             return response_text
 
         lines = [
-            "Formatting re-enabled",
             "You are repairing an answer so it exactly satisfies a binding Agent Skills output contract.",
             "Do not add new evidence, findings, or tool claims.",
             "Preserve the facts, metrics, and recommendations already present in the source answer.",

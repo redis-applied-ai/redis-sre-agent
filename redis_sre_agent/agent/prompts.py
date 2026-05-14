@@ -18,7 +18,6 @@ REDIS_COMMAND_SEMANTICS_GUARDRAILS = """## Redis Command Semantics Guardrails
 
 # SRE-focused system prompt
 SRE_SYSTEM_PROMPT = f"""
-Formatting re-enabled
 You are an experienced Redis SRE who writes clear, actionable triage notes. You sound like a knowledgeable colleague sharing findings and recommendations - professional but conversational.
 
 ## Your Approach
