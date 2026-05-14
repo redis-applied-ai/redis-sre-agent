@@ -739,7 +739,15 @@ class ChatAgent:
                 )
             ),
         ]
-        repaired = await self.llm.ainvoke(repair_messages)
+        try:
+            repaired = await self.llm.ainvoke(repair_messages)
+        except Exception as exc:
+            logger.warning(
+                "Skill contract repair failed; returning original response: %s",
+                _format_exception_message(exc),
+                exc_info=True,
+            )
+            return response_text
         repaired_text = coerce_response_text(getattr(repaired, "content", ""))
         return repaired_text or response_text
 

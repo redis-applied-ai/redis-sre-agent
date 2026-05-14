@@ -1,5 +1,6 @@
 """Unit tests for the lightweight Chat Agent."""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -559,6 +560,46 @@ class TestSkillContractRuntimeRepair:
         repair_messages = agent.llm.ainvoke.await_args.args[0]
         assert "Required markdown template:" in repair_messages[0].content
         assert "# Cluster Health Check: <cluster name>" in repair_messages[0].content
+
+    @pytest.mark.asyncio
+    async def test_repair_response_to_skill_contract_falls_back_when_llm_fails(self, caplog):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent.llm = AsyncMock(
+            ainvoke=AsyncMock(
+                side_effect=RuntimeError("rate limited"),
+            )
+        )
+
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "redis-cluster-health-check",
+                    "output_contract": {
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Skipped Checks\s*$",
+                                "description": "End the document after the `## Skipped Checks` section.",
+                            }
+                        ],
+                    },
+                },
+            }
+        ]
+        original = "## Summary\nok\n\n## Skipped Checks\nnone\n\nSkill used: footer"
+        messages = [HumanMessage(content="Review package"), AIMessage(content=original)]
+
+        with caplog.at_level(logging.WARNING):
+            repaired = await agent._repair_response_to_skill_contract(
+                response_text=original,
+                tool_envelopes=envelopes,
+                messages=messages,
+            )
+
+        assert repaired == original
+        agent.llm.ainvoke.assert_awaited_once()
+        assert "Skill contract repair failed; returning original response" in caplog.text
 
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
