@@ -236,7 +236,6 @@ def _build_skill_contract_repair_message(
     messages: List[BaseMessage],
 ) -> Optional[SystemMessage]:
     gaps = _collect_skill_contract_gaps(envelopes, messages)
-    gaps = [gap for gap in gaps if gap["missing_tools"]]
     if not gaps:
         return None
 
@@ -271,7 +270,7 @@ def _skill_contract_needs_followup(
     envelopes: List[Dict[str, Any]],
     messages: List[BaseMessage],
 ) -> bool:
-    return any(gap["missing_tools"] for gap in _collect_skill_contract_gaps(envelopes, messages))
+    return bool(_collect_skill_contract_gaps(envelopes, messages))
 
 
 def _format_exception_message(exc: Exception) -> str:

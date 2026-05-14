@@ -376,7 +376,7 @@ class TestSkillContractRuntimeRepair:
             in content
         )
 
-    def test_skill_contract_needs_followup_only_when_tools_are_missing(self):
+    def test_skill_contract_needs_followup_when_output_constraints_are_missing(self):
         envelopes = [
             {
                 "tool_key": "knowledge_123abc_get_skill",
@@ -407,7 +407,21 @@ class TestSkillContractRuntimeRepair:
             AIMessage(content="## Skipped Checks\nNone\n\nSkill used: redis-cluster-health-check"),
         ]
 
-        assert chat_agent_module._skill_contract_needs_followup(envelopes, messages) is False
+        assert chat_agent_module._skill_contract_needs_followup(envelopes, messages) is True
+        repair = chat_agent_module._build_skill_contract_repair_message(envelopes, messages)
+        assert repair is not None
+        assert (
+            "End the document after the `## Skipped Checks` section without adding a footer."
+            in str(repair.content)
+        )
+
+        satisfied_messages = [
+            HumanMessage(content="Review package"),
+            AIMessage(content="## Skipped Checks"),
+        ]
+        assert (
+            chat_agent_module._skill_contract_needs_followup(envelopes, satisfied_messages) is False
+        )
 
     @pytest.mark.asyncio
     async def test_repair_response_to_skill_contract_uses_llm_for_output_only_rewrite(self):
