@@ -47,7 +47,7 @@ class PipelineOrchestrator:
 
         # Only instantiate scrapers that are requested (or all if none specified)
         # This avoids requiring OPENAI_API_KEY when not using runbook_generator
-        scrapers_to_init = scrapers if scrapers else list(self.SCRAPER_CLASSES.keys())
+        scrapers_to_init = scrapers if scrapers is not None else list(self.SCRAPER_CLASSES.keys())
         self.scrapers = {}
         for scraper_name in scrapers_to_init:
             if scraper_name in self.SCRAPER_CLASSES:

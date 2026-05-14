@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -20,6 +21,7 @@ from redis_sre_agent.knowledge_pack.loader import (
     _knowledge_index_stats,
     _materialize_registry_from_runtime_batch,
     _reingest_from_pack,
+    _restore_from_pack,
     auto_load_configured_knowledge_pack,
     get_restore_compatibility,
     inspect_knowledge_pack,
@@ -396,6 +398,103 @@ def test_materialize_registry_from_runtime_batch_uses_runtime_keys(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_restore_keeps_active_pack_keys_when_load_fails(tmp_path: Path, monkeypatch):
+    manifest = _make_manifest(
+        provider="openai",
+        model="text-embedding-3-small",
+        vector_dim=1536,
+    )
+    active_registry = ActiveKnowledgePackRegistry(
+        pack_id="old-pack",
+        loaded_at="2026-05-12T00:00:00+00:00",
+        batch_date="2026-05-12",
+        schema_hash=manifest.schema_hash,
+        embedding_fingerprint=manifest.embedding_fingerprint,
+        chunk_keys=["old-chunk"],
+        document_meta_keys=["old-meta"],
+        source_meta_keys=[],
+    )
+    replacement_registry = ActiveKnowledgePackRegistry(
+        pack_id=manifest.pack_id,
+        loaded_at="2026-05-13T00:00:00+00:00",
+        batch_date=manifest.batch_date,
+        schema_hash=manifest.schema_hash,
+        embedding_fingerprint=manifest.embedding_fingerprint,
+        chunk_keys=["new-chunk"],
+        document_meta_keys=["new-meta"],
+        source_meta_keys=["new-source"],
+    )
+    pack_path = tmp_path / "pack.zip"
+    chunk_record = {
+        "key": "new-chunk",
+        "payload": {"id": "new-chunk"},
+        "vector_b64": base64.b64encode(b"vector").decode("ascii"),
+    }
+    with ZipFile(pack_path, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("restore/knowledge_chunks.ndjson", json.dumps(chunk_record) + "\n")
+        archive.writestr(
+            "restore/knowledge_document_meta.ndjson",
+            json.dumps({"key": "new-meta", "mapping": {"title": "New"}}) + "\n",
+        )
+        archive.writestr(
+            "restore/knowledge_source_meta.ndjson",
+            json.dumps({"key": "new-source", "mapping": {"source": "New"}}) + "\n",
+        )
+        archive.writestr(
+            "restore/active_pack_registry.json", replacement_registry.model_dump_json()
+        )
+
+    deleted_keys: list[str] = []
+    stored_registries: list[str] = []
+
+    class FakeRedis:
+        async def delete(self, *keys):
+            deleted_keys.extend(keys)
+            return len(keys)
+
+        async def set(self, key, value):
+            stored_registries.append(f"{key}:{value}")
+
+    class FakeIndex:
+        client = FakeRedis()
+
+        async def load(self, **kwargs):
+            raise RuntimeError("restore failed")
+
+    async def noop_create_indices(**kwargs):
+        return None
+
+    async def fake_get_index(**kwargs):
+        return FakeIndex()
+
+    async def fake_index_stats(config):
+        return {"exists": True, "num_docs": 2}
+
+    async def fake_load_registry(redis_client):
+        return active_registry
+
+    monkeypatch.setattr("redis_sre_agent.knowledge_pack.loader.create_indices", noop_create_indices)
+    monkeypatch.setattr("redis_sre_agent.knowledge_pack.loader.get_knowledge_index", fake_get_index)
+    monkeypatch.setattr(
+        "redis_sre_agent.knowledge_pack.loader._knowledge_index_stats", fake_index_stats
+    )
+    monkeypatch.setattr("redis_sre_agent.knowledge_pack.loader._load_registry", fake_load_registry)
+
+    with pytest.raises(RuntimeError, match="restore failed"):
+        await _restore_from_pack(
+            pack_path=pack_path,
+            manifest=manifest,
+            replace_existing=False,
+            config=Settings(redis_url="redis://localhost:6379/0"),
+        )
+
+    assert deleted_keys == ["new-chunk", "new-meta", "new-source"]
+    assert "old-chunk" not in deleted_keys
+    assert "old-meta" not in deleted_keys
+    assert stored_registries == []
+
+
+@pytest.mark.asyncio
 async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Path, monkeypatch):
     manifest = _make_manifest(
         provider="openai",
@@ -424,6 +523,7 @@ async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Pa
     )
     deleted_keys: list[str] = []
     stored_registries: list[str] = []
+    orchestrator_scrapers: list[list[str] | None] = []
 
     class FakeRedis:
         async def delete(self, *keys):
@@ -437,9 +537,10 @@ async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Pa
         client = FakeRedis()
 
     class FailingOrchestrator:
-        def __init__(self, artifacts_path: str, knowledge_settings):
+        def __init__(self, artifacts_path: str, knowledge_settings, scrapers=None):
             self.artifacts_path = artifacts_path
             self.knowledge_settings = knowledge_settings
+            orchestrator_scrapers.append(scrapers)
 
         async def run_ingestion_pipeline(self, batch_date: str):
             raise RuntimeError("ingestion failed")
@@ -491,3 +592,4 @@ async def test_reingest_keeps_active_pack_keys_when_ingestion_fails(tmp_path: Pa
     assert "old-chunk" not in deleted_keys
     assert "old-meta" not in deleted_keys
     assert stored_registries == []
+    assert orchestrator_scrapers == [[]]

@@ -264,9 +264,7 @@ async def _restore_from_pack(
     active_registry = await _load_registry(redis_client)
     deleted = {"chunk_keys": 0, "document_meta_keys": 0, "source_meta_keys": 0}
 
-    if active_registry is not None:
-        deleted = await _delete_registry_keys(redis_client, active_registry)
-    elif current_index_stats["num_docs"] > 0 and not replace_existing:
+    if active_registry is None and current_index_stats["num_docs"] > 0 and not replace_existing:
         raise ValueError(
             "Knowledge index already contains documents with no active knowledge-pack registry. "
             "Pass --replace-existing to proceed without deleting unknown keys."
@@ -286,16 +284,12 @@ async def _restore_from_pack(
             archive.read(KNOWLEDGE_PACK_ACTIVE_REGISTRY_FILE)
         )
 
+    registry = ActiveKnowledgePackRegistry(
+        **registry_payload.model_dump(exclude={"loaded_at"}),
+        loaded_at=_utcnow(),
+    )
+
     batch_size = 200
-    for idx in range(0, len(chunk_records), batch_size):
-        records_batch = chunk_records[idx : idx + batch_size]
-        keys = [record["key"] for record in records_batch]
-        payloads = []
-        for record in records_batch:
-            payload = dict(record["payload"])
-            payload["vector"] = base64.b64decode(record["vector_b64"])
-            payloads.append(payload)
-        await index.load(data=payloads, id_field="id", keys=keys)
 
     async def _restore_meta_records(records: list[dict[str, Any]]) -> None:
         if not records:
@@ -307,14 +301,35 @@ async def _restore_from_pack(
                     await pipe.hset(record["key"], mapping=record["mapping"])
                 await pipe.execute()
 
-    await _restore_meta_records(document_meta_records)
-    await _restore_meta_records(source_meta_records)
+    try:
+        for idx in range(0, len(chunk_records), batch_size):
+            records_batch = chunk_records[idx : idx + batch_size]
+            keys = [record["key"] for record in records_batch]
+            payloads = []
+            for record in records_batch:
+                payload = dict(record["payload"])
+                payload["vector"] = base64.b64decode(record["vector_b64"])
+                payloads.append(payload)
+            await index.load(data=payloads, id_field="id", keys=keys)
 
-    registry = ActiveKnowledgePackRegistry(
-        **registry_payload.model_dump(exclude={"loaded_at"}),
-        loaded_at=_utcnow(),
-    )
-    await _store_registry(redis_client, registry)
+        await _restore_meta_records(document_meta_records)
+        await _restore_meta_records(source_meta_records)
+        await _store_registry(redis_client, registry)
+    except Exception:
+        if active_registry is not None or current_index_stats["num_docs"] == 0:
+            await _delete_registry_keys(
+                redis_client,
+                registry,
+                preserve_keys=_registry_key_set(active_registry),
+            )
+        raise
+
+    if active_registry is not None:
+        deleted = await _delete_registry_keys(
+            redis_client,
+            active_registry,
+            preserve_keys=_registry_key_set(registry),
+        )
 
     return {
         "mode": "restore",
@@ -377,7 +392,11 @@ async def _reingest_from_pack(
         config=config,
     )
 
-    orchestrator = PipelineOrchestrator(str(artifacts_path), knowledge_settings=config)
+    orchestrator = PipelineOrchestrator(
+        str(artifacts_path),
+        knowledge_settings=config,
+        scrapers=[],
+    )
     try:
         ingestion_result = await orchestrator.run_ingestion_pipeline(batch_date)
     except Exception:
