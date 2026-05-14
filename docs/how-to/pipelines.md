@@ -114,6 +114,28 @@ This ensures CLI commands, API examples, and code blocks stay intact for better 
 
 ## Quick Start
 
+### Option 0: Bootstrap From A Release Knowledge Pack
+
+For first-time setup, prefer the published knowledge-pack zip over rebuilding the
+corpus locally. The pack contains both the raw batch artifacts and a restore
+payload with prebuilt vectors.
+
+```bash
+# Inspect a release asset before loading it
+uv run redis-sre-agent knowledge-pack inspect \
+  --pack ./dist/redis-sre-agent-knowledge-pack-v0.4.1.zip
+
+# Fast path: restore bundled vectors directly into Redis
+uv run redis-sre-agent knowledge-pack load \
+  --pack ./dist/redis-sre-agent-knowledge-pack-v0.4.1.zip \
+  --mode restore
+```
+
+Use `--mode reingest` when you intentionally want to rebuild the knowledge index
+from the bundled artifacts under the current embedding configuration. `--mode auto`
+prefers restore and falls back to reingest when the runtime embedding settings do
+not match the pack.
+
 ### Option 1: Use Pre-downloaded Redis Docs (Recommended)
 
 The fastest way to get started is to clone Redis docs locally and scrape from there:

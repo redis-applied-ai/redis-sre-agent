@@ -153,6 +153,7 @@ def start(concurrency: int):
         # Initialize Redis infrastructure (creates indices if they don't exist)
         try:
             from redis_sre_agent.core.redis import create_indices
+            from redis_sre_agent.knowledge_pack.loader import auto_load_configured_knowledge_pack
 
             indices_created = await create_indices()
             if indices_created:
@@ -163,6 +164,15 @@ def start(concurrency: int):
             log_cli_exception(__name__, "worker CLI command failed", e)
             logger.error(f"Failed to initialize Redis indices: {e}")
             # Continue anyway - some functionality may still work
+        else:
+            if indices_created:
+                try:
+                    auto_load_result = await auto_load_configured_knowledge_pack(settings)
+                    logger.info("Knowledge-pack auto-load status: %s", auto_load_result)
+                except Exception as e:
+                    log_cli_exception(__name__, "worker CLI command failed", e)
+                    logger.error("Knowledge-pack auto-load failed: %s", e)
+                    # Continue anyway - worker startup does not depend on the pack
 
         # Run startup migration for legacy instance->cluster links (idempotent).
         try:

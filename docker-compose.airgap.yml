@@ -49,6 +49,10 @@ services:
 
       # Skip knowledge base auto-init (use pre-built artifacts)
       - SKIP_KNOWLEDGE_INIT=${SKIP_KNOWLEDGE_INIT:-false}
+      - KNOWLEDGE_PACK_AUTO_LOAD=${KNOWLEDGE_PACK_AUTO_LOAD:-true}
+      - KNOWLEDGE_PACK_PATH=${KNOWLEDGE_PACK_PATH:-/app/knowledge-packs/redis-sre-agent-knowledge-pack-airgap.zip}
+      - KNOWLEDGE_PACK_LOAD_MODE=${KNOWLEDGE_PACK_LOAD_MODE:-auto}
+      - KNOWLEDGE_PACK_ARTIFACTS_PATH=${KNOWLEDGE_PACK_ARTIFACTS_PATH:-/tmp/redis-sre-agent/knowledge-pack-artifacts}
 
       # Master key for API authentication
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY:-}
@@ -57,6 +61,7 @@ services:
       - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml:ro
       # Mount pre-built artifacts if available
       - ${ARTIFACTS_PATH:-./artifacts}:/app/artifacts:ro
+      - ${KNOWLEDGE_PACKS_PATH:-./knowledge-packs}:/app/knowledge-packs:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
@@ -83,9 +88,14 @@ services:
       - TOOLS_PROMETHEUS_URL=${TOOLS_PROMETHEUS_URL:-}
       - TOOLS_LOKI_URL=${TOOLS_LOKI_URL:-}
       - REDIS_SRE_MASTER_KEY=${REDIS_SRE_MASTER_KEY:-}
+      - KNOWLEDGE_PACK_AUTO_LOAD=${KNOWLEDGE_PACK_AUTO_LOAD:-true}
+      - KNOWLEDGE_PACK_PATH=${KNOWLEDGE_PACK_PATH:-/app/knowledge-packs/redis-sre-agent-knowledge-pack-airgap.zip}
+      - KNOWLEDGE_PACK_LOAD_MODE=${KNOWLEDGE_PACK_LOAD_MODE:-auto}
+      - KNOWLEDGE_PACK_ARTIFACTS_PATH=${KNOWLEDGE_PACK_ARTIFACTS_PATH:-/tmp/redis-sre-agent/knowledge-pack-artifacts}
     volumes:
       - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml:ro
       - ${ARTIFACTS_PATH:-./artifacts}:/app/artifacts:ro
+      - ${KNOWLEDGE_PACKS_PATH:-./knowledge-packs}:/app/knowledge-packs:ro
     restart: unless-stopped
     depends_on:
       sre-agent:

@@ -51,6 +51,14 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `embeddings_cache_ttl` | `EMBEDDINGS_CACHE_TTL` | `int \| None` | `604800` | Embedding cache TTL in seconds; `None` means no expiration. |
 | `vectorizer_factory` | `VECTORIZER_FACTORY` | `str \| None` | `None` | Dot-path to custom vectorizer factory returning an object with `aembed()`/`aembed_many()`. |
 
+### Knowledge Packs
+
+| Field | Environment Variable | Type | Default | Notes |
+|---|---|---|---|---|
+| `knowledge_pack_path` | `KNOWLEDGE_PACK_PATH` | `Path \| None` | `None` | Optional path to a release knowledge-pack zip file. |
+| `knowledge_pack_load_mode` | `KNOWLEDGE_PACK_LOAD_MODE` | `auto \| restore \| reingest` | `auto` | `restore` uses bundled vectors, `reingest` rebuilds from bundled artifacts, and `auto` prefers restore with fallback to reingest when incompatible. |
+| `knowledge_pack_auto_load` | `KNOWLEDGE_PACK_AUTO_LOAD` | `bool` | `false` | When true, bootstrap from the configured pack if the knowledge index is empty. |
+
 ### Task Queue
 
 | Field | Environment Variable | Type | Default | Notes |

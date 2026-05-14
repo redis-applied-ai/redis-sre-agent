@@ -122,6 +122,35 @@ uv run redis-sre-agent knowledge fragments --doc-hash <hash>
 uv run redis-sre-agent knowledge related --doc-hash <hash> --chunk-index 0
 ```
 
+### 5a) Bootstrap from a release knowledge pack
+Use the dedicated `knowledge-pack` commands when you want to inspect or load a
+published release snapshot instead of running the pipeline yourself.
+
+```bash
+# Review manifest, checksums, and restore compatibility
+uv run redis-sre-agent knowledge-pack inspect \
+  --pack ./dist/redis-sre-agent-knowledge-pack-v0.4.1.zip
+
+# Restore bundled vectors directly into Redis
+uv run redis-sre-agent knowledge-pack load \
+  --pack ./dist/redis-sre-agent-knowledge-pack-v0.4.1.zip \
+  --mode restore
+
+# Rebuild from the bundled artifacts instead
+uv run redis-sre-agent knowledge-pack load \
+  --pack ./dist/redis-sre-agent-knowledge-pack-v0.4.1.zip \
+  --mode reingest
+```
+
+To produce a new release pack from a curated batch and a populated knowledge index:
+
+```bash
+uv run redis-sre-agent knowledge-pack build \
+  --batch-date 2026-05-12 \
+  --artifacts-path ./artifacts \
+  --output ./dist/redis-sre-agent-knowledge-pack-v0.4.1.zip
+```
+
 #### Exact-match search notes
 - Wrap a query in quotes to force the precise-search path for exact names, document hashes, source filenames, or literal phrases.
 - Unquoted single-token identifiers that contain digits or punctuation also trigger exact matching automatically.

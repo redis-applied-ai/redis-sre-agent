@@ -63,6 +63,47 @@ def test_full_command_additional_branches(cli_runner, temp_artifacts_path, mock_
     assert "Full pipeline failed: full boom" in failed.output
 
 
+def test_scrape_and_full_accept_batch_date_override(
+    cli_runner, temp_artifacts_path, mock_orchestrator
+):
+    mock_orchestrator.storage = MagicMock()
+    mock_orchestrator.run_scraping_pipeline.return_value = {
+        "batch_date": "2025-08-20",
+        "total_documents": 1,
+        "scrapers_run": ["redis_docs_local"],
+        "scraper_results": {"redis_docs_local": {"documents_scraped": 1}},
+    }
+    mock_orchestrator.run_full_pipeline.return_value = {
+        "batch_date": "2025-08-20",
+        "scraping": {"total_documents": 1, "scraper_results": {}},
+        "ingestion": {"documents_processed": 1, "chunks_indexed": 1},
+    }
+
+    scrape = cli_runner.invoke(
+        pipeline,
+        ["scrape", "--artifacts-path", temp_artifacts_path, "--batch-date", "2025-08-20"],
+    )
+    full = cli_runner.invoke(
+        pipeline,
+        ["full", "--artifacts-path", temp_artifacts_path, "--batch-date", "2025-08-20"],
+    )
+
+    assert scrape.exit_code == 0, scrape.output
+    assert full.exit_code == 0, full.output
+    assert mock_orchestrator.storage.set_batch_date.call_count == 2
+    mock_orchestrator.storage.set_batch_date.assert_called_with("2025-08-20")
+
+
+def test_scrape_rejects_invalid_batch_date(cli_runner, temp_artifacts_path):
+    result = cli_runner.invoke(
+        pipeline,
+        ["scrape", "--artifacts-path", temp_artifacts_path, "--batch-date", "2025-99-99"],
+    )
+
+    assert result.exit_code != 0
+    assert "Use YYYY-MM-DD" in result.output
+
+
 def test_status_exception_and_show_batch_not_ingested(
     cli_runner, temp_artifacts_path, mock_orchestrator
 ):

@@ -84,6 +84,21 @@ class RedisKeys:
         """Key for knowledge documents hash."""
         return "sre_knowledge:documents"
 
+    @staticmethod
+    def knowledge_document_meta(document_hash: str) -> str:
+        """Key for tracked metadata about one knowledge document."""
+        return f"sre_knowledge_meta:{document_hash}"
+
+    @staticmethod
+    def knowledge_source_meta(path_hash: str) -> str:
+        """Key for tracked metadata about one source-document path."""
+        return f"sre_knowledge_meta:source:{path_hash}"
+
+    @staticmethod
+    def knowledge_pack_active() -> str:
+        """Key for the active knowledge-pack registry payload."""
+        return "sre:knowledge_pack:active"
+
     # ============================================================================
     # Task result keys
     # ============================================================================

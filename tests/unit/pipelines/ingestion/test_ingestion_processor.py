@@ -385,7 +385,7 @@ class TestIngestionPipeline:
         assert len(saved_documents) == 1
         assert saved_documents[0].metadata["source_document_path"] == "shared/nested/tracked.md"
         assert saved_documents[0].metadata["source_document_scope"] == ""
-        mock_save_manifest.assert_called_once_with(saved_documents)
+        mock_save_manifest.assert_called_once_with()
 
     def test_create_scraped_document_from_markdown_parses_adr_frontmatter_fields(
         self, pipeline, tmp_path

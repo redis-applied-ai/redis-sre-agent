@@ -980,6 +980,15 @@ async def initialize_redis(config: Optional[Settings] = None) -> dict:
     else:
         status["indices_created"] = "unavailable"
 
+    if redis_ok and indices_created:
+        try:
+            from redis_sre_agent.knowledge_pack.loader import auto_load_configured_knowledge_pack
+
+            status["knowledge_pack_auto_load"] = await auto_load_configured_knowledge_pack(cfg)
+        except Exception as e:
+            logger.exception(f"Knowledge-pack auto-load failed: {e}")
+            status["knowledge_pack_auto_load"] = {"status": "error", "error": str(e)}
+
     # Initialize Docket infrastructure if Redis is available
     if redis_ok:
         docket_ok = await initialize_docket(config=cfg)

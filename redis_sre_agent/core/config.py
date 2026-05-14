@@ -369,6 +369,32 @@ class Settings(BaseSettings):
         default=86400 * 7,  # 7 days
         description="TTL in seconds for cached embeddings. None means no expiration.",
     )
+    knowledge_pack_path: Optional[Path] = Field(
+        default=None,
+        description="Optional path to a release knowledge-pack zip file.",
+    )
+    knowledge_pack_load_mode: Literal["auto", "restore", "reingest"] = Field(
+        default="auto",
+        description=(
+            "How to load a configured knowledge pack: "
+            "'restore' uses bundled vectors, 'reingest' rebuilds from bundled artifacts, "
+            "'auto' prefers restore and falls back to reingest when incompatible."
+        ),
+    )
+    knowledge_pack_auto_load: bool = Field(
+        default=False,
+        description=(
+            "Automatically load the configured knowledge pack during bootstrap when the "
+            "knowledge index is empty."
+        ),
+    )
+    knowledge_pack_artifacts_path: Path = Field(
+        default=Path("/tmp/redis-sre-agent/knowledge-pack-artifacts"),
+        description=(
+            "Writable directory used when a configured knowledge pack must fall back to "
+            "reingest from bundled artifacts."
+        ),
+    )
     vectorizer_factory: Optional[str] = Field(
         default=None,
         description=(

@@ -238,7 +238,7 @@ class PipelineWorkflowMixin:
                 logger.error("Failed to prepare artifact for %s: %s", document.title, e)
 
         if prepared_documents:
-            self.storage.save_batch_manifest(prepared_documents)
+            self.storage.save_batch_manifest()
             logger.info("Created batch manifest for %s documents", len(prepared_documents))
 
         logger.info("Prepared %s source documents as batch artifacts", prepared_count)

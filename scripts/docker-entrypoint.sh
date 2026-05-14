@@ -52,6 +52,39 @@ check_knowledge_base() {
     fi
 }
 
+init_knowledge_pack() {
+    local pack_path="${KNOWLEDGE_PACK_PATH:-}"
+    local pack_mode="${KNOWLEDGE_PACK_LOAD_MODE:-auto}"
+    local pack_artifacts_path="${KNOWLEDGE_PACK_ARTIFACTS_PATH:-/tmp/redis-sre-agent/knowledge-pack-artifacts}"
+
+    if [ "${KNOWLEDGE_PACK_AUTO_LOAD:-false}" != "true" ]; then
+        return 1
+    fi
+
+    if [ -z "$pack_path" ]; then
+        warning "KNOWLEDGE_PACK_AUTO_LOAD=true but KNOWLEDGE_PACK_PATH is not set"
+        return 1
+    fi
+
+    if [ ! -f "$pack_path" ]; then
+        warning "Configured knowledge pack not found at: $pack_path"
+        return 1
+    fi
+
+    log "Initializing knowledge base from knowledge pack: $pack_path"
+
+    if redis-sre-agent knowledge-pack load \
+        --pack "$pack_path" \
+        --mode "$pack_mode" \
+        --artifacts-path "$pack_artifacts_path"; then
+        success "Knowledge pack loaded successfully"
+        return 0
+    else
+        warning "Knowledge pack load failed, falling back to artifact initialization if available"
+        return 1
+    fi
+}
+
 # Initialize knowledge base from pre-built artifacts
 init_knowledge_base() {
     log "Initializing knowledge base from pre-built artifacts..."
@@ -122,7 +155,7 @@ main() {
     # Initialize knowledge base if needed (only on first startup)
     if [ "${SKIP_KNOWLEDGE_INIT:-false}" != "true" ]; then
         if ! check_knowledge_base; then
-            init_knowledge_base
+            init_knowledge_pack || init_knowledge_base
         fi
     else
         log "Skipping knowledge base initialization (SKIP_KNOWLEDGE_INIT=true)"

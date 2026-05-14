@@ -1,7 +1,8 @@
 """Unit tests for worker CLI command."""
 
+import asyncio
 import socket
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psutil
 import pytest
@@ -66,6 +67,38 @@ class TestWorkerStartCommand:
 
             # Should fail without Redis URL
             assert result.exit_code != 0 or "Redis URL not configured" in result.output
+
+    def test_start_logs_pack_load_failure_separately(self, cli_runner, caplog):
+        """Test that knowledge-pack auto-load failures are logged distinctly."""
+        original_asyncio_run = asyncio.run
+        mock_settings = MagicMock()
+        mock_settings.redis_url.get_secret_value.return_value = "redis://localhost:6379"
+        mock_settings.task_timeout = 30
+
+        caplog.set_level("ERROR", logger="redis_sre_agent.cli.worker")
+
+        with (
+            patch("redis_sre_agent.cli.worker.settings", mock_settings),
+            patch("redis_sre_agent.cli.worker.setup_tracing"),
+            patch("prometheus_client.start_http_server"),
+            patch("redis_sre_agent.core.redis.create_indices", AsyncMock(return_value=True)),
+            patch(
+                "redis_sre_agent.knowledge_pack.loader.auto_load_configured_knowledge_pack",
+                AsyncMock(side_effect=RuntimeError("pack boom")),
+            ),
+            patch("redis_sre_agent.cli.worker.register_sre_tasks", AsyncMock(return_value=None)),
+            patch("redis_sre_agent.cli.worker.Worker.run", AsyncMock(return_value=None)),
+            patch("redis_sre_agent.cli.worker.log_cli_exception"),
+            patch(
+                "redis_sre_agent.cli.worker.asyncio.run",
+                side_effect=original_asyncio_run,
+            ),
+        ):
+            result = cli_runner.invoke(worker, ["start", "--concurrency", "1"])
+
+        assert result.exit_code == 0
+        assert "Knowledge-pack auto-load failed: pack boom" in caplog.text
+        assert "Failed to initialize Redis indices" not in caplog.text
 
 
 class TestWorkerStatusCommand:

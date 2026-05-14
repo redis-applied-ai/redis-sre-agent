@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -16,6 +17,17 @@ def _parse_scraper_list(scrapers: str | None) -> list[str] | None:
     if not scrapers:
         return None
     return [scraper.strip() for scraper in scrapers.split(",")]
+
+
+def _validate_batch_date(batch_date: str | None) -> str | None:
+    """Validate a YYYY-MM-DD batch date override."""
+    if not batch_date:
+        return None
+    try:
+        datetime.strptime(batch_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise click.BadParameter("Use YYYY-MM-DD") from exc
+    return batch_date
 
 
 def _echo_scraper_results(scraper_results: dict, indent: str = "   ") -> None:
@@ -129,11 +141,19 @@ def pipeline():
     default="./redis-docs",
     help="Path to local redis/docs clone (for redis_docs_local scraper)",
 )
-def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
+@click.option("--batch-date", help="Batch date to write (YYYY-MM-DD), defaults to today")
+def scrape(
+    artifacts_path: str,
+    scrapers: str,
+    latest_only: bool,
+    docs_path: str,
+    batch_date: str | None,
+):
     """Run the scraping pipeline to collect SRE documents."""
     click.echo("🔍 Starting scraping pipeline...")
 
     scraper_list = _parse_scraper_list(scrapers)
+    validated_batch_date = _validate_batch_date(batch_date)
 
     async def run_scraping():
         # Configure scrapers to honor latest-only when requested
@@ -142,6 +162,8 @@ def scrape(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str
             "redis_docs_local": {"latest_only": latest_only, "docs_repo_path": docs_path},
         }
         orchestrator = PipelineOrchestrator(artifacts_path, config, scrapers=scraper_list)
+        if validated_batch_date:
+            orchestrator.storage.set_batch_date(validated_batch_date)
         try:
             results = await orchestrator.run_scraping_pipeline(scraper_list)
 
@@ -224,11 +246,19 @@ def ingest(batch_date: str, artifacts_path: str, latest_only: bool, verbose: boo
     default="./redis-docs",
     help="Path to local redis/docs clone (for redis_docs_local scraper)",
 )
-def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
+@click.option("--batch-date", help="Batch date to write (YYYY-MM-DD), defaults to today")
+def full(
+    artifacts_path: str,
+    scrapers: str,
+    latest_only: bool,
+    docs_path: str,
+    batch_date: str | None,
+):
     """Run the complete pipeline: scraping + ingestion."""
     click.echo("🚀 Starting full pipeline (scraping + ingestion)...")
 
     scraper_list = _parse_scraper_list(scrapers)
+    validated_batch_date = _validate_batch_date(batch_date)
 
     async def run_full_pipeline():
         # Configure scrapers and ingestion to honor latest-only when requested
@@ -238,6 +268,8 @@ def full(artifacts_path: str, scrapers: str, latest_only: bool, docs_path: str):
             "ingestion": {"latest_only": latest_only},
         }
         orchestrator = PipelineOrchestrator(artifacts_path, config, scrapers=scraper_list)
+        if validated_batch_date:
+            orchestrator.storage.set_batch_date(validated_batch_date)
         try:
             results = await orchestrator.run_full_pipeline(scraper_list)
 
@@ -477,7 +509,6 @@ def prepare_sources(
     """Prepare source documents as batch artifacts, optionally ingest them."""
 
     async def run_source_preparation():
-        from datetime import datetime
         from pathlib import Path
 
         from ..pipelines.ingestion.processor import IngestionPipeline
@@ -493,10 +524,7 @@ def prepare_sources(
         if batch_date:
             try:
                 datetime.strptime(batch_date, "%Y-%m-%d")
-                # Override the storage's current_date and batch path
-                storage.current_date = batch_date
-                storage.current_batch_path = storage.base_path / batch_date
-                storage._dirs_created = False  # Reset so dirs are created on first save
+                storage.set_batch_date(batch_date)
                 batch_date_to_use = batch_date
             except ValueError:
                 click.echo(f"❌ Invalid batch date format: {batch_date}. Use YYYY-MM-DD")

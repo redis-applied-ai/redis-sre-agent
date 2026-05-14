@@ -149,6 +149,12 @@ class ArtifactStorage:
             (self.current_batch_path / category.value).mkdir(exist_ok=True)
         self._dirs_created = True
 
+    def set_batch_date(self, batch_date: str) -> None:
+        """Override the active batch date for reproducible multi-step builds."""
+        self.current_date = batch_date
+        self.current_batch_path = self.base_path / batch_date
+        self._dirs_created = False
+
     def save_document(self, document: ScrapedDocument) -> Path:
         """Save document to appropriate category folder."""
         self._ensure_dirs()  # Create dirs on first save
@@ -170,11 +176,24 @@ class ArtifactStorage:
         logger.info(f"Saved document: {file_path}")
         return file_path
 
-    def save_batch_manifest(self, documents: List[ScrapedDocument]) -> Path:
-        """Save manifest file with batch summary."""
+    def save_batch_manifest(self) -> Path:
+        """Save manifest file with a summary of the full current batch contents."""
+        self._ensure_dirs()
+        stored_documents: List[dict[str, Any]] = []
+        if self.current_batch_path.exists():
+            for document_path in sorted(self.current_batch_path.rglob("*.json")):
+                if document_path.name in {"batch_manifest.json", "ingestion_manifest.json"}:
+                    continue
+                try:
+                    stored_documents.append(json.loads(document_path.read_text(encoding="utf-8")))
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping invalid artifact while building batch manifest: %s", exc
+                    )
+
         manifest = {
             "batch_date": self.current_date,
-            "total_documents": len(documents),
+            "total_documents": len(stored_documents),
             "categories": {},
             "document_types": {},
             "sources": [],
@@ -182,15 +201,16 @@ class ArtifactStorage:
         }
 
         # Count by category and type
-        for doc in documents:
-            category = doc.category.value
-            doc_type = doc.doc_type.value
+        for doc in stored_documents:
+            category = str(doc.get("category", "unknown"))
+            doc_type = str(doc.get("doc_type", "unknown"))
 
             manifest["categories"][category] = manifest["categories"].get(category, 0) + 1
             manifest["document_types"][doc_type] = manifest["document_types"].get(doc_type, 0) + 1
 
-            if doc.source_url not in manifest["sources"]:
-                manifest["sources"].append(doc.source_url)
+            source_url = str(doc.get("source_url") or doc.get("source") or "").strip()
+            if source_url and source_url not in manifest["sources"]:
+                manifest["sources"].append(source_url)
 
         manifest_path = self.current_batch_path / "batch_manifest.json"
         with open(manifest_path, "w", encoding="utf-8") as f:

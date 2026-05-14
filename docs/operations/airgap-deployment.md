@@ -102,10 +102,11 @@ Bundle contents:
 - `config.yaml`
 - `README.md` (quick start guide)
 
-!!! note "Pre-built Knowledge Base"
-    The airgap image includes pre-scraped Redis documentation, Knowledge Base articles
-    (from redis.io/kb), and SRE runbooks in `/app/artifacts`. You only need to run the
-    **ingest** command after deployment to index them into Redis.
+!!! note "Release Knowledge Pack"
+    Prefer the published `*-airgap.zip` knowledge-pack asset for first-time bootstrap.
+    It carries the same curated release corpus plus a restore payload built with the
+    air-gap embedding settings. The image can still ingest raw `/app/artifacts`, but
+    pack restore is faster and avoids local embedding work during initial setup.
 
 #### Build Options
 
@@ -226,15 +227,37 @@ podman-compose --profile ui -f docker-compose.airgap.yml up -d
 
 ### 5. Initialize Knowledge Base
 
-The airgap image includes pre-scraped artifacts in `/app/artifacts`. You only need to
-**ingest** them into Redis:
+Download or mirror the air-gap knowledge pack release asset into the mounted
+`knowledge-packs/` directory, then let the container auto-load it on first boot.
+
+Recommended settings in `.env`:
+
+```bash
+KNOWLEDGE_PACK_AUTO_LOAD=true
+KNOWLEDGE_PACK_PATH=/app/knowledge-packs/redis-sre-agent-knowledge-pack-airgap.zip
+KNOWLEDGE_PACK_LOAD_MODE=auto
+```
+
+To load the pack manually instead:
 
 ```bash
 docker compose -f docker-compose.airgap.yml exec sre-agent \
-  redis-sre-agent pipeline ingest
+  redis-sre-agent knowledge-pack inspect \
+    --pack /app/knowledge-packs/redis-sre-agent-knowledge-pack-airgap.zip
+
+docker compose -f docker-compose.airgap.yml exec sre-agent \
+  redis-sre-agent knowledge-pack load \
+    --pack /app/knowledge-packs/redis-sre-agent-knowledge-pack-airgap.zip \
+    --mode restore
 ```
 
-This generates embeddings using the local model and indexes the content into Redis vector search.
+If you intentionally want to rebuild from the bundled artifacts instead of using
+the precomputed vectors, use the fallback pipeline path:
+
+```bash
+docker compose -f docker-compose.airgap.yml exec sre-agent \
+  redis-sre-agent pipeline ingest --artifacts-path /app/artifacts
+```
 
 !!! tip "Adding Custom Documents"
     To add your own documents, place markdown files in a mounted volume and run:

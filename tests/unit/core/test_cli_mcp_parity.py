@@ -37,6 +37,9 @@ class TestCliMcpParityHelpers:
 
         paths = list_in_scope_cli_command_paths()
 
+        assert "knowledge-pack build" not in paths
+        assert "knowledge-pack inspect" not in paths
+        assert "knowledge-pack load" not in paths
         assert "worker start" not in paths
         assert "worker status" not in paths
         assert "worker stop" not in paths
@@ -101,6 +104,9 @@ class TestCliMcpParityHelpers:
             "eval list",
             "eval live-suite",
             "eval run",
+            "knowledge-pack build",
+            "knowledge-pack inspect",
+            "knowledge-pack load",
             "mcp list-tools",
             "mcp serve",
             "worker restart",

@@ -235,6 +235,25 @@ class TestRedisInfrastructure:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_initialize_redis_runs_knowledge_pack_auto_load_when_indices_ready(self):
+        mock_config = Mock(openai_api_key=None)
+
+        with (
+            patch("redis_sre_agent.core.redis.test_redis_connection", return_value=True),
+            patch("redis_sre_agent.core.redis.create_indices", return_value=True),
+            patch("redis_sre_agent.core.redis.initialize_docket", return_value=True),
+            patch("redis_sre_agent.core.redis.test_vector_search", return_value=True),
+            patch(
+                "redis_sre_agent.knowledge_pack.loader.auto_load_configured_knowledge_pack",
+                return_value={"status": "loaded", "pack_id": "pack-123"},
+            ) as auto_load_mock,
+        ):
+            status = await initialize_redis(config=mock_config)
+
+        assert status["knowledge_pack_auto_load"] == {"status": "loaded", "pack_id": "pack-123"}
+        auto_load_mock.assert_awaited_once_with(mock_config)
+
+    @pytest.mark.asyncio
     async def test_get_index_schema_status_detects_missing_pinned_field(self):
         """Schema status should flag older indices that are missing pinned."""
         from redis_sre_agent.core.config import settings
@@ -358,6 +377,10 @@ class TestRedisInfrastructure:
             "redis_connection": "available",
             "vectorizer": "available",
             "indices_created": "available",
+            "knowledge_pack_auto_load": {
+                "status": "skipped",
+                "reason": "knowledge_pack_auto_load_disabled",
+            },
             "docket_infrastructure": "available",
             "vector_search": "available",
         }
