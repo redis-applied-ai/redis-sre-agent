@@ -28,9 +28,9 @@ def test_save_batch_manifest_reflects_all_saved_documents(tmp_path):
     )
 
     storage.save_document(first)
-    storage.save_batch_manifest([first])
+    storage.save_batch_manifest()
     storage.save_document(second)
-    manifest_path = storage.save_batch_manifest([second])
+    manifest_path = storage.save_batch_manifest()
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["batch_date"] == "2026-05-12"
@@ -67,7 +67,7 @@ def test_save_batch_manifest_ignores_ingestion_manifest(tmp_path):
         encoding="utf-8",
     )
 
-    manifest_path = storage.save_batch_manifest([document])
+    manifest_path = storage.save_batch_manifest()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     assert manifest["total_documents"] == 1
@@ -79,7 +79,7 @@ def test_save_batch_manifest_creates_batch_directory_when_empty(tmp_path):
     storage = ArtifactStorage(tmp_path)
     storage.set_batch_date("2026-05-12")
 
-    manifest_path = storage.save_batch_manifest([])
+    manifest_path = storage.save_batch_manifest()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     assert manifest_path.exists()

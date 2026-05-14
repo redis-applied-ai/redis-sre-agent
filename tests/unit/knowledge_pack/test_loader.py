@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -16,6 +17,7 @@ from redis_sre_agent.knowledge_pack.checksums import (
 )
 from redis_sre_agent.knowledge_pack.loader import (
     _extract_artifacts_from_pack,
+    _knowledge_index_stats,
     _materialize_registry_from_runtime_batch,
     _reingest_from_pack,
     auto_load_configured_knowledge_pack,
@@ -144,6 +146,34 @@ def test_inspect_knowledge_pack_reports_incompatible_runtime(tmp_path: Path):
     assert inspection.checksums_verified is True
     assert inspection.restore_compatible is False
     assert "do not match the pack fingerprint" in inspection.compatibility_reason
+
+
+@pytest.mark.asyncio
+async def test_knowledge_index_stats_uses_public_index_client(monkeypatch):
+    class FakeClient:
+        async def execute_command(self, *args):
+            assert args == ("FT.INFO", "knowledge-index")
+            return ["num_docs", "2"]
+
+    class FakeIndex:
+        client = FakeClient()
+        schema = SimpleNamespace(index=SimpleNamespace(name="knowledge-index"))
+
+        async def exists(self):
+            return True
+
+    async def fake_get_knowledge_index(**kwargs):
+        return FakeIndex()
+
+    monkeypatch.setattr(
+        "redis_sre_agent.knowledge_pack.loader.get_knowledge_index",
+        fake_get_knowledge_index,
+    )
+
+    assert await _knowledge_index_stats(Settings(redis_url="redis://localhost:6379/0")) == {
+        "exists": True,
+        "num_docs": 2,
+    }
 
 
 @pytest.mark.asyncio

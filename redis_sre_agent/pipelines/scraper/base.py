@@ -176,9 +176,8 @@ class ArtifactStorage:
         logger.info(f"Saved document: {file_path}")
         return file_path
 
-    def save_batch_manifest(self, documents: List[ScrapedDocument]) -> Path:
+    def save_batch_manifest(self) -> Path:
         """Save manifest file with a summary of the full current batch contents."""
-        _ = documents
         self._ensure_dirs()
         stored_documents: List[dict[str, Any]] = []
         if self.current_batch_path.exists():

@@ -147,9 +147,12 @@ class PipelineOrchestrator:
 
             # Save batch manifest
             if all_documents:
-                manifest_path = self.storage.save_batch_manifest(all_documents)
+                manifest_path = self.storage.save_batch_manifest()
                 pipeline_results["manifest_path"] = str(manifest_path)
-                pipeline_results["total_documents"] = len(all_documents)
+                batch_manifest = self.storage.get_batch_manifest(self.storage.current_date) or {}
+                pipeline_results["total_documents"] = batch_manifest.get(
+                    "total_documents", len(all_documents)
+                )
 
             pipeline_results["completed_at"] = datetime.now(timezone.utc).isoformat()
             pipeline_results["success"] = True

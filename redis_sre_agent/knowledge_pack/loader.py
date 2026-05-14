@@ -111,7 +111,7 @@ async def _knowledge_index_stats(cfg: Settings) -> dict[str, Any]:
     if not exists:
         return {"exists": False, "num_docs": 0}
 
-    raw_info = await index._redis_client.execute_command("FT.INFO", index.schema.index.name)
+    raw_info = await index.client.execute_command("FT.INFO", index.schema.index.name)
     info: dict[str, Any] = {}
     for idx in range(0, len(raw_info), 2):
         key = raw_info[idx]
