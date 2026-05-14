@@ -98,6 +98,18 @@ jobs:
         working-directory: ui
         run: npx playwright install --with-deps chromium
 
+      - name: Free disk for compose smoke
+        run: |
+          df -h
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune -af || true
+          df -h
+
       - name: Start smoke stack
         run: docker compose up -d --build sre-worker sre-ui
 
