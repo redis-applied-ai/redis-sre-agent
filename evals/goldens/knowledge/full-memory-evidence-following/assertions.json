@@ -10,5 +10,6 @@
   "required_sources": [
     "memory-pressure-runbook",
     "evidence-first-triage"
-  ]
+  ],
+  "required_response_patterns": []
 }

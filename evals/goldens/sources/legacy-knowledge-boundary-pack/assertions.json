@@ -11,5 +11,6 @@
   ],
   "required_sources": [
     "knowledge-agent-boundary"
-  ]
+  ],
+  "required_response_patterns": []
 }

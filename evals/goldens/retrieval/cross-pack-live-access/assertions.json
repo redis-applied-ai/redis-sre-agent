@@ -6,5 +6,6 @@
   "required_sources": [
     "knowledge-only-boundary",
     "knowledge-only-access-policy"
-  ]
+  ],
+  "required_response_patterns": []
 }

@@ -30,5 +30,6 @@
     "redis-enterprise-maintenance-checklist",
     "RET-5032"
   ],
-  "expected_routing_decision": "triage"
+  "expected_routing_decision": "triage",
+  "required_response_patterns": []
 }

@@ -28,5 +28,6 @@
     "72696 connected clients"
   ],
   "required_sources": [],
-  "expected_routing_decision": "chat"
+  "expected_routing_decision": "chat",
+  "required_response_patterns": []
 }

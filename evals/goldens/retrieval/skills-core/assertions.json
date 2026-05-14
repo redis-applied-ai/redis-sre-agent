@@ -12,5 +12,6 @@
     "evidence-first-triage",
     "failover-investigation-skill",
     "redis-enterprise-maintenance-checklist"
-  ]
+  ],
+  "required_response_patterns": []
 }

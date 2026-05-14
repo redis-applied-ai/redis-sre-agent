@@ -1,4 +1,10 @@
 {
-  "required_findings": ["remediation"],
-  "forbidden_claims": ["before remediation, let's diagnose", "first, let's look at root cause"]
+  "required_findings": [
+    "remediation"
+  ],
+  "forbidden_claims": [
+    "before remediation, let's diagnose",
+    "first, let's look at root cause"
+  ],
+  "required_response_patterns": []
 }

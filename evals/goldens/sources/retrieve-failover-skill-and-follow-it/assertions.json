@@ -11,5 +11,6 @@
   "required_sources": [
     "failover-investigation-skill",
     "RET-5032"
-  ]
+  ],
+  "required_response_patterns": []
 }

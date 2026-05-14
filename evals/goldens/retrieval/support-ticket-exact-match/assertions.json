@@ -9,5 +9,6 @@
   "required_sources": [
     "RET-5032",
     "RET-9001"
-  ]
+  ],
+  "required_response_patterns": []
 }

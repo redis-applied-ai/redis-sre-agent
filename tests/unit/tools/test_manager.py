@@ -983,8 +983,9 @@ class TestToolManagerMcpConfigValidation:
 
     def test_missing_local_mcp_arg_path_detects_relative_script_entrypoints(self):
         """Relative script paths with file extensions should still be validated."""
-        missing = _missing_local_mcp_arg_path(["vendor/re-analyzer-mcp/dist/src/index.js"])
-        assert missing == "vendor/re-analyzer-mcp/dist/src/index.js"
+        missing_path = "vendor/__missing_mcp_fixture__/dist/src/index.js"
+        missing = _missing_local_mcp_arg_path([missing_path])
+        assert missing == missing_path
 
     def test_missing_local_mcp_arg_path_ignores_script_urls(self):
         """Remote script URLs should not be mistaken for missing local files."""

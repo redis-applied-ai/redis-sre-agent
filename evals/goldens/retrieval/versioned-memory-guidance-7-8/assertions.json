@@ -5,5 +5,6 @@
   "forbidden_claims": [],
   "required_sources": [
     "memory-policy-7-8"
-  ]
+  ],
+  "required_response_patterns": []
 }

@@ -9,5 +9,6 @@
     "maintenance-mode-guidance",
     "redis-enterprise-maintenance-checklist",
     "RET-5032"
-  ]
+  ],
+  "required_response_patterns": []
 }

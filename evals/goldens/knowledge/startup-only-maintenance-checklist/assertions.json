@@ -10,5 +10,6 @@
   "required_sources": [
     "maintenance-mode-overview",
     "redis-enterprise-maintenance-checklist"
-  ]
+  ],
+  "required_response_patterns": []
 }
