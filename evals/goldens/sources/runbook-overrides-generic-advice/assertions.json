@@ -1,6 +1,7 @@
 {
   "required_tool_calls": [],
   "forbidden_tool_calls": [],
+  "required_response_patterns": [],
   "required_findings": [
     "use the runbook and evidence steps before configuration changes",
     "explain why generic tuning advice should wait"

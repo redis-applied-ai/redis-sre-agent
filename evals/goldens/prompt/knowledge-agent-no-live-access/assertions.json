@@ -10,6 +10,7 @@
       "operation": "get_cluster_info"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "do not have access to specific Redis instances or live system data",
     "use the full SRE agent with instance context"

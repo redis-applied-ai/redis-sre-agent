@@ -14,6 +14,15 @@ import yaml
 
 from redis_sre_agent.evaluation.injection import EvalKnowledgeBackend
 from redis_sre_agent.evaluation.scenarios import EvalScenario
+from redis_sre_agent.skills.backend import (
+    normalize_skill_search_type,
+    unsupported_skill_search_type_result,
+)
+from redis_sre_agent.skills.contracts import (
+    build_contract_summary,
+    extract_output_contract,
+    extract_workflow_contract,
+)
 from redis_sre_agent.skills.discovery import find_skill_package_root, load_skill_package
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
@@ -565,11 +574,25 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
         limit: int = 20,
         offset: int = 0,
         version: Optional[str] = "latest",
+        search_type: Optional[str] = None,
         distance_threshold: Optional[float] = 0.8,
         **_: Any,
     ) -> dict[str, Any]:
         effective_limit = _coerce_positive_int(limit, default=20)
         effective_offset = _coerce_non_negative_int(offset, default=0)
+        normalized_search_type = normalize_skill_search_type(query, search_type)
+        supported_search_types = ("semantic", "keyword")
+
+        if normalized_search_type == "hybrid":
+            return unsupported_skill_search_type_result(
+                query=query,
+                search_type=normalized_search_type,
+                version=version,
+                offset=effective_offset,
+                limit=effective_limit,
+                backend_kind="redis",
+                supported_search_types=supported_search_types,
+            )
 
         def _representative_rank(
             document: FixtureKnowledgeDocument,
@@ -611,6 +634,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
             "version": version,
             "offset": effective_offset,
             "limit": effective_limit,
+            "search_type": normalized_search_type,
             "results_count": len(paged_documents),
             "total_fetched": len(ordered_documents),
             "skills": [
@@ -638,6 +662,7 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                 for document in paged_documents
             ],
             "distance_threshold": distance_threshold,
+            "supported_search_types": list(supported_search_types),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -669,6 +694,12 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                     "skill_name": entrypoint.name,
                     "full_content": entrypoint.content,
                 }
+            ui_metadata = dict(entrypoint.ui_metadata or {})
+            output_contract = extract_output_contract(
+                ui_metadata,
+                skill_content=entrypoint.content,
+            )
+            workflow_contract = extract_workflow_contract(ui_metadata)
             return {
                 "skill_name": entrypoint.name,
                 "backend_kind": "redis",
@@ -693,7 +724,10 @@ class FixtureKnowledgeBackend(EvalKnowledgeBackend):
                     if document.resource_kind == "script"
                 ],
                 "assets": list((entrypoint.skill_manifest or {}).get("assets", [])),
-                "ui_metadata": dict(entrypoint.ui_metadata or {}),
+                "ui_metadata": ui_metadata,
+                "output_contract": output_contract,
+                "workflow_contract": workflow_contract,
+                "contract_summary": build_contract_summary(output_contract, workflow_contract),
             }
         available_skills = await self.skills_check(query=skill_name, limit=50, version=version)
         return {
@@ -1039,6 +1073,7 @@ def _load_fixture_skill_package_documents(
         str(package.metadata.get("version") or default_version or "latest").strip() or "latest"
     )
     priority = str(package.metadata.get("priority") or "normal").strip().lower() or "normal"
+    package_document_hash = str(package.metadata.get("document_hash") or "").strip()
     manifest = {
         "assets": [
             {"path": resource.path, "title": resource.title, "description": resource.description}
@@ -1061,9 +1096,18 @@ def _load_fixture_skill_package_documents(
         resource_hash = hashlib.sha1(
             f"{package.name}:{resource.path}:{resource.content}".encode("utf-8")
         ).hexdigest()[:16]
+        document_hash = (
+            package_document_hash
+            if package_document_hash and resource.kind.value == "entrypoint"
+            else (
+                f"{package_document_hash}:{resource.path}"
+                if package_document_hash
+                else f"{package.name}:{resource_hash}"
+            )
+        )
         documents.append(
             FixtureKnowledgeDocument(
-                document_hash=f"{package.name}:{resource_hash}",
+                document_hash=document_hash,
                 title=package.display_title
                 if resource.kind.value == "entrypoint"
                 else (resource.title or f"{package.display_title}: {resource.path}"),

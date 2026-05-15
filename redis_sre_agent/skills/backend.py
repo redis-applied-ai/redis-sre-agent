@@ -6,9 +6,61 @@ import importlib
 import json
 import threading
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from redis_sre_agent.core.config import Settings, settings
+
+from .contracts import build_contract_summary, extract_output_contract, extract_workflow_contract
+
+SkillSearchType = Literal["semantic", "keyword", "hybrid"]
+SUPPORTED_SKILL_SEARCH_TYPES: tuple[SkillSearchType, ...] = ("semantic", "keyword", "hybrid")
+
+
+def normalize_skill_search_type(
+    query: str | None,
+    search_type: str | None,
+    *,
+    default_when_queried: SkillSearchType = "semantic",
+) -> SkillSearchType | None:
+    """Normalize search_type for queried skill lookups."""
+    if not str(query or "").strip():
+        return None
+
+    normalized = str(search_type or default_when_queried).strip().lower() or default_when_queried
+    if normalized not in SUPPORTED_SKILL_SEARCH_TYPES:
+        supported = ", ".join(SUPPORTED_SKILL_SEARCH_TYPES)
+        raise ValueError(
+            f"Unsupported skill search_type '{normalized}'. Expected one of: {supported}"
+        )
+    return cast(SkillSearchType, normalized)
+
+
+def unsupported_skill_search_type_result(
+    *,
+    query: str | None,
+    search_type: str | None,
+    version: str | None,
+    offset: int,
+    limit: int,
+    backend_kind: str,
+    supported_search_types: tuple[str, ...],
+) -> dict[str, Any]:
+    """Return a structured unsupported-search response."""
+    requested = str(search_type or "").strip().lower() or None
+    return {
+        "query": query,
+        "search_type": requested,
+        "version": version,
+        "offset": offset,
+        "limit": limit,
+        "results_count": 0,
+        "total_fetched": 0,
+        "skills": [],
+        "backend_kind": backend_kind,
+        "error": "unsupported_search_type",
+        "requested_search_type": requested,
+        "supported_search_types": list(supported_search_types),
+    }
 
 
 class SkillBackend(Protocol):
@@ -21,6 +73,7 @@ class SkillBackend(Protocol):
         limit: int,
         offset: int,
         version: str | None,
+        search_type: str | None = None,
         distance_threshold: float | None = 0.8,
     ) -> dict[str, Any]: ...
 
@@ -60,11 +113,13 @@ class RedisSkillBackend:
         limit: int,
         offset: int,
         version: str | None,
+        search_type: str | None = None,
         distance_threshold: float | None = 0.8,
     ) -> dict[str, Any]:
         from redis_sre_agent.core import knowledge_helpers as helpers
 
         index = await helpers.get_skills_index(config=self.settings)
+        normalized_search_type = normalize_skill_search_type(query, search_type)
 
         fetch_limit = min(max(limit + offset, 1) * 8, 1000)
         return_fields = [
@@ -104,7 +159,7 @@ class RedisSkillBackend:
             "meta_pinned",
         ]
 
-        if query:
+        if normalized_search_type == "semantic":
             vectorizer = helpers.get_vectorizer(config=self.settings)
             vectors = await vectorizer.aembed_many([query])
             query_vector = vectors[0] if vectors else []
@@ -124,6 +179,40 @@ class RedisSkillBackend:
                     num_results=fetch_limit,
                 )
             candidates = await index.query(query_obj)
+        elif normalized_search_type == "keyword":
+            candidates = await index.query(
+                helpers._RawTextQuery(
+                    query or "",
+                    return_fields=return_fields,
+                    num_results=fetch_limit,
+                )
+            )
+        elif normalized_search_type == "hybrid":
+            vectorizer = helpers.get_vectorizer(config=self.settings)
+            vectors = await vectorizer.aembed_many([query or ""])
+            query_vector = vectors[0] if vectors else []
+            try:
+                candidates = await index.query(
+                    helpers.HybridQuery(
+                        vector=query_vector,
+                        vector_field_name="vector",
+                        text_field_name="content",
+                        text=query or "",
+                        num_results=fetch_limit,
+                        return_fields=return_fields,
+                    )
+                )
+            except Exception as exc:
+                if not helpers._is_hybrid_query_unsupported_error(exc):
+                    raise
+                candidates = await helpers._run_hybrid_rrf_fallback(
+                    index=index,
+                    query=query or "",
+                    query_vector=query_vector,
+                    query_filter=None,
+                    return_fields=return_fields,
+                    num_results=fetch_limit,
+                )
         else:
             candidates = await index.query(
                 helpers.FilterQuery(
@@ -172,7 +261,7 @@ class RedisSkillBackend:
             if existing is None:
                 by_skill[skill_key] = doc
                 continue
-            if query:
+            if normalized_search_type is not None:
                 if (_score(doc), str(doc.get("resource_path") or "")) < (
                     _score(existing),
                     str(existing.get("resource_path") or ""),
@@ -191,7 +280,7 @@ class RedisSkillBackend:
                         str(d.get("resource_path") or "").lower(),
                     )
                 )
-                if query
+                if normalized_search_type is not None
                 else (lambda d: (_skill_key(d).lower(), str(d.get("resource_path") or "").lower()))
             ),
         )
@@ -233,12 +322,14 @@ class RedisSkillBackend:
 
         return {
             "query": query,
+            "search_type": normalized_search_type,
             "version": version,
             "offset": offset,
             "limit": limit,
             "results_count": len(skills),
             "total_fetched": len(ordered_docs),
             "skills": skills,
+            "supported_search_types": list(SUPPORTED_SKILL_SEARCH_TYPES),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -294,6 +385,12 @@ class RedisSkillBackend:
                 "skill_name": str(entrypoint.get("skill_name") or normalized_name),
                 "full_content": str(entrypoint.get("content") or "").strip(),
             }
+        ui_metadata = self._extract_ui_metadata(entrypoint.get("metadata", {}))
+        output_contract = extract_output_contract(
+            ui_metadata,
+            skill_content=str(entrypoint.get("content") or ""),
+        )
+        workflow_contract = extract_workflow_contract(ui_metadata)
         return {
             "skill_name": str(entrypoint.get("skill_name") or normalized_name),
             "backend_kind": "redis",
@@ -325,7 +422,10 @@ class RedisSkillBackend:
                 for resource in resources
                 if resource["resource_kind"] == "asset"
             ],
-            "ui_metadata": self._extract_ui_metadata(entrypoint.get("metadata", {})),
+            "ui_metadata": ui_metadata,
+            "output_contract": output_contract,
+            "workflow_contract": workflow_contract,
+            "contract_summary": build_contract_summary(output_contract, workflow_contract),
         }
 
     async def get_skill_resource(

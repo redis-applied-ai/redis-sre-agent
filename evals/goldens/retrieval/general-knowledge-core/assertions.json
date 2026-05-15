@@ -1,6 +1,7 @@
 {
   "required_tool_calls": [],
   "forbidden_tool_calls": [],
+  "required_response_patterns": [],
   "required_findings": [
     "pinned policy content loads separately from general retrieval results",
     "latest retrieval excludes version 7.8-only guidance"

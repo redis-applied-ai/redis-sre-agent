@@ -17,6 +17,7 @@
       "operation": "info"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "use cluster-admin health evidence instead of a single database info view",
     "one resyncing database does not necessarily mean the whole cluster is unhealthy"

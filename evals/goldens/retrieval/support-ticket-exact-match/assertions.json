@@ -1,6 +1,7 @@
 {
   "required_tool_calls": [],
   "forbidden_tool_calls": [],
+  "required_response_patterns": [],
   "required_findings": [
     "exact ticket identifiers hit the intended support record first",
     "semantic maintenance-churn queries still surface the reviewed Redis Enterprise incident"

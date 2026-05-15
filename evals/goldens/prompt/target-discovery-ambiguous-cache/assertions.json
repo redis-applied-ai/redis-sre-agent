@@ -15,6 +15,7 @@
       "operation": "list_databases"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "clarify",
     "which cache"

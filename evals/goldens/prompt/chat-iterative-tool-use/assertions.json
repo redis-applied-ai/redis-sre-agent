@@ -13,6 +13,7 @@
       "target_handle": "tgt_cache_checkout"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "memory pressure is driving the evictions",
     "start with a couple of targeted checks before widening the search"

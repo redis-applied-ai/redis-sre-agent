@@ -136,6 +136,27 @@ def _infer_trace_logical_identity(
                 )
             )
 
+    for server_name, server_config in scenario.tools.mcp_servers.items():
+        provider_prefix = f"mcp_{_normalize_text(server_name).replace(' ', '_')}_"
+        if not normalized_name.startswith(provider_prefix):
+            continue
+        for operation in server_config.tools:
+            normalized_operation = _normalize_text(operation).replace(" ", "_")
+            if not normalized_name.endswith(f"_{normalized_operation}"):
+                continue
+            candidate_operations.append(
+                (
+                    len(normalized_operation),
+                    LogicalToolIdentity.model_validate(
+                        {
+                            "provider_family": "mcp",
+                            "server_name": server_name,
+                            "operation": normalized_operation,
+                        }
+                    ),
+                )
+            )
+
     if not candidate_operations:
         return None
     return max(candidate_operations, key=lambda item: item[0])[1]
@@ -234,6 +255,13 @@ def _contains_phrase(text: str, phrase: str) -> bool:
             continue
         return True
     return False
+
+
+def _matches_response_pattern(text: str, pattern: str) -> bool:
+    try:
+        return re.search(pattern, text, flags=re.MULTILINE | re.DOTALL) is not None
+    except re.error:
+        return False
 
 
 def _pass(message: str, *, expected: Any = None, actual: Any = None) -> EvalAssertionResult:
@@ -378,6 +406,25 @@ def score_structured_assertions(
                 )
             )
 
+    required_response_patterns: list[EvalAssertionResult] = []
+    for expected in scenario.expectations.required_response_patterns:
+        if _matches_response_pattern(final_answer, expected):
+            required_response_patterns.append(
+                _pass(
+                    "Observed required response pattern in final answer",
+                    expected=expected,
+                    actual=final_answer,
+                )
+            )
+        else:
+            required_response_patterns.append(
+                _fail(
+                    "Missing required response pattern in final answer",
+                    expected=expected,
+                    actual=final_answer,
+                )
+            )
+
     forbidden_claims: list[EvalAssertionResult] = []
     for expected in scenario.expectations.forbidden_claims:
         if _contains_phrase(answer, expected):
@@ -436,6 +483,7 @@ def score_structured_assertions(
         required_tool_calls=required_tool_calls,
         forbidden_tool_calls=forbidden_tool_calls,
         required_sources=required_sources,
+        required_response_patterns=required_response_patterns,
         forbidden_claims=forbidden_claims,
         required_findings=required_findings,
         expected_routing_decision=expected_routing_decision,
@@ -452,6 +500,7 @@ def flatten_structured_assertions(
         "required_tool_call": results.required_tool_calls,
         "forbidden_tool_call": results.forbidden_tool_calls,
         "required_source": results.required_sources,
+        "required_response_pattern": results.required_response_patterns,
         "forbidden_claim": results.forbidden_claims,
         "required_finding": results.required_findings,
     }

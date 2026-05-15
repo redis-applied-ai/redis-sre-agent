@@ -1,0 +1,5 @@
+suites:
+  example-skill-workflow-adherence:
+    description: Synthetic skill-contract adherence suite for generic tool workflow and output-format enforcement.
+    scenarios:
+      - ../scenarios/prompt/example-skill-workflow-adherence/scenario.yaml

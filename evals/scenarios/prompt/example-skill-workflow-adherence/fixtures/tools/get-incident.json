@@ -1,0 +1,9 @@
+{
+  "incident_id": "inc-001",
+  "name": "Checkout API latency",
+  "primary_service": "checkout-api",
+  "window": "2026-04-14T10:00:00Z/2026-04-14T11:00:00Z",
+  "status": "mitigating",
+  "impact": "Elevated p95 latency on checkout requests for one region.",
+  "evidence_source": "example incident fixtures"
+}

@@ -111,7 +111,8 @@ def test_eval_report_bundle_normalizes_trace_inputs_and_derives_pass():
             )
         ],
         structured_assertion_results=StructuredAssertionResults(
-            required_tool_calls=[EvalAssertionResult(status="passed")]
+            required_tool_calls=[EvalAssertionResult(status="passed")],
+            required_response_patterns=[EvalAssertionResult(status="passed")],
         ),
         judge_scores=JudgeSummary(
             overall_score=0.8,
@@ -127,6 +128,7 @@ def test_eval_report_bundle_normalizes_trace_inputs_and_derives_pass():
         RetrievedSourceEntry(source_id="doc-1", source_kind="unknown", title="Runbook")
     ]
     assert "- Judge score: 0.8" in bundle.to_markdown_summary()
+    assert "- Structured assertions: 1" in bundle.to_markdown_summary()
 
 
 def test_eval_report_bundle_preserves_retrieved_source_provenance_metadata():
@@ -164,6 +166,20 @@ def test_eval_report_bundle_preserves_retrieved_source_provenance_metadata():
             },
         )
     ]
+
+
+def test_eval_report_bundle_counts_required_response_patterns_when_flat_rows_absent():
+    bundle = EvalReportBundle(
+        scenario_id="prompt/example-skill-workflow-adherence",
+        git_sha="abc1234",
+        execution_lane=ExecutionLane.AGENT_ONLY,
+        agent_type="chat",
+        structured_assertion_results=StructuredAssertionResults(
+            required_response_patterns=[EvalAssertionResult(status="passed")],
+        ),
+    )
+
+    assert "- Structured assertions: 1" in bundle.to_markdown_summary()
 
 
 def test_eval_baseline_policy_supports_trigger_and_variance_metadata():
