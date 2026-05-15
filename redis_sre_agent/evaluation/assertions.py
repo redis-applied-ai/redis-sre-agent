@@ -259,7 +259,7 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 
 def _matches_response_pattern(text: str, pattern: str) -> bool:
     try:
-        return re.search(pattern, text, flags=re.MULTILINE | re.DOTALL) is not None
+        return re.search(pattern, text) is not None
     except re.error:
         return False
 

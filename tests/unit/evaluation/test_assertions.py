@@ -431,6 +431,48 @@ def test_score_structured_assertions_fails_missing_required_response_patterns():
     assert results.all_passed is False
 
 
+def test_score_structured_assertions_respects_pattern_authored_flags():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "assertion-response-pattern-authored-flags",
+            "name": "Assertion response pattern authored flags",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "agent_only", "agent": "chat", "query": "Write the report."},
+            "expectations": {
+                "required_response_patterns": [
+                    r"(?s)^# Incident Brief: .+?## Open Questions\s*$",
+                ]
+            },
+        }
+    )
+
+    valid_results = score_structured_assertions(
+        scenario,
+        final_answer="# Incident Brief: checkout-prod\n\n## Summary\nOK\n\n## Open Questions\n",
+    )
+    prefixed_results = score_structured_assertions(
+        scenario,
+        final_answer=(
+            "Preface\n\n# Incident Brief: checkout-prod\n\n## Summary\nOK\n\n## Open Questions\n"
+        ),
+    )
+    suffixed_results = score_structured_assertions(
+        scenario,
+        final_answer=(
+            "# Incident Brief: checkout-prod\n\n## Summary\nOK\n\n## Open Questions\n\nAppendix\n"
+        ),
+    )
+
+    assert valid_results.required_response_patterns[0].status.value == "passed"
+    assert prefixed_results.required_response_patterns[0].status.value == "failed"
+    assert suffixed_results.required_response_patterns[0].status.value == "failed"
+
+
 def test_score_structured_assertions_normalizes_routing_aliases():
     scenario = _scenario().model_copy(
         update={
