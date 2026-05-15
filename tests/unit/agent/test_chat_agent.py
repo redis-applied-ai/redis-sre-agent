@@ -598,6 +598,81 @@ class TestSkillContractRuntimeRepair:
         agent.llm.ainvoke.assert_awaited_once()
         assert "Skill contract repair failed; returning original response" in caplog.text
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_workflow_caps_skill_contract_repair_followup_iterations(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        mock_build_adapters,
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(content="## Summary\nStill missing required ending."),
+                AIMessage(content="## Summary\nStill missing required ending."),
+            ]
+        )
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_adapters.return_value = []
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools_for_llm.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
+        workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=None)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [HumanMessage(content="Review incident")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "CTX",
+            "startup_prompt_initialized": True,
+            "signals_envelopes": [
+                {
+                    "tool_key": "knowledge_123abc_get_skill",
+                    "name": "get_skill",
+                    "data": {
+                        "skill_name": "example-incident-brief",
+                        "output_contract": {
+                            "required_patterns": [
+                                {
+                                    "pattern": r"(?s)## Open Questions\s*$",
+                                    "description": "End with the Open Questions section.",
+                                }
+                            ]
+                        },
+                        "workflow_contract": {"required_tool_calls": ["get_incident"]},
+                    },
+                },
+                {
+                    "tool_key": "mcp_example_incident_123abc_get_incident",
+                    "name": "get_incident",
+                    "data": {"status": "success"},
+                },
+            ],
+        }
+
+        final_state = await compiled.ainvoke(state)
+
+        assert mock_llm.ainvoke.await_count == 2
+        assert final_state["iteration_count"] == 2
+        assert final_state["skill_contract_repair_attempts"] == 1
+        second_invoke_messages = mock_llm.ainvoke.await_args_list[1].args[0]
+        assert any(
+            isinstance(message, SystemMessage)
+            and "Binding skill contract reminder" in str(message.content)
+            for message in second_invoke_messages
+        )
+
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
         assert "Enterprise" in CHAT_SYSTEM_PROMPT or "Cloud" in CHAT_SYSTEM_PROMPT

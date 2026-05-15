@@ -406,6 +406,7 @@ class ChatAgentState(TypedDict):
     startup_system_prompt: Optional[str]
     startup_prompt_initialized: NotRequired[bool]
     toolset_generation: NotRequired[int]
+    skill_contract_repair_attempts: NotRequired[int]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -419,6 +420,7 @@ class ChatAgent:
 
     # Threshold for summarizing tool outputs (chars)
     ENVELOPE_SUMMARY_THRESHOLD = 500
+    SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT = 1
 
     def __init__(
         self,
@@ -820,6 +822,7 @@ class ChatAgent:
             startup_system_prompt = state.get("startup_system_prompt")
             startup_prompt_initialized = state.get("startup_prompt_initialized", False)
             signals_envelopes = list(state.get("signals_envelopes") or [])
+            skill_contract_repair_attempts = state.get("skill_contract_repair_attempts", 0)
 
             if (
                 startup_system_prompt is None
@@ -851,12 +854,26 @@ class ChatAgent:
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             invoke_messages = list(messages)
-            contract_repair_message = _build_skill_contract_repair_message(
+            needs_output_repair = _skill_contract_needs_followup(
                 signals_envelopes,
                 state["messages"],
             )
+            repair_attempts_exhausted = (
+                needs_output_repair
+                and skill_contract_repair_attempts >= self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT
+            )
+            contract_repair_message = (
+                None
+                if repair_attempts_exhausted
+                else _build_skill_contract_repair_message(
+                    signals_envelopes,
+                    state["messages"],
+                )
+            )
             if contract_repair_message is not None:
                 invoke_messages.append(contract_repair_message)
+                if needs_output_repair:
+                    skill_contract_repair_attempts += 1
 
             with tracer.start_as_current_span("chat_agent_node"):
                 response = await guarded_ainvoke(
@@ -875,6 +892,7 @@ class ChatAgent:
                 "startup_prompt_initialized": startup_prompt_initialized,
                 "toolset_generation": runtime["generation"],
                 "signals_envelopes": signals_envelopes,
+                "skill_contract_repair_attempts": skill_contract_repair_attempts,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -991,6 +1009,13 @@ class ChatAgent:
                 list(state.get("signals_envelopes") or []),
                 messages,
             ):
+                repair_attempts = state.get("skill_contract_repair_attempts", 0)
+                if repair_attempts >= self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT:
+                    logger.warning(
+                        "Chat agent reached skill contract repair attempt limit (%s)",
+                        self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT,
+                    )
+                    return END
                 return "agent"
 
             return END
@@ -1191,6 +1216,7 @@ User Query: {query}"""
                 "startup_system_prompt": system_prompt,
                 "startup_prompt_initialized": True,
                 "toolset_generation": initial_generation,
+                "skill_contract_repair_attempts": 0,
                 "signals_envelopes": merge_internal_tool_envelopes(
                     [],
                     getattr(startup_context, "internal_tool_envelopes", []),
