@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 openai.api_key = settings.openai_api_key
 
 
-def check_redis_search_available() -> bool:
+def check_redis_search_available(redis_url: str) -> bool:
     """Check if Redis with search capabilities is available (Redis 8+ or Redis Stack)."""
     try:
-        r = redis.Redis.from_url(settings.redis_url)
+        r = redis.Redis.from_url(redis_url)
 
         # Test if FT.SEARCH command is available by checking command info
         try:
@@ -49,10 +49,10 @@ def check_redis_search_available() -> bool:
         return False
 
 
-def check_knowledge_index_exists() -> bool:
+def check_knowledge_index_exists(redis_url: str) -> bool:
     """Check if the sre_knowledge index exists and is populated."""
     try:
-        r = redis.Redis.from_url(settings.redis_url)
+        r = redis.Redis.from_url(redis_url)
         # Try to get index info
         try:
             info = r.execute_command("FT.INFO", "sre_knowledge")
@@ -68,12 +68,6 @@ def check_knowledge_index_exists() -> bool:
             return False
     except Exception:
         return False
-
-
-redis_search_available = check_redis_search_available()
-redis_search_required = pytest.mark.skipif(
-    not redis_search_available, reason="Redis 8+ or Redis Stack with search module required"
-)
 
 
 JUDGE_SYSTEM_PROMPT = """You are an expert Redis Site Reliability Engineer with 10+ years of production experience managing Redis at scale. You will evaluate search results from a Redis SRE knowledge base.
@@ -572,8 +566,7 @@ async def run_comprehensive_llm_judge_evaluation():
 @pytest.mark.asyncio
 @pytest.mark.integration
 @pytest.mark.slow
-@redis_search_required
-async def test_llm_judge_evaluation():
+async def test_llm_judge_evaluation(redis_url):
     """Test comprehensive LLM judge evaluation of Redis SRE search quality.
 
     This test requires:
@@ -583,8 +576,11 @@ async def test_llm_judge_evaluation():
     The test will be skipped if either requirement is not met.
     """
 
+    if not check_redis_search_available(redis_url):
+        pytest.skip("Redis 8+ with search support required")
+
     # Skip if knowledge base is not populated
-    if not check_knowledge_index_exists():
+    if not check_knowledge_index_exists(redis_url):
         pytest.skip(
             "Knowledge base not populated - run 'poetry run redis-sre-agent pipeline run-all' first"
         )
@@ -626,8 +622,7 @@ async def test_llm_judge_evaluation():
 @pytest.mark.asyncio
 @pytest.mark.integration
 @pytest.mark.slow
-@redis_search_required
-async def test_single_scenario_evaluation():
+async def test_single_scenario_evaluation(redis_url):
     """Test evaluation of a single scenario for faster feedback.
 
     This test requires:
@@ -638,8 +633,11 @@ async def test_single_scenario_evaluation():
     """
     # Skip if OpenAI API key is not available
 
+    if not check_redis_search_available(redis_url):
+        pytest.skip("Redis 8+ with search support required")
+
     # Skip if knowledge base is not populated
-    if not check_knowledge_index_exists():
+    if not check_knowledge_index_exists(redis_url):
         pytest.skip(
             "Knowledge base not populated - run 'poetry run redis-sre-agent pipeline run-all' first"
         )

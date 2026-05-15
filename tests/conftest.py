@@ -108,13 +108,15 @@ def pytest_collection_modifyitems(config, items):
         ) and not config.getoption("--run-api-tests"):
             item.add_marker(skip_api)
 
-        # Require --run-api-tests for integration tests and attach redis container fixture
-        if "integration" in item.keywords:
+        # Require --run-api-tests for external-service tests and attach the
+        # testcontainer settings fixture so global Redis helpers use the same
+        # isolated Redis as dependency-injected tests.
+        if "integration" in item.keywords or "docket_integration" in item.keywords:
             if not config.getoption("--run-api-tests"):
                 item.add_marker(skip_integration)
                 continue
-            # Add redis_container as a fixture dependency only when running integration
-            item.fixturenames.append("redis_container")
+            if "use_redis_testcontainer" not in item.fixturenames:
+                item.fixturenames.append("use_redis_testcontainer")
 
 
 # Test environment variables - only set if not already present
@@ -123,7 +125,8 @@ test_env = {
     "DEBUG": "true",
 }
 
-# REDIS_URL is not defaulted here; tests rely on Testcontainers-provided Redis via the use_redis_testcontainer autouse fixture
+# REDIS_URL is not defaulted here; integration tests route global Redis settings
+# to the Testcontainers-provided Redis via the use_redis_testcontainer fixture.
 
 # Only set test API key if no real key is present
 if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "":
@@ -359,6 +362,7 @@ def redis_container(worker_id):
 
     from pydantic import SecretStr
 
+    import redis_sre_agent.core.config as config_module
     from redis_sre_agent.core.config import Settings
     from redis_sre_agent.core.redis import create_indices
 
@@ -397,6 +401,8 @@ def redis_container(worker_id):
             redis_url=SecretStr(url),
             # Other settings are inherited from environment/defaults
         )
+        old_settings_redis_url = config_module.settings.redis_url
+        config_module.settings.redis_url = SecretStr(url)
 
         # Create indices using dependency injection (no module reload needed!)
         asyncio.run(create_indices(config=test_settings))
@@ -414,9 +420,9 @@ def redis_container(worker_id):
 
                     storage = ArtifactStorage(str(artifacts_path))
                     pipeline = IngestionPipeline(storage)
-                    # Note: IngestionPipeline doesn't yet support config injection.
-                    # For now, we skip ingestion in tests or it uses global settings.
-                    # TODO: Add config parameter to IngestionPipeline for full DI support.
+                    # IngestionPipeline still reads the process-global settings.
+                    # Route that global to the same testcontainer Redis instead
+                    # of relying on REDIS_URL or local development Redis.
                     asyncio.run(pipeline.ingest_batch(latest_batch))
                     print(f"✅ Ingested knowledge base batch: {latest_batch}")
                 except Exception as e:
@@ -427,6 +433,9 @@ def redis_container(worker_id):
         yield RedisContainerInfo(compose=compose, url=url, settings=test_settings)
 
     finally:
+        if "old_settings_redis_url" in locals():
+            config_module.settings.redis_url = old_settings_redis_url
+
         # Restore compose env vars
         for key, old_value in old_compose_env.items():
             if old_value is None:
@@ -451,6 +460,23 @@ def test_settings(redis_container):
             status = await initialize_redis(config=test_settings)
     """
     return redis_container.settings
+
+
+@pytest.fixture
+def use_redis_testcontainer(redis_container, monkeypatch):
+    """Route global Redis settings to the integration-test Redis container.
+
+    Production code should prefer explicit config injection, but several CLI
+    and worker entrypoints intentionally read the process-global settings
+    object. This fixture keeps those paths on the same testcontainer Redis
+    without setting REDIS_URL.
+    """
+    from pydantic import SecretStr
+
+    import redis_sre_agent.core.config as config_module
+
+    monkeypatch.setattr(config_module.settings, "redis_url", SecretStr(redis_container.url))
+    return redis_container
 
 
 @pytest.fixture(scope="session")

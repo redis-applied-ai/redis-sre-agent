@@ -578,7 +578,7 @@ async def run_multi_turn_evaluation() -> List[Dict[str, Any]]:
 @pytest.mark.asyncio
 @pytest.mark.integration
 @pytest.mark.slow
-async def test_multi_turn_agent_evaluation():
+async def test_multi_turn_agent_evaluation(test_settings):
     """Test comprehensive multi-turn agent evaluation."""
 
     # Check if knowledge base is available
@@ -587,7 +587,7 @@ async def test_multi_turn_agent_evaluation():
     from redis_sre_agent.core.redis import get_redis_client
 
     try:
-        redis_client = await get_redis_client()
+        redis_client = await get_redis_client(config=test_settings)
         index = AsyncSearchIndex.from_dict(
             {
                 "index": {"name": "sre_knowledge", "prefix": "doc"},
