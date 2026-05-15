@@ -13,7 +13,7 @@ from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
@@ -599,9 +599,9 @@ class KnowledgeOnlyAgent:
                 except (TypeError, ValueError):
                     pass
 
-            # Create MemorySaver for this query
+            # Create an in-memory checkpoint saver for this query.
             # Conversation history is managed by ThreadManager and passed via messages
-            checkpointer = MemorySaver()
+            checkpointer = InMemorySaver()
             app = workflow.compile(checkpointer=checkpointer)
 
             # Configure thread for session persistence and recursion safety

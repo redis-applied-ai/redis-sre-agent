@@ -14,15 +14,16 @@ dependencies = [
     "fastapi[standard]>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     # LangGraph and AI
-    "langgraph>=0.2.0",
-    "langgraph-checkpoint-redis>=0.1.0",
-    "langchain>=0.3.25",
-    "langchain-openai>=0.2.0",
+    "langgraph>=1.2.0,<2.0.0",
+    "langgraph-checkpoint-redis>=0.4.1,<1.0.0",
+    "langchain>=1.3.0,<2.0.0",
+    "langchain-openai>=1.2.1,<2.0.0",
+    "langchain-text-splitters>=1.1.2,<2.0.0",
     "openai>=1.0.0",
     "agent-memory-client>=0.14.0",
     "transformers>=5.8.0",
     # Redis and vector search
-    "redis>=4.5.0",
+    "redis>=7.1.0",
     "redisvl>=0.9.0,<1.0",
     "sentence-transformers>=2.2.2",
     # Durable async tasks
