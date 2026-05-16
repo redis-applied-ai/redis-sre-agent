@@ -18,6 +18,7 @@
       "target_handle": "tgt_instance_orders_cache"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "memory pressure is driving the evictions",
     "explain the evidence before suggesting configuration changes"

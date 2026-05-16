@@ -37,6 +37,7 @@ class EvalKnowledgeBackend(Protocol):
         limit: int = 20,
         offset: int = 0,
         version: Optional[str] = "latest",
+        search_type: Optional[str] = None,
         distance_threshold: Optional[float] = 0.8,
     ) -> dict[str, Any]: ...
 

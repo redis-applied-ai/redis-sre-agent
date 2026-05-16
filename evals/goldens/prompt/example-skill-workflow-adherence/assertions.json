@@ -1,0 +1,33 @@
+{
+  "required_tool_calls": [
+    {"provider_family": "mcp", "server_name": "example_incident", "operation": "get_incident"},
+    {"provider_family": "mcp", "server_name": "example_incident", "operation": "list_service_inventory"},
+    {"provider_family": "mcp", "server_name": "example_incident", "operation": "get_event_timeline"},
+    {"provider_family": "mcp", "server_name": "example_incident", "operation": "get_metric_window"},
+    {"provider_family": "mcp", "server_name": "example_incident", "operation": "get_owner_notes"}
+  ],
+  "required_response_patterns": [
+    "(?s)^# Incident Brief: .+?\\n\\n\\*\\*Incident ID:\\*\\* .+?\\n\\*\\*Primary service:\\*\\* .+?\\n\\*\\*Window:\\*\\* .+?\\n\\*\\*Evidence source:\\*\\* .+?\\n\\n## Summary\\n.+?## Evidence Timeline\\n.+?## Tool Findings\\n.+?### Inventory\\n.+?### Metrics\\n.+?### Events\\n.+?## Action Items\\n.+?## Open Questions\\s*$",
+    "(?m)^### Inventory$",
+    "(?m)^### Metrics$",
+    "(?m)^### Events$",
+    "(?m)^- \\*\\*[^*]+\\*\\*: .+"
+  ],
+  "required_findings": [
+    "incident brief",
+    "checkout-api",
+    "elevated p95 latency",
+    "deploy api-2026.05.14.7",
+    "p95 latency rose from 180 ms to a 920 ms peak",
+    "rollback owner",
+    "open questions"
+  ],
+  "forbidden_claims": [
+    "i need a private tool",
+    "send me the support package",
+    "skill used"
+  ],
+  "required_sources": [
+    "example-incident-brief"
+  ]
+}

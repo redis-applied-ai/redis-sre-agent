@@ -101,6 +101,7 @@ def _normalize_assertion_payload(payload: dict) -> dict:
         ("chat-iterative-tool-use", "redis_chat", KnowledgeMode.FULL, "prompt-core"),
         ("knowledge-agent-no-live-access", "knowledge_only", KnowledgeMode.FULL, "prompt-core"),
         ("safety-no-destructive-commands", "chat", KnowledgeMode.STARTUP_ONLY, "prompt-core"),
+        ("example-skill-workflow-adherence", "chat", KnowledgeMode.STARTUP_ONLY, "prompt-core"),
         (
             "target-discovery-instance-evictions",
             "redis_chat",
@@ -255,6 +256,51 @@ async def test_knowledge_agent_prompt_scenario_materializes_startup_context():
 
 
 @pytest.mark.asyncio
+async def test_example_skill_prompt_scenario_materializes_contract_expectations():
+    scenario = load_eval_scenario(
+        scenario_manifest_path("prompt", "example-skill-workflow-adherence")
+    )
+    backend = build_fixture_knowledge_backend(scenario)
+
+    startup_context = await build_startup_knowledge_context(
+        version=scenario.knowledge.version,
+        available_tools=[],
+        knowledge_backend=backend,
+    )
+
+    envelopes = {
+        envelope["tool_key"]: envelope
+        for envelope in getattr(startup_context, "internal_tool_envelopes", [])
+    }
+    assert "knowledge.startup_skills_check" in envelopes
+    assert {
+        result["document_hash"]
+        for result in envelopes["knowledge.startup_skills_check"]["data"]["results"]
+    } >= {"example-incident-brief"}
+
+    required_ops = {
+        expected.operation
+        for expected in scenario.expectations.required_tool_calls
+        if expected.server_name == "example_incident"
+    }
+    assert "get_owner_notes" in required_ops
+    assert "get_metric_window" in required_ops
+    assert scenario.expectations.required_sources == ["example-incident-brief"]
+    assert scenario.expectations.required_response_patterns == [
+        r"(?s)^# Incident Brief: .+?\n\n\*\*Incident ID:\*\* .+?\n\*\*Primary service:\*\* .+?\n\*\*Window:\*\* .+?\n\*\*Evidence source:\*\* .+?\n\n## Summary\n.+?## Evidence Timeline\n.+?## Tool Findings\n.+?### Inventory\n.+?### Metrics\n.+?### Events\n.+?## Action Items\n.+?## Open Questions\s*$",
+        r"(?m)^### Inventory$",
+        r"(?m)^### Metrics$",
+        r"(?m)^### Events$",
+        r"(?m)^- \*\*[^*]+\*\*: .+",
+    ]
+    assert scenario.execution.max_tool_steps == 10
+    time_series_schema = (
+        scenario.tools.mcp_servers["example_incident"].tools["get_metric_window"].input_schema
+    )
+    assert time_series_schema["properties"]["service"]["type"] == "string"
+
+
+@pytest.mark.asyncio
 async def test_knowledge_agent_prompt_scenario_uses_agent_only_harness():
     scenario = load_eval_scenario(
         scenario_manifest_path("prompt", "knowledge-agent-no-live-access")
@@ -295,6 +341,9 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         scenario_manifest_path("prompt", "knowledge-agent-no-live-access")
     )
     safety = load_eval_scenario(scenario_manifest_path("prompt", "safety-no-destructive-commands"))
+    example_workflow = load_eval_scenario(
+        scenario_manifest_path("prompt", "example-skill-workflow-adherence")
+    )
     sev1 = load_eval_scenario(scenario_manifest_path("prompt", "sev1-escalation-policy"))
     target_instance = load_eval_scenario(
         scenario_manifest_path("prompt", "target-discovery-instance-evictions")
@@ -322,6 +371,13 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
     assert knowledge_only.expectations.required_sources == ["no-live-instance-claims", "RET-9001"]
     assert safety.expectations.forbidden_claims == ["run flushall immediately"]
     assert safety.expectations.required_sources == ["destructive-commands-policy"]
+    assert example_workflow.expectations.required_sources == ["example-incident-brief"]
+    assert example_workflow.expectations.required_response_patterns[0].startswith(
+        r"(?s)^# Incident Brief:"
+    )
+    assert example_workflow.execution.max_tool_steps == 10
+    assert example_workflow.expectations.required_tool_calls[0].server_name == "example_incident"
+    assert example_workflow.expectations.required_tool_calls[-1].operation == ("get_owner_notes")
     assert sev1.expectations.required_findings == [
         "escalate immediately",
         "page the incident commander",
@@ -354,6 +410,7 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         "chat-iterative-tool-use": "prompt-core",
         "knowledge-agent-no-live-access": "prompt-core",
         "safety-no-destructive-commands": "prompt-core",
+        "example-skill-workflow-adherence": "prompt-core",
         "target-discovery-instance-evictions": "prompt-core",
         "target-discovery-cluster-database-list": "prompt-core",
         "target-discovery-ambiguous-cache": "prompt-core",
@@ -397,6 +454,10 @@ def test_prompt_scenario_corpora_ship_authoritative_manifests_and_core_fixtures(
     assert _normalize_loaded_date(prompt_core_manifest["source_pack_version"]) == "2026-04-14"
     assert (prompt_core_root / "documents" / "iterative-diagnostics-runbook.md").exists()
     assert (prompt_core_root / "skills" / "no-live-access-response.md").exists()
+    assert (prompt_core_root / "skills" / "example-incident-brief" / "SKILL.md").exists()
+    assert (
+        prompt_core_root / "skills" / "example-incident-brief" / "agents" / "openai.yaml"
+    ).exists()
     assert (prompt_core_root / "tickets" / "RET-9001.yaml").exists()
 
     prompt_policy_provenance = prompt_policy_manifest["provenance"]

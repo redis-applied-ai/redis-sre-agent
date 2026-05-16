@@ -9,3 +9,4 @@ reviewed_by: sre-evals
 exemplar_sources:
   - evals/goldens/prompt/chat-iterative-tool-use/expected.md
   - evals/goldens/prompt/knowledge-agent-no-live-access/expected.md
+  - evals/goldens/prompt/example-skill-workflow-adherence/expected.md

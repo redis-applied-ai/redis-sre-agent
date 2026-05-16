@@ -1,5 +1,6 @@
 """Unit tests for the lightweight Chat Agent."""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from redis_sre_agent.agent import chat_agent as chat_agent_module
 from redis_sre_agent.agent.chat_agent import (
     CHAT_SYSTEM_PROMPT,
     ChatAgent,
@@ -257,7 +259,528 @@ class TestChatAgentSystemPrompt:
         assert "get_skill" in CHAT_SYSTEM_PROMPT
         assert "exact live match" in prompt_lower
         assert "hostname or hostname fragment" in prompt_lower
-        assert "analyzer-backed evidence" in prompt_lower
+        assert "evidence from available tools" in prompt_lower
+
+
+class TestSkillContractRuntimeRepair:
+    """Test generic runtime enforcement for retrieved skill contracts."""
+
+    def test_skill_contract_gap_detection_reports_missing_tools_and_output(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "example-incident-brief",
+                    "output_contract": {
+                        "required_order": [
+                            "## Summary",
+                            "## Evidence Timeline",
+                            "## Tool Findings",
+                            "## Open Questions",
+                        ],
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?m)^### Metrics$",
+                                "description": "Include the Metrics subsection.",
+                            }
+                        ],
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": [
+                            "get_incident",
+                            "get_metric_window",
+                        ],
+                        "required_followups": [
+                            "Always fetch metric evidence before finalizing the brief."
+                        ],
+                    },
+                },
+            },
+            {
+                "tool_key": "mcp_example_incident_123abc_list_related_signals",
+                "name": "list_related_signals",
+                "data": {"status": "success"},
+            },
+        ]
+        messages = [
+            HumanMessage(content="Review incident inc-001"),
+            AIMessage(
+                content=(
+                    "# Incident Brief: Checkout API latency\n\n"
+                    "**Incident ID:** inc-001\n"
+                    "**Primary service:** checkout-api\n\n"
+                    "## Summary\nsummary\n"
+                    "## Evidence Timeline\ntimeline\n"
+                    "## Tool Findings\nno metrics subsection yet\n"
+                    "## Open Questions\nnone"
+                )
+            ),
+        ]
+
+        gaps = chat_agent_module._collect_skill_contract_gaps(envelopes, messages)
+
+        assert len(gaps) == 1
+        assert gaps[0]["missing_tools"] == [
+            "get_incident",
+            "get_metric_window",
+        ]
+        assert "Include the Metrics subsection." in gaps[0]["missing_output"]
+        assert gaps[0]["required_followups"] == [
+            "Always fetch metric evidence before finalizing the brief."
+        ]
+
+    def test_tool_requirement_matches_normalized_operation_and_server(self):
+        envelope = {
+            "tool_key": "mcp_example_incident_123abc_get_incident",
+            "name": "get_incident",
+        }
+
+        assert chat_agent_module._tool_requirement_matches("get_incident", envelope)
+        assert chat_agent_module._tool_requirement_matches(
+            {"operation": "get_incident", "server_name": "example_incident"}, envelope
+        )
+
+    def test_missing_output_contract_items_treats_invalid_regex_as_missing(self):
+        missing = chat_agent_module._missing_output_contract_items(
+            {
+                "required_patterns": [
+                    {
+                        "pattern": "[",
+                        "description": "Include the required malformed-pattern section.",
+                    }
+                ]
+            },
+            "## Summary\nok",
+        )
+
+        assert missing == ["Include the required malformed-pattern section."]
+
+    def test_missing_output_contract_items_matches_placeholder_subsections(self):
+        output_contract = {
+            "required_subsections": ["### <signal name>"],
+        }
+
+        assert (
+            chat_agent_module._missing_output_contract_items(
+                output_contract,
+                "## Tool Findings\n\n### Metrics\nHealthy.",
+            )
+            == []
+        )
+
+        assert chat_agent_module._missing_output_contract_items(
+            output_contract,
+            "## Tool Findings\n\nNo signal subsections.",
+        ) == ["Include a subsection matching `### <signal name>`."]
+
+    def test_build_skill_contract_repair_message_mentions_missing_requirements(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "example-incident-brief",
+                    "output_contract": {
+                        "required_order": ["## Summary", "## Open Questions"],
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Open Questions\s*$",
+                                "description": "End the document after the `## Open Questions` section without adding a footer.",
+                            }
+                        ],
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["get_metric_window"],
+                        "required_followups": [
+                            "Always fetch metric evidence before finalizing the brief."
+                        ],
+                    },
+                },
+            }
+        ]
+        messages = [
+            HumanMessage(content="Review incident"),
+            AIMessage(
+                content="## Summary\nBrief summary\n\n## Open Questions\nNone\n\nSkill used: example-incident-brief"
+            ),
+        ]
+
+        repair = chat_agent_module._build_skill_contract_repair_message(envelopes, messages)
+
+        assert repair is not None
+        content = str(repair.content)
+        assert "Do not finalize yet" in content
+        assert "`get_metric_window`" in content
+        assert "Always fetch metric evidence before finalizing the brief." in content
+        assert (
+            "End the document after the `## Open Questions` section without adding a footer."
+            in content
+        )
+
+    def test_skill_contract_gaps_need_followup_when_output_constraints_are_missing(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "example-incident-brief",
+                    "output_contract": {
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Open Questions\s*$",
+                                "description": "End the document after the `## Open Questions` section without adding a footer.",
+                            }
+                        ]
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["get_incident"],
+                    },
+                },
+            },
+            {
+                "tool_key": "mcp_example_incident_123abc_get_incident",
+                "name": "get_incident",
+                "data": {"status": "success"},
+            },
+        ]
+        messages = [
+            HumanMessage(content="Review incident"),
+            AIMessage(content="## Open Questions\nNone\n\nSkill used: example-incident-brief"),
+        ]
+
+        gaps = chat_agent_module._collect_skill_contract_gaps(envelopes, messages)
+        assert chat_agent_module._skill_contract_gaps_need_followup(gaps) is True
+        repair = chat_agent_module._build_skill_contract_repair_message(envelopes, messages)
+        assert repair is not None
+        assert (
+            "End the document after the `## Open Questions` section without adding a footer."
+            in str(repair.content)
+        )
+
+        satisfied_messages = [
+            HumanMessage(content="Review incident"),
+            AIMessage(content="## Open Questions"),
+        ]
+        satisfied_gaps = chat_agent_module._collect_skill_contract_gaps(
+            envelopes, satisfied_messages
+        )
+        assert chat_agent_module._skill_contract_gaps_need_followup(satisfied_gaps) is False
+
+    def test_skill_contract_followup_ignores_missing_tool_gaps(self):
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "example-incident-brief",
+                    "output_contract": {
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Open Questions\s*$",
+                                "description": "End the document after the `## Open Questions` section.",
+                            }
+                        ]
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["get_incident"],
+                    },
+                },
+            }
+        ]
+        messages = [
+            HumanMessage(content="Review incident"),
+            AIMessage(content="## Summary\nNo required tool call or open questions section."),
+        ]
+
+        gaps = chat_agent_module._collect_skill_contract_gaps(envelopes, messages)
+        assert chat_agent_module._skill_contract_gaps_need_followup(gaps) is False
+
+    @pytest.mark.asyncio
+    async def test_repair_response_to_skill_contract_uses_llm_for_output_only_rewrite(self):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent.llm = AsyncMock(
+            ainvoke=AsyncMock(
+                return_value=AIMessage(
+                    content=(
+                        "# Incident Brief: Checkout API latency\n\n"
+                        "**Incident ID:** inc-001\n"
+                        "**Primary service:** checkout-api\n\n"
+                        "## Summary\nok\n\n"
+                        "## Open Questions\nnone"
+                    )
+                )
+            )
+        )
+
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "example-incident-brief",
+                    "output_contract": {
+                        "required_order": ["## Summary", "## Open Questions"],
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Open Questions\s*$",
+                                "description": "End the document after the `## Open Questions` section without adding a footer.",
+                            }
+                        ],
+                        "template": (
+                            "# Incident Brief: <incident name>\n\n"
+                            "**Incident ID:** <incident_id>\n"
+                            "## Summary\n\n"
+                            "## Open Questions"
+                        ),
+                    },
+                    "workflow_contract": {
+                        "required_tool_calls": ["get_incident"],
+                    },
+                },
+            },
+            {
+                "tool_key": "mcp_example_incident_123abc_get_incident",
+                "name": "get_incident",
+                "data": {"status": "success"},
+            },
+        ]
+        original = "## Summary\nok\n\n## Open Questions\nnone\n\nSkill used: footer"
+        messages = [HumanMessage(content="Review incident"), AIMessage(content=original)]
+
+        repaired = await agent._repair_response_to_skill_contract(
+            response_text=original,
+            tool_envelopes=envelopes,
+            messages=messages,
+        )
+
+        assert repaired.startswith("# Incident Brief: Checkout API latency")
+        assert repaired.endswith("## Open Questions\nnone")
+        agent.llm.ainvoke.assert_awaited_once()
+        repair_messages = agent.llm.ainvoke.await_args.args[0]
+        assert "Required markdown template:" in repair_messages[0].content
+        assert "# Incident Brief: <incident name>" in repair_messages[0].content
+
+    @pytest.mark.asyncio
+    async def test_repair_response_to_skill_contract_falls_back_when_llm_fails(self, caplog):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent.llm = AsyncMock(
+            ainvoke=AsyncMock(
+                side_effect=RuntimeError("rate limited"),
+            )
+        )
+
+        envelopes = [
+            {
+                "tool_key": "knowledge_123abc_get_skill",
+                "name": "get_skill",
+                "data": {
+                    "skill_name": "example-incident-brief",
+                    "output_contract": {
+                        "required_patterns": [
+                            {
+                                "pattern": r"(?s)## Open Questions\s*$",
+                                "description": "End the document after the `## Open Questions` section.",
+                            }
+                        ],
+                    },
+                },
+            }
+        ]
+        original = "## Summary\nok\n\n## Open Questions\nnone\n\nSkill used: footer"
+        messages = [HumanMessage(content="Review incident"), AIMessage(content=original)]
+
+        with caplog.at_level(logging.WARNING):
+            repaired = await agent._repair_response_to_skill_contract(
+                response_text=original,
+                tool_envelopes=envelopes,
+                messages=messages,
+            )
+
+        assert repaired == original
+        agent.llm.ainvoke.assert_awaited_once()
+        assert "Skill contract repair failed; returning original response" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_final_skill_contract_repair_respects_exhausted_attempt_budget(self):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent._repair_response_to_skill_contract = AsyncMock(return_value="repaired")
+
+        repaired = await agent._repair_final_response_to_skill_contract(
+            response_text="original",
+            tool_envelopes=[],
+            messages=[],
+            final_state={
+                "skill_contract_repair_attempts": agent.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT
+            },
+        )
+
+        assert repaired == "original"
+        agent._repair_response_to_skill_contract.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_final_skill_contract_repair_runs_when_attempt_budget_remains(self):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent._repair_response_to_skill_contract = AsyncMock(return_value="repaired")
+
+        repaired = await agent._repair_final_response_to_skill_contract(
+            response_text="original",
+            tool_envelopes=[],
+            messages=[],
+            final_state={"skill_contract_repair_attempts": 0},
+        )
+
+        assert repaired == "repaired"
+        agent._repair_response_to_skill_contract.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_workflow_caps_skill_contract_repair_followup_iterations(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        mock_build_adapters,
+        monkeypatch,
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(content="## Summary\nStill missing required ending."),
+                AIMessage(content="## Summary\nStill missing required ending."),
+            ]
+        )
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_adapters.return_value = []
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools_for_llm.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
+        workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=None)
+        compiled = workflow.compile()
+
+        collect_calls = {"count": 0}
+        real_collect = chat_agent_module._collect_skill_contract_gaps
+
+        def collect_spy(envelopes, messages):
+            collect_calls["count"] += 1
+            return real_collect(envelopes, messages)
+
+        monkeypatch.setattr(chat_agent_module, "_collect_skill_contract_gaps", collect_spy)
+
+        state = {
+            "messages": [HumanMessage(content="Review incident")],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": "CTX",
+            "startup_prompt_initialized": True,
+            "signals_envelopes": [
+                {
+                    "tool_key": "knowledge_123abc_get_skill",
+                    "name": "get_skill",
+                    "data": {
+                        "skill_name": "example-incident-brief",
+                        "output_contract": {
+                            "required_patterns": [
+                                {
+                                    "pattern": r"(?s)## Open Questions\s*$",
+                                    "description": "End with the Open Questions section.",
+                                }
+                            ]
+                        },
+                        "workflow_contract": {"required_tool_calls": ["get_incident"]},
+                    },
+                },
+                {
+                    "tool_key": "mcp_example_incident_123abc_get_incident",
+                    "name": "get_incident",
+                    "data": {"status": "success"},
+                },
+            ],
+        }
+
+        final_state = await compiled.ainvoke(state)
+
+        assert mock_llm.ainvoke.await_count == 2
+        assert final_state["iteration_count"] == 2
+        assert final_state["skill_contract_repair_attempts"] == 1
+        assert collect_calls["count"] == 3
+        second_invoke_messages = mock_llm.ainvoke.await_args_list[1].args[0]
+        assert any(
+            isinstance(message, SystemMessage)
+            and "Binding skill contract reminder" in str(message.content)
+            for message in second_invoke_messages
+        )
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_workflow_skips_llm_when_skill_contract_repair_limit_is_exhausted(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        mock_build_adapters,
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="unused"))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_adapters.return_value = []
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools_for_llm.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
+        workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=None)
+        compiled = workflow.compile()
+
+        previous_response = "## Summary\nStill missing required ending."
+        state = {
+            "messages": [
+                HumanMessage(content="Review incident"),
+                AIMessage(content=previous_response),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 1,
+            "max_iterations": 10,
+            "startup_system_prompt": "CTX",
+            "startup_prompt_initialized": True,
+            "skill_contract_repair_attempts": agent.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT,
+            "signals_envelopes": [
+                {
+                    "tool_key": "knowledge_123abc_get_skill",
+                    "name": "get_skill",
+                    "data": {
+                        "skill_name": "example-incident-brief",
+                        "output_contract": {
+                            "required_patterns": [
+                                {
+                                    "pattern": r"(?s)## Open Questions\s*$",
+                                    "description": "End with the Open Questions section.",
+                                }
+                            ]
+                        },
+                    },
+                }
+            ],
+        }
+
+        final_state = await compiled.ainvoke(state)
+
+        mock_llm.ainvoke.assert_not_awaited()
+        assert final_state["messages"] == state["messages"]
+        assert final_state["iteration_count"] == 1
 
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
@@ -2349,3 +2872,4 @@ class TestChatAgentStartupContext:
             {"id": "call-1", "name": "demo", "args": {}, "type": "tool_call"}
         ]
         assert tool_state["toolset_generation"] == 1
+        assert tool_state["skill_contract_gaps"] is None

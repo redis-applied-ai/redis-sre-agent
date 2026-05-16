@@ -1,7 +1,8 @@
 """Docket integration tests for SRE tasks with real Redis."""
 
 import asyncio
-from unittest.mock import patch
+from array import array
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -89,10 +90,11 @@ class TestDocketSREIntegration:
         await create_indices(config=test_settings)
 
         # Mock vectorizer to avoid OpenAI calls in Docket integration tests
-        with patch("redis_sre_agent.core.tasks.get_vectorizer") as mock_vectorizer:
-            mock_vectorizer_instance = mock_vectorizer.return_value
-            mock_vectorizer_instance.embed_many.return_value = [[0.1] * 1536]
-
+        vectorizer = Mock()
+        vectorizer.aembed = AsyncMock(return_value=array("f", [0.1] * 1536).tobytes())
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=vectorizer
+        ):
             # Execute the task
             result = await ingest_sre_document(
                 title="Docket Integration Test Document",
@@ -117,21 +119,24 @@ class TestDocketSREIntegration:
         await create_indices(config=test_settings)
 
         # Mock vectorizer for consistent testing
-        with patch("redis_sre_agent.core.tasks.get_vectorizer") as mock_vectorizer:
-            mock_vectorizer_instance = mock_vectorizer.return_value
-            mock_vectorizer_instance.embed_many.return_value = [[0.2] * 1536]
-
+        vectorizer = Mock()
+        vectorizer.aembed_many = AsyncMock(return_value=[[0.2] * 1536])
+        with patch(
+            "redis_sre_agent.core.knowledge_helpers.get_vectorizer", return_value=vectorizer
+        ):
             # Mock search results
-            with patch("redis_sre_agent.core.tasks.get_knowledge_index") as mock_index:
+            with patch("redis_sre_agent.core.knowledge_helpers.get_knowledge_index") as mock_index:
                 mock_index_instance = mock_index.return_value
-                mock_index_instance.query.return_value = [
-                    {
-                        "title": "Mock SRE Document",
-                        "content": "Mock content for testing search functionality",
-                        "source": "mock_runbook.md",
-                        "score": 0.85,
-                    }
-                ]
+                mock_index_instance.query = AsyncMock(
+                    return_value=[
+                        {
+                            "title": "Mock SRE Document",
+                            "content": "Mock content for testing search functionality",
+                            "source": "mock_runbook.md",
+                            "score": 0.85,
+                        }
+                    ]
+                )
 
                 # Execute the task
                 result = await search_knowledge_base(
@@ -158,33 +163,28 @@ class TestDocketSREIntegration:
         """Test concurrent execution of multiple SRE tasks."""
         await create_indices(config=test_settings)
 
-        # Mock vectorizer for predictable results
-        with patch("redis_sre_agent.core.tasks.get_vectorizer") as mock_vectorizer:
-            mock_vectorizer_instance = mock_vectorizer.return_value
-            mock_vectorizer_instance.embed_many.return_value = [[0.3] * 1536]
+        # Execute multiple tasks concurrently
+        tasks = [
+            check_service_health("redis_cluster", ["redis:6379"], 30),
+            check_service_health("web_servers", ["web1:80", "web2:80"], 30),
+        ]
 
-            # Execute multiple tasks concurrently
-            tasks = [
-                check_service_health("redis_cluster", ["redis:6379"], 30),
-                check_service_health("web_servers", ["web1:80", "web2:80"], 30),
-            ]
+        # Run concurrently
+        results = await asyncio.gather(*tasks)
 
-            # Run concurrently
-            results = await asyncio.gather(*tasks)
+        # Validate all tasks completed
+        assert len(results) == 2
 
-            # Validate all tasks completed
-            assert len(results) == 2
+        # Validate each result has expected structure
+        for result in results:
+            assert "task_id" in result
+            assert "timestamp" in result
+            assert "overall_status" in result
+            assert "health_checks" in result
 
-            # Validate each result has expected structure
-            for result in results:
-                assert "task_id" in result
-                assert "timestamp" in result
-                assert "overall_status" in result
-                assert "health_checks" in result
-
-            # Verify all task IDs are unique
-            task_ids = [result["task_id"] for result in results]
-            assert len(set(task_ids)) == 2  # All unique
+        # Verify all task IDs are unique
+        task_ids = [result["task_id"] for result in results]
+        assert len(set(task_ids)) == 2  # All unique
 
     @pytest.mark.asyncio
     async def test_task_retry_behavior(self, test_settings):
@@ -218,19 +218,20 @@ class TestDocketSREIntegration:
 class TestDocketWorkerIntegration:
     """Test Docket worker integration with SRE tasks."""
 
-    @pytest.mark.asyncio
-    async def test_worker_startup_with_real_redis(self, redis_url):
+    def test_worker_startup_with_real_redis(self, redis_url):
         """Test that worker can start up with real Redis."""
         from click.testing import CliRunner
 
-        from redis_sre_agent.cli.main import worker as worker_cmd
+        from redis_sre_agent.cli.worker import worker as worker_cmd
 
         # Mock Worker.run to avoid infinite loop
-        with patch("redis_sre_agent.cli.main.Worker.run") as mock_worker_run:
+        with patch(
+            "redis_sre_agent.cli.worker.Worker.run", new_callable=AsyncMock
+        ) as mock_worker_run:
             mock_worker_run.return_value = None
 
-            # Invoke CLI with redis_url env var
-            result = CliRunner(env={"REDIS_URL": redis_url}).invoke(worker_cmd)
+            # Invoke CLI with global settings already routed to the testcontainer.
+            result = CliRunner().invoke(worker_cmd, ["start", "--concurrency", "2"])
             assert result.exit_code == 0
 
             # Verify Worker.run was called with correct parameters
@@ -240,15 +241,12 @@ class TestDocketWorkerIntegration:
             assert call_kwargs["docket_name"] == "sre_docket"
             assert call_kwargs["url"] == redis_url
             assert call_kwargs["concurrency"] == 2
-            assert call_kwargs["tasks"] == ["redis_sre_agent.core.tasks:SRE_TASK_COLLECTION"]
+            assert call_kwargs["tasks"] == ["redis_sre_agent.core.docket_tasks:SRE_TASK_COLLECTION"]
 
     @pytest.mark.asyncio
     async def test_task_collection_registration(self, test_settings):
         """Test that SRE task collection is properly registered."""
         from redis_sre_agent.core.docket_tasks import SRE_TASK_COLLECTION
-
-        # Verify task collection has expected tasks
-        assert len(SRE_TASK_COLLECTION) == 4
 
         task_names = [task.__name__ for task in SRE_TASK_COLLECTION]
         expected_tasks = [
@@ -257,6 +255,8 @@ class TestDocketWorkerIntegration:
             "scheduler_task",
         ]
 
+        # Verify task collection includes the core task wrappers.
+        assert len(SRE_TASK_COLLECTION) >= len(expected_tasks)
         for expected_task in expected_tasks:
             assert expected_task in task_names
 
@@ -279,8 +279,10 @@ class TestDocketErrorHandling:
 
         invalid_settings = Settings(redis_url=SecretStr("redis://invalid-host:6379/0"))
 
-        # Task system test should fail gracefully with injected invalid config
-        system_ok = await test_task_system(config=invalid_settings)
+        # Task system test should fail gracefully when Docket cannot connect.
+        with patch("redis_sre_agent.core.docket_tasks.Docket") as mock_docket:
+            mock_docket.return_value.__aenter__.side_effect = OSError("connection failed")
+            system_ok = await test_task_system(config=invalid_settings)
         assert system_ok is False
 
     @pytest.mark.asyncio

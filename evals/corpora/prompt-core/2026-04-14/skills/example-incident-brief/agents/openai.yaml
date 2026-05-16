@@ -1,0 +1,18 @@
+display_name: Example Incident Brief
+preferred_entrypoint: SKILL.md
+workflow_contract:
+  required_tool_calls:
+    - get_incident
+    - list_service_inventory
+    - get_event_timeline
+    - get_metric_window
+    - get_owner_notes
+  required_followups:
+    - "Use get_metric_window before writing the Metrics subsection."
+    - "Use get_event_timeline before writing the Evidence Timeline section."
+    - "Use get_owner_notes before assigning action items."
+  progress_checklist:
+    - "Fetch the incident record."
+    - "Gather inventory, timeline, metrics, and owner notes."
+    - "Draft the brief in the exact markdown skeleton required by the output contract."
+    - "Repair the answer until every required heading and pattern is satisfied."
