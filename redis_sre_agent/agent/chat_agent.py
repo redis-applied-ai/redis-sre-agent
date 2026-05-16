@@ -259,8 +259,9 @@ def _collect_skill_contract_gaps(
 def _build_skill_contract_repair_message(
     envelopes: List[Dict[str, Any]],
     messages: List[BaseMessage],
+    gaps: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[SystemMessage]:
-    gaps = _collect_skill_contract_gaps(envelopes, messages)
+    gaps = gaps if gaps is not None else _collect_skill_contract_gaps(envelopes, messages)
     if not gaps:
         return None
 
@@ -291,14 +292,15 @@ def _build_skill_contract_repair_message(
     return SystemMessage(content="\n".join(lines))
 
 
+def _skill_contract_gaps_need_followup(gaps: List[Dict[str, Any]]) -> bool:
+    return any(gap["missing_output"] and not gap["missing_tools"] for gap in gaps)
+
+
 def _skill_contract_needs_followup(
     envelopes: List[Dict[str, Any]],
     messages: List[BaseMessage],
 ) -> bool:
-    return any(
-        gap["missing_output"] and not gap["missing_tools"]
-        for gap in _collect_skill_contract_gaps(envelopes, messages)
-    )
+    return _skill_contract_gaps_need_followup(_collect_skill_contract_gaps(envelopes, messages))
 
 
 def _format_exception_message(exc: Exception) -> str:
@@ -854,10 +856,11 @@ class ChatAgent:
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             invoke_messages = list(messages)
-            needs_output_repair = _skill_contract_needs_followup(
+            skill_contract_gaps = _collect_skill_contract_gaps(
                 signals_envelopes,
                 state["messages"],
             )
+            needs_output_repair = _skill_contract_gaps_need_followup(skill_contract_gaps)
             repair_attempts_exhausted = (
                 needs_output_repair
                 and skill_contract_repair_attempts >= self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT
@@ -868,6 +871,7 @@ class ChatAgent:
                 else _build_skill_contract_repair_message(
                     signals_envelopes,
                     state["messages"],
+                    gaps=skill_contract_gaps,
                 )
             )
             if contract_repair_message is not None:

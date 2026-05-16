@@ -58,6 +58,10 @@ def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
+def _normalize_tool_name_token(value: Any) -> str:
+    return _normalize_text(value).replace("-", "_").replace(" ", "_")
+
+
 def _normalize_routing_decision(value: Any) -> str:
     normalized = _normalize_text(value)
     return _ROUTING_ALIASES.get(normalized, normalized)
@@ -95,7 +99,7 @@ def _infer_trace_logical_identity(
     scenario: EvalScenario,
     concrete_name: str,
 ) -> LogicalToolIdentity | None:
-    normalized_name = _normalize_text(concrete_name).replace(" ", "_")
+    normalized_name = _normalize_tool_name_token(concrete_name)
     if not normalized_name:
         return None
     if normalized_name == "knowledge.pinned_context":
@@ -106,7 +110,7 @@ def _infer_trace_logical_identity(
 
     candidate_operations: list[tuple[int, LogicalToolIdentity]] = []
     for provider_family, operation_map in scenario.tools.providers.items():
-        raw_provider = _normalize_text(provider_family).replace(" ", "_")
+        raw_provider = _normalize_tool_name_token(provider_family)
         canonical_provider = normalize_provider_family(raw_provider)
         provider_prefixes = {
             f"{provider_prefix}_"
@@ -115,7 +119,7 @@ def _infer_trace_logical_identity(
         if not any(normalized_name.startswith(prefix) for prefix in provider_prefixes):
             continue
         for operation in operation_map:
-            normalized_operation = _normalize_text(operation).replace(" ", "_")
+            normalized_operation = _normalize_tool_name_token(operation)
             if not normalized_name.endswith(f"_{normalized_operation}"):
                 continue
             payload: dict[str, Any] = {
@@ -137,11 +141,12 @@ def _infer_trace_logical_identity(
             )
 
     for server_name, server_config in scenario.tools.mcp_servers.items():
-        provider_prefix = f"mcp_{_normalize_text(server_name).replace(' ', '_')}_"
+        normalized_server_name = _normalize_tool_name_token(server_name)
+        provider_prefix = f"mcp_{normalized_server_name}_"
         if not normalized_name.startswith(provider_prefix):
             continue
         for operation in server_config.tools:
-            normalized_operation = _normalize_text(operation).replace(" ", "_")
+            normalized_operation = _normalize_tool_name_token(operation)
             if not normalized_name.endswith(f"_{normalized_operation}"):
                 continue
             candidate_operations.append(

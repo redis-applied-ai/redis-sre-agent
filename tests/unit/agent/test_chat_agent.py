@@ -607,6 +607,7 @@ class TestSkillContractRuntimeRepair:
         mock_create_mini_llm,
         mock_create_llm,
         mock_build_adapters,
+        monkeypatch,
     ):
         mock_llm = MagicMock()
         mock_llm.bind_tools.return_value = mock_llm
@@ -626,6 +627,15 @@ class TestSkillContractRuntimeRepair:
         mock_tool_mgr.get_toolset_generation.return_value = 1
         workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=None)
         compiled = workflow.compile()
+
+        collect_calls = {"count": 0}
+        real_collect = chat_agent_module._collect_skill_contract_gaps
+
+        def collect_spy(envelopes, messages):
+            collect_calls["count"] += 1
+            return real_collect(envelopes, messages)
+
+        monkeypatch.setattr(chat_agent_module, "_collect_skill_contract_gaps", collect_spy)
 
         state = {
             "messages": [HumanMessage(content="Review incident")],
@@ -666,6 +676,7 @@ class TestSkillContractRuntimeRepair:
         assert mock_llm.ainvoke.await_count == 2
         assert final_state["iteration_count"] == 2
         assert final_state["skill_contract_repair_attempts"] == 1
+        assert collect_calls["count"] == 4
         second_invoke_messages = mock_llm.ainvoke.await_args_list[1].args[0]
         assert any(
             isinstance(message, SystemMessage)

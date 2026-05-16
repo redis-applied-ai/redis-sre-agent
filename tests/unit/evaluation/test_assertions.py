@@ -366,6 +366,53 @@ def test_score_structured_assertions_infers_mcp_identity_from_concrete_name():
     assert results.required_tool_calls[1].status.value == "passed"
 
 
+def test_score_structured_assertions_infers_hyphenated_mcp_server_identity():
+    scenario = EvalScenario.model_validate(
+        {
+            "id": "assertion-inferred-hyphenated-mcp-identity",
+            "name": "Assertion inferred hyphenated MCP identity",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-04-14",
+                "golden": {"expectation_basis": "human_authored"},
+            },
+            "execution": {"lane": "agent_only", "agent": "chat", "query": "Review incident."},
+            "tools": {
+                "mcp_servers": {
+                    "example-incident": {
+                        "capability": "diagnostics",
+                        "tools": {
+                            "list-related-signals": {"result": {"ok": True}},
+                        },
+                    }
+                }
+            },
+            "expectations": {
+                "required_tool_calls": [
+                    {
+                        "provider_family": "mcp",
+                        "server_name": "example-incident",
+                        "operation": "list-related-signals",
+                    }
+                ]
+            },
+        }
+    )
+
+    results = score_structured_assertions(
+        scenario,
+        tool_trace=[
+            {
+                "concrete_name": "mcp_example_incident_deadbeef_list_related_signals",
+                "status": "success",
+            }
+        ],
+    )
+
+    assert results.required_tool_calls[0].status.value == "passed"
+
+
 def test_score_structured_assertions_checks_required_response_patterns():
     scenario = EvalScenario.model_validate(
         {
