@@ -256,7 +256,7 @@ def test_normalize_tool_trace_infers_mcp_server_logical_identity():
             },
             "tools": {
                 "mcp_servers": {
-                    "example_incident": {
+                    "example-incident": {
                         "capability": "diagnostics",
                         "tools": {
                             "get_incident": {
@@ -283,7 +283,7 @@ def test_normalize_tool_trace_infers_mcp_server_logical_identity():
 
     assert trace[0]["logical"] == {
         "provider_family": "mcp",
-        "server_name": "example_incident",
+        "server_name": "example-incident",
         "operation": "get_incident",
     }
 

@@ -334,11 +334,15 @@ def normalize_agent_response_payload(
     )
 
 
+def _normalize_tool_name_token(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
 def _infer_live_trace_logical_identity(
     scenario: EvalScenario,
     concrete_name: str,
 ) -> dict[str, Any] | None:
-    normalized_name = str(concrete_name or "").strip().lower().replace("-", "_")
+    normalized_name = _normalize_tool_name_token(concrete_name)
     if not normalized_name:
         return None
     if normalized_name == "knowledge.pinned_context":
@@ -349,7 +353,7 @@ def _infer_live_trace_logical_identity(
 
     candidate_operations: list[tuple[int, str, str, str | None]] = []
     for provider_family, operation_map in scenario.tools.providers.items():
-        raw_provider = str(provider_family or "").strip().lower().replace("-", "_")
+        raw_provider = _normalize_tool_name_token(provider_family)
         normalized_provider = normalize_provider_family(raw_provider)
         provider_prefixes = {
             f"{provider_prefix}_"
@@ -358,23 +362,24 @@ def _infer_live_trace_logical_identity(
         if not any(normalized_name.startswith(prefix) for prefix in provider_prefixes):
             continue
         for operation in operation_map:
-            normalized_operation = str(operation or "").strip().lower().replace("-", "_")
+            normalized_operation = _normalize_tool_name_token(operation)
             if normalized_name.endswith(f"_{normalized_operation}"):
                 candidate_operations.append(
                     (len(normalized_operation), normalized_provider, normalized_operation, None)
                 )
 
     for server_name, server_config in scenario.tools.mcp_servers.items():
-        normalized_server = str(server_name or "").strip().lower().replace("-", "_")
+        raw_server_name = str(server_name or "").strip()
+        normalized_server = _normalize_tool_name_token(raw_server_name)
         if not normalized_server:
             continue
         if not normalized_name.startswith(f"mcp_{normalized_server}_"):
             continue
         for operation in server_config.tools:
-            normalized_operation = str(operation or "").strip().lower().replace("-", "_")
+            normalized_operation = _normalize_tool_name_token(operation)
             if normalized_name.endswith(f"_{normalized_operation}"):
                 candidate_operations.append(
-                    (len(normalized_operation), "mcp", normalized_operation, normalized_server)
+                    (len(normalized_operation), "mcp", normalized_operation, raw_server_name)
                 )
 
     if not candidate_operations:

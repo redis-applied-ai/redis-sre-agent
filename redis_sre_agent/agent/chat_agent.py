@@ -865,14 +865,25 @@ class ChatAgent:
                 needs_output_repair
                 and skill_contract_repair_attempts >= self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT
             )
-            contract_repair_message = (
-                None
-                if repair_attempts_exhausted
-                else _build_skill_contract_repair_message(
-                    signals_envelopes,
-                    state["messages"],
-                    gaps=skill_contract_gaps,
+            if repair_attempts_exhausted:
+                logger.warning(
+                    "Chat agent reached skill contract repair attempt limit (%s)",
+                    self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT,
                 )
+                return {
+                    "messages": list(state["messages"]),
+                    "iteration_count": iteration_count,
+                    "startup_system_prompt": startup_system_prompt,
+                    "startup_prompt_initialized": startup_prompt_initialized,
+                    "toolset_generation": runtime["generation"],
+                    "signals_envelopes": signals_envelopes,
+                    "skill_contract_repair_attempts": skill_contract_repair_attempts,
+                    "current_tool_calls": [],
+                }
+            contract_repair_message = _build_skill_contract_repair_message(
+                signals_envelopes,
+                state["messages"],
+                gaps=skill_contract_gaps,
             )
             if contract_repair_message is not None:
                 invoke_messages.append(contract_repair_message)

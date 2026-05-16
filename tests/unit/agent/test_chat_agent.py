@@ -684,6 +684,69 @@ class TestSkillContractRuntimeRepair:
             for message in second_invoke_messages
         )
 
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_workflow_skips_llm_when_skill_contract_repair_limit_is_exhausted(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        mock_build_adapters,
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="unused"))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_adapters.return_value = []
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools_for_llm.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
+        workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=None)
+        compiled = workflow.compile()
+
+        previous_response = "## Summary\nStill missing required ending."
+        state = {
+            "messages": [
+                HumanMessage(content="Review incident"),
+                AIMessage(content=previous_response),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 1,
+            "max_iterations": 10,
+            "startup_system_prompt": "CTX",
+            "startup_prompt_initialized": True,
+            "skill_contract_repair_attempts": agent.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT,
+            "signals_envelopes": [
+                {
+                    "tool_key": "knowledge_123abc_get_skill",
+                    "name": "get_skill",
+                    "data": {
+                        "skill_name": "example-incident-brief",
+                        "output_contract": {
+                            "required_patterns": [
+                                {
+                                    "pattern": r"(?s)## Open Questions\s*$",
+                                    "description": "End with the Open Questions section.",
+                                }
+                            ]
+                        },
+                    },
+                }
+            ],
+        }
+
+        final_state = await compiled.ainvoke(state)
+
+        mock_llm.ainvoke.assert_not_awaited()
+        assert final_state["messages"] == state["messages"]
+        assert final_state["iteration_count"] == 1
+
     def test_system_prompt_warns_about_managed_redis(self):
         """Test that the system prompt has Redis Enterprise/Cloud notes."""
         assert "Enterprise" in CHAT_SYSTEM_PROMPT or "Cloud" in CHAT_SYSTEM_PROMPT
