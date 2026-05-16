@@ -107,7 +107,7 @@ expectations:
     - checkout-api
     - elevated p95 latency
     - deploy api-2026.05.14.7
-    - p95 latency peaked at 920 ms
+    - p95 latency rose from 180 ms to a 920 ms peak
     - rollback owner
     - open questions
   forbidden_claims:
