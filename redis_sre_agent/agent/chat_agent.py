@@ -409,6 +409,7 @@ class ChatAgentState(TypedDict):
     startup_prompt_initialized: NotRequired[bool]
     toolset_generation: NotRequired[int]
     skill_contract_repair_attempts: NotRequired[int]
+    skill_contract_gaps: NotRequired[List[Dict[str, Any]]]
     # Accumulated tool result envelopes for context management and citation derivation
     signals_envelopes: List[Dict[str, Any]]
 
@@ -423,6 +424,12 @@ class ChatAgent:
     # Threshold for summarizing tool outputs (chars)
     ENVELOPE_SUMMARY_THRESHOLD = 500
     SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT = 1
+
+    def _can_attempt_skill_contract_repair(self, state: Dict[str, Any]) -> bool:
+        return (
+            state.get("skill_contract_repair_attempts", 0)
+            < self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT
+        )
 
     def __init__(
         self,
@@ -755,6 +762,22 @@ class ChatAgent:
         repaired_text = coerce_response_text(getattr(repaired, "content", ""))
         return repaired_text or response_text
 
+    async def _repair_final_response_to_skill_contract(
+        self,
+        *,
+        response_text: str,
+        tool_envelopes: List[Dict[str, Any]],
+        messages: List[BaseMessage],
+        final_state: Dict[str, Any],
+    ) -> str:
+        if not self._can_attempt_skill_contract_repair(final_state):
+            return response_text
+        return await self._repair_response_to_skill_contract(
+            response_text=response_text,
+            tool_envelopes=tool_envelopes,
+            messages=messages,
+        )
+
     def _build_workflow(
         self,
         tool_mgr: ToolManager,
@@ -856,14 +879,18 @@ class ChatAgent:
                 messages = [SystemMessage(content=startup_system_prompt)] + messages
 
             invoke_messages = list(messages)
-            skill_contract_gaps = _collect_skill_contract_gaps(
-                signals_envelopes,
-                state["messages"],
+            state_contract_gaps = state.get("skill_contract_gaps")
+            skill_contract_gaps = (
+                list(state_contract_gaps)
+                if state_contract_gaps is not None
+                else _collect_skill_contract_gaps(
+                    signals_envelopes,
+                    state["messages"],
+                )
             )
             needs_output_repair = _skill_contract_gaps_need_followup(skill_contract_gaps)
-            repair_attempts_exhausted = (
-                needs_output_repair
-                and skill_contract_repair_attempts >= self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT
+            repair_attempts_exhausted = needs_output_repair and not (
+                self._can_attempt_skill_contract_repair(state)
             )
             if repair_attempts_exhausted:
                 logger.warning(
@@ -878,6 +905,7 @@ class ChatAgent:
                     "toolset_generation": runtime["generation"],
                     "signals_envelopes": signals_envelopes,
                     "skill_contract_repair_attempts": skill_contract_repair_attempts,
+                    "skill_contract_gaps": skill_contract_gaps,
                     "current_tool_calls": [],
                 }
             contract_repair_message = _build_skill_contract_repair_message(
@@ -900,6 +928,10 @@ class ChatAgent:
             # Persist only the original workflow state messages plus response.
             # If we injected a SystemMessage just for this invocation, keep it ephemeral.
             new_messages = list(state["messages"]) + [response]
+            response_contract_gaps = _collect_skill_contract_gaps(
+                signals_envelopes,
+                new_messages,
+            )
             return {
                 "messages": new_messages,
                 "iteration_count": iteration_count + 1,
@@ -908,6 +940,7 @@ class ChatAgent:
                 "toolset_generation": runtime["generation"],
                 "signals_envelopes": signals_envelopes,
                 "skill_contract_repair_attempts": skill_contract_repair_attempts,
+                "skill_contract_gaps": response_contract_gaps,
                 "current_tool_calls": response.tool_calls
                 if hasattr(response, "tool_calls")
                 else [],
@@ -1002,6 +1035,7 @@ class ChatAgent:
                 "current_tool_calls": [],
                 "toolset_generation": runtime["generation"],
                 "signals_envelopes": envelopes,
+                "skill_contract_gaps": [],
             }
 
         def should_continue(state: ChatAgentState) -> str:
@@ -1020,12 +1054,17 @@ class ChatAgent:
             if state.get("current_tool_calls"):
                 return "tools"
 
-            if _skill_contract_needs_followup(
-                list(state.get("signals_envelopes") or []),
-                messages,
-            ):
+            contract_gaps = state.get("skill_contract_gaps")
+            if contract_gaps is None:
+                contract_gaps = _collect_skill_contract_gaps(
+                    list(state.get("signals_envelopes") or []),
+                    messages,
+                )
+            if _skill_contract_gaps_need_followup(contract_gaps):
                 repair_attempts = state.get("skill_contract_repair_attempts", 0)
-                if repair_attempts >= self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT:
+                if not self._can_attempt_skill_contract_repair(
+                    {"skill_contract_repair_attempts": repair_attempts}
+                ):
                     logger.warning(
                         "Chat agent reached skill contract repair attempt limit (%s)",
                         self.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT,
@@ -1262,10 +1301,11 @@ User Query: {query}"""
                     messages = final_state.get("messages", [])
                     response_text = extract_last_ai_response(messages, terminal_only=True)
                     if response_text:
-                        response_text = await self._repair_response_to_skill_contract(
+                        response_text = await self._repair_final_response_to_skill_contract(
                             response_text=response_text,
                             tool_envelopes=tool_envelopes,
                             messages=messages,
+                            final_state=final_state,
                         )
                         response = AgentResponse(
                             response=response_text,
@@ -1368,10 +1408,11 @@ User Query: {query}"""
                     messages = final_state.get("messages", [])
                     response_text = extract_last_ai_response(messages, terminal_only=True)
                     if response_text:
-                        response_text = await self._repair_response_to_skill_contract(
+                        response_text = await self._repair_final_response_to_skill_contract(
                             response_text=response_text,
                             tool_envelopes=tool_envelopes,
                             messages=messages,
+                            final_state=final_state,
                         )
                         return AgentResponse(
                             response=response_text,

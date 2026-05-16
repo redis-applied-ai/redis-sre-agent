@@ -599,6 +599,38 @@ class TestSkillContractRuntimeRepair:
         assert "Skill contract repair failed; returning original response" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_final_skill_contract_repair_respects_exhausted_attempt_budget(self):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent._repair_response_to_skill_contract = AsyncMock(return_value="repaired")
+
+        repaired = await agent._repair_final_response_to_skill_contract(
+            response_text="original",
+            tool_envelopes=[],
+            messages=[],
+            final_state={
+                "skill_contract_repair_attempts": agent.SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT
+            },
+        )
+
+        assert repaired == "original"
+        agent._repair_response_to_skill_contract.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_final_skill_contract_repair_runs_when_attempt_budget_remains(self):
+        agent = ChatAgent.__new__(ChatAgent)
+        agent._repair_response_to_skill_contract = AsyncMock(return_value="repaired")
+
+        repaired = await agent._repair_final_response_to_skill_contract(
+            response_text="original",
+            tool_envelopes=[],
+            messages=[],
+            final_state={"skill_contract_repair_attempts": 0},
+        )
+
+        assert repaired == "repaired"
+        agent._repair_response_to_skill_contract.assert_awaited_once()
+
+    @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
@@ -676,7 +708,7 @@ class TestSkillContractRuntimeRepair:
         assert mock_llm.ainvoke.await_count == 2
         assert final_state["iteration_count"] == 2
         assert final_state["skill_contract_repair_attempts"] == 1
-        assert collect_calls["count"] == 4
+        assert collect_calls["count"] == 3
         second_invoke_messages = mock_llm.ainvoke.await_args_list[1].args[0]
         assert any(
             isinstance(message, SystemMessage)
