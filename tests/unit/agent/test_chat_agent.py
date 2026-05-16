@@ -2872,3 +2872,4 @@ class TestChatAgentStartupContext:
             {"id": "call-1", "name": "demo", "args": {}, "type": "tool_call"}
         ]
         assert tool_state["toolset_generation"] == 1
+        assert tool_state["skill_contract_gaps"] is None

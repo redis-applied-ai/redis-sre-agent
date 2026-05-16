@@ -1015,7 +1015,7 @@ class ChatAgent:
                 "current_tool_calls": [],
                 "toolset_generation": runtime["generation"],
                 "signals_envelopes": envelopes,
-                "skill_contract_gaps": [],
+                "skill_contract_gaps": None,
             }
 
         def should_continue(state: ChatAgentState) -> str:
