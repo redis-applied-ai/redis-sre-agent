@@ -8,7 +8,7 @@ from typing import Any, Mapping
 _OUTPUT_STRUCTURE_BLOCK_RE = re.compile(
     r"(?ims)^##\s+Output structure\b.*?```(?:markdown|md)?\n(.*?)```"
 )
-_PLACEHOLDER_RE = re.compile(r"<[^>]+>")
+TEMPLATE_PLACEHOLDER_RE = re.compile(r"<[^>\n]+>")
 
 
 def _merge_unique_strings(*values: Any) -> list[str]:
@@ -97,14 +97,14 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
         )
         required_patterns.append(
             {
-                "pattern": rf"(?s)^{_template_segment_to_pattern(preamble_segment)}",
+                "pattern": rf"(?s)^{template_segment_to_pattern(preamble_segment)}",
                 "description": preamble_description,
             }
         )
     for line in _template_lines_with_placeholders(template_lines):
         required_patterns.append(
             {
-                "pattern": rf"(?m)^{_template_segment_to_pattern(line.strip())}$",
+                "pattern": rf"(?m)^{template_segment_to_pattern(line.strip())}$",
                 "description": f"Include a line matching `{line.strip()}`.",
             }
         )
@@ -147,10 +147,10 @@ def _infer_output_contract_from_skill_content(content: str) -> dict[str, Any]:
     }
 
 
-def _template_segment_to_pattern(segment: str) -> str:
+def template_segment_to_pattern(segment: str) -> str:
     pattern_parts: list[str] = []
     cursor = 0
-    for match in _PLACEHOLDER_RE.finditer(segment):
+    for match in TEMPLATE_PLACEHOLDER_RE.finditer(segment):
         pattern_parts.append(re.escape(segment[cursor : match.start()]))
         pattern_parts.append(r".+?")
         cursor = match.end()
@@ -163,7 +163,7 @@ def _template_lines_with_placeholders(lines: list[str]) -> list[str]:
     seen: set[str] = set()
     for line in lines:
         stripped = line.strip()
-        if not stripped or not _PLACEHOLDER_RE.search(stripped):
+        if not stripped or not TEMPLATE_PLACEHOLDER_RE.search(stripped):
             continue
         if stripped.startswith("#"):
             continue
@@ -175,7 +175,7 @@ def _template_lines_with_placeholders(lines: list[str]) -> list[str]:
 
 
 def _line_prefix_before_placeholder(line: str) -> str:
-    match = _PLACEHOLDER_RE.search(line)
+    match = TEMPLATE_PLACEHOLDER_RE.search(line)
     if match is None:
         return line.strip()
     return line[: match.start()].rstrip()

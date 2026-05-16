@@ -39,6 +39,10 @@ from redis_sre_agent.core.targets import (
     get_attached_target_handles_from_context,
 )
 from redis_sre_agent.core.turn_scope import TurnScope
+from redis_sre_agent.skills.contracts import (
+    TEMPLATE_PLACEHOLDER_RE,
+    template_segment_to_pattern,
+)
 from redis_sre_agent.tools.manager import ToolManager
 from redis_sre_agent.tools.models import ToolCapability
 
@@ -121,26 +125,9 @@ def _required_pattern_entries(output_contract: Dict[str, Any]) -> List[Dict[str,
     return entries
 
 
-_CONTRACT_PLACEHOLDER_RE = re.compile(r"<[^>\n]+>")
-
-
-def _contract_template_token_pattern(token: str) -> str:
-    parts: List[str] = []
-    cursor = 0
-    for match in _CONTRACT_PLACEHOLDER_RE.finditer(token):
-        parts.append(re.escape(token[cursor : match.start()]))
-        parts.append(r".+")
-        cursor = match.end()
-    parts.append(re.escape(token[cursor:]))
-    return "".join(parts)
-
-
 def _contract_template_token_matches(token: str, response_text: str) -> bool:
-    if _CONTRACT_PLACEHOLDER_RE.search(token):
-        return (
-            re.search(rf"(?m)^{_contract_template_token_pattern(token)}$", response_text)
-            is not None
-        )
+    if TEMPLATE_PLACEHOLDER_RE.search(token):
+        return re.search(rf"(?m)^{template_segment_to_pattern(token)}$", response_text) is not None
     return token in response_text
 
 
@@ -174,7 +161,7 @@ def _missing_output_contract_items(
         token = str(heading or "").strip()
         if not token or _contract_template_token_matches(token, response_text):
             continue
-        if _CONTRACT_PLACEHOLDER_RE.search(token):
+        if TEMPLATE_PLACEHOLDER_RE.search(token):
             missing.append(f"Include a subsection matching `{token}`.")
             continue
         missing.append(f"Include subsection `{token}`.")
@@ -294,13 +281,6 @@ def _build_skill_contract_repair_message(
 
 def _skill_contract_gaps_need_followup(gaps: List[Dict[str, Any]]) -> bool:
     return any(gap["missing_output"] and not gap["missing_tools"] for gap in gaps)
-
-
-def _skill_contract_needs_followup(
-    envelopes: List[Dict[str, Any]],
-    messages: List[BaseMessage],
-) -> bool:
-    return _skill_contract_gaps_need_followup(_collect_skill_contract_gaps(envelopes, messages))
 
 
 def _format_exception_message(exc: Exception) -> str:

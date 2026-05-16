@@ -418,7 +418,7 @@ class TestSkillContractRuntimeRepair:
             in content
         )
 
-    def test_skill_contract_needs_followup_when_output_constraints_are_missing(self):
+    def test_skill_contract_gaps_need_followup_when_output_constraints_are_missing(self):
         envelopes = [
             {
                 "tool_key": "knowledge_123abc_get_skill",
@@ -449,7 +449,8 @@ class TestSkillContractRuntimeRepair:
             AIMessage(content="## Open Questions\nNone\n\nSkill used: example-incident-brief"),
         ]
 
-        assert chat_agent_module._skill_contract_needs_followup(envelopes, messages) is True
+        gaps = chat_agent_module._collect_skill_contract_gaps(envelopes, messages)
+        assert chat_agent_module._skill_contract_gaps_need_followup(gaps) is True
         repair = chat_agent_module._build_skill_contract_repair_message(envelopes, messages)
         assert repair is not None
         assert (
@@ -461,9 +462,10 @@ class TestSkillContractRuntimeRepair:
             HumanMessage(content="Review incident"),
             AIMessage(content="## Open Questions"),
         ]
-        assert (
-            chat_agent_module._skill_contract_needs_followup(envelopes, satisfied_messages) is False
+        satisfied_gaps = chat_agent_module._collect_skill_contract_gaps(
+            envelopes, satisfied_messages
         )
+        assert chat_agent_module._skill_contract_gaps_need_followup(satisfied_gaps) is False
 
     def test_skill_contract_followup_ignores_missing_tool_gaps(self):
         envelopes = [
@@ -491,7 +493,8 @@ class TestSkillContractRuntimeRepair:
             AIMessage(content="## Summary\nNo required tool call or open questions section."),
         ]
 
-        assert chat_agent_module._skill_contract_needs_followup(envelopes, messages) is False
+        gaps = chat_agent_module._collect_skill_contract_gaps(envelopes, messages)
+        assert chat_agent_module._skill_contract_gaps_need_followup(gaps) is False
 
     @pytest.mark.asyncio
     async def test_repair_response_to_skill_contract_uses_llm_for_output_only_rewrite(self):
