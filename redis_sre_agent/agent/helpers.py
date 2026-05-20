@@ -341,10 +341,12 @@ async def build_adapters_for_tooldefs(tool_manager: Any, tooldefs: List[Any]) ->
         raw_type = (spec or {}).get("type")
         if isinstance(raw_type, list):
             # Type-union form, e.g. ["string", "null"]. Map the first concrete
-            # type; treat "null" in the union as the nullability signal.
+            # type; treat the field as nullable when "null" is in the union OR
+            # when the field is non-required, so the Pydantic default of None
+            # validates against the resulting annotation.
             concrete = next((t for t in raw_type if isinstance(t, str) and t != "null"), None)
             py_type = _json_type_map.get(concrete, _Any)
-            nullable = "null" in raw_type
+            nullable = (not is_required) or ("null" in raw_type)
         elif isinstance(raw_type, str):
             py_type = _json_type_map.get(raw_type, _Any)
             nullable = not is_required

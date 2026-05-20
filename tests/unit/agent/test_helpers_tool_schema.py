@@ -113,3 +113,29 @@ async def test_build_adapters_accepts_type_union_form():
     props = schema["function"]["parameters"]["properties"]
 
     assert _property_has_type(props["label"], "string"), props["label"]
+
+
+async def test_non_required_single_type_list_accepts_default_none():
+    """A non-required property declared as `{"type": ["string"]}` (no "null"
+    in the union) must still be Optional[T] so the Pydantic field default of
+    None validates against the annotation when the LLM omits the parameter."""
+    tdef = ToolDefinition(
+        name="single_type_list_fixture",
+        description="Fixture for non-required single-element type-list",
+        capability=ToolCapability.UTILITIES,
+        parameters={
+            "type": "object",
+            "properties": {
+                "label": {"type": ["string"], "description": "Non-required label"},
+            },
+            "required": [],
+        },
+    )
+
+    adapters = await build_adapters_for_tooldefs(None, [tdef])
+    assert len(adapters) == 1
+
+    # Instantiating with no args must not raise; default None must validate.
+    model = adapters[0].args_schema
+    instance = model()
+    assert instance.label is None
