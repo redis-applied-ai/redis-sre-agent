@@ -338,8 +338,20 @@ async def build_adapters_for_tooldefs(tool_manager: Any, tooldefs: List[Any]) ->
     }
 
     def _python_type_for(spec: dict, is_required: bool):
-        py_type = _json_type_map.get((spec or {}).get("type"), _Any)
-        if not is_required and py_type is not _Any:
+        raw_type = (spec or {}).get("type")
+        if isinstance(raw_type, list):
+            # Type-union form, e.g. ["string", "null"]. Map the first concrete
+            # type; treat "null" in the union as the nullability signal.
+            concrete = next((t for t in raw_type if isinstance(t, str) and t != "null"), None)
+            py_type = _json_type_map.get(concrete, _Any)
+            nullable = "null" in raw_type
+        elif isinstance(raw_type, str):
+            py_type = _json_type_map.get(raw_type, _Any)
+            nullable = not is_required
+        else:
+            py_type = _Any
+            nullable = not is_required
+        if nullable and py_type is not _Any:
             py_type = Optional[py_type]
         return py_type
 

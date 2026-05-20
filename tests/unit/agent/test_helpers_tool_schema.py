@@ -87,3 +87,29 @@ async def test_build_adapters_falls_back_to_any_when_source_has_no_type():
 
     assert "payload" in props
     assert "type" not in props["payload"] and "anyOf" not in props["payload"]
+
+
+async def test_build_adapters_accepts_type_union_form():
+    """Properties declared as `{"type": ["string", "null"]}` (the strict-mode
+    and common MCP form) must not crash adapter construction, and the concrete
+    type should survive the round-trip."""
+    tdef = ToolDefinition(
+        name="union_type_fixture",
+        description="Fixture for type-union nullable property",
+        capability=ToolCapability.UTILITIES,
+        parameters={
+            "type": "object",
+            "properties": {
+                "label": {"type": ["string", "null"], "description": "Nullable label"},
+            },
+            "required": [],
+        },
+    )
+
+    adapters = await build_adapters_for_tooldefs(None, [tdef])
+    assert len(adapters) == 1
+
+    schema = convert_to_openai_tool(adapters[0])
+    props = schema["function"]["parameters"]["properties"]
+
+    assert _property_has_type(props["label"], "string"), props["label"]
