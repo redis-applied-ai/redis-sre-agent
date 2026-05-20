@@ -328,15 +328,45 @@ async def build_adapters_for_tooldefs(tool_manager: Any, tooldefs: List[Any]) ->
             return spec.get("default")
         return None
 
+    _json_type_map: dict[str, type] = {
+        "string": str,
+        "integer": int,
+        "number": float,
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
+
+    def _python_type_for(spec: dict, is_required: bool):
+        raw_type = (spec or {}).get("type")
+        if isinstance(raw_type, list):
+            # Type-union form, e.g. ["string", "null"]. Map the first concrete
+            # type; treat the field as nullable when "null" is in the union OR
+            # when the field is non-required, so the Pydantic default of None
+            # validates against the resulting annotation.
+            concrete = next((t for t in raw_type if isinstance(t, str) and t != "null"), None)
+            py_type = _json_type_map.get(concrete, _Any)
+            nullable = (not is_required) or ("null" in raw_type)
+        elif isinstance(raw_type, str):
+            py_type = _json_type_map.get(raw_type, _Any)
+            nullable = not is_required
+        else:
+            py_type = _Any
+            nullable = not is_required
+        if nullable and py_type is not _Any:
+            py_type = Optional[py_type]
+        return py_type
+
     def _args_model_from_parameters(tool_name: str, params: dict) -> type[_BaseModel]:
         props = (params or {}).get("properties", {}) or {}
         required = set((params or {}).get("required", []) or [])
         fields: dict[str, tuple[_Any, _Any]] = {}
         for k, spec in props.items():
-            default = _field_default(spec or {}, k in required)
+            spec = spec or {}
+            default = _field_default(spec, k in required)
             fields[k] = (
-                _Any,
-                _Field(default, description=(spec or {}).get("description")),
+                _python_type_for(spec, k in required),
+                _Field(default, description=spec.get("description")),
             )
         args_model = _create_model(f"{tool_name}_Args", __base__=_BaseModel, **fields)
         # allow extra to be resilient to provider-side schema drift
