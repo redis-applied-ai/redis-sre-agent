@@ -60,9 +60,7 @@ async def test_build_adapters_preserves_property_types_on_wire():
 
     assert _property_has_type(props["query"], "string"), props["query"]
     assert _property_has_type(props["limit"], "integer"), props["limit"]
-    assert _property_has_type(
-        props["distance_threshold"], "number"
-    ), props["distance_threshold"]
+    assert _property_has_type(props["distance_threshold"], "number"), props["distance_threshold"]
 
 
 async def test_build_adapters_falls_back_to_any_when_source_has_no_type():
