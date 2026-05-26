@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 // E2E tests for the feedback (thumbs up/down) UI flow.
 //
@@ -10,18 +10,19 @@ import { execSync } from 'child_process';
 const REDIS_PORT = process.env.REDIS_PORT || '7843';
 const BACKEND_URL = process.env.FEEDBACK_TEST_BACKEND_URL || 'http://127.0.0.1:8001';
 
+// execFileSync (argv) avoids spawning a shell, eliminating command-injection risk
+// even for internal test values flagged by CodeQL.
 function redisSet(key: string, value: string) {
-  execSync(`redis-cli -p ${REDIS_PORT} SET "${key}" "${value}"`, { stdio: 'pipe' });
+  execFileSync('redis-cli', ['-p', REDIS_PORT, 'SET', key, value], { stdio: 'pipe' });
 }
 
 function redisHSet(key: string, ...fieldValues: string[]) {
-  const pairs = fieldValues.join(' ');
-  execSync(`redis-cli -p ${REDIS_PORT} HSET "${key}" ${pairs}`, { stdio: 'pipe' });
+  execFileSync('redis-cli', ['-p', REDIS_PORT, 'HSET', key, ...fieldValues], { stdio: 'pipe' });
 }
 
 function redisDel(...keys: string[]) {
   try {
-    execSync(`redis-cli -p ${REDIS_PORT} DEL ${keys.map((k) => `"${k}"`).join(' ')}`, { stdio: 'pipe' });
+    execFileSync('redis-cli', ['-p', REDIS_PORT, 'DEL', ...keys], { stdio: 'pipe' });
   } catch {
     // best-effort cleanup
   }
