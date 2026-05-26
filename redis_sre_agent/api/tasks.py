@@ -9,6 +9,7 @@ import logging
 
 from docket import Docket
 from fastapi import APIRouter, HTTPException, status
+from redis.exceptions import RedisError
 
 from redis_sre_agent.api.schemas import (
     TaskApprovalListResponse,
@@ -40,7 +41,11 @@ async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskR
         raise HTTPException(status_code=404, detail="Task not found")
 
     tool_calls = await task_manager.get_task_tool_calls(state)
-    feedback = await get_feedback(task_id)
+    # Feedback is an optional sidecar; a Redis hiccup must not fail the task GET.
+    try:
+        feedback = await get_feedback(task_id)
+    except RedisError:
+        feedback = None
 
     return TaskResponse(
         task_id=state.task_id,

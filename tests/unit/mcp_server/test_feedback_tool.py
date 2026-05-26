@@ -117,8 +117,12 @@ class TestMCPSubmitFeedback:
         # exception must propagate, never become {"error": ..., "status": "failed"}.
 
     @pytest.mark.asyncio
-    async def test_mcp_unknown_task_raises(self):
-        """Non-existent task_id propagates TaskNotFoundError — NOT a success-shaped dict."""
+    async def test_mcp_unknown_task_raises(self, redis_client):
+        """Non-existent task_id propagates TaskNotFoundError — NOT a success-shaped dict.
+
+        Depends on `redis_client` so the test skips cleanly when Redis is unreachable
+        rather than surfacing a ConnectionError from the not-found probe.
+        """
         bogus_task_id = f"tsk-nonexistent-{uuid.uuid4().hex[:8]}"
 
         with pytest.raises(TaskNotFoundError):
@@ -158,8 +162,12 @@ class TestMCPGetFeedback:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_mcp_get_feedback_unknown_task_raises(self):
-        """Non-existent task_id propagates TaskNotFoundError — NOT a success-shaped dict."""
+    async def test_mcp_get_feedback_unknown_task_raises(self, redis_client):
+        """Non-existent task_id propagates TaskNotFoundError — NOT a success-shaped dict.
+
+        Depends on `redis_client` so the test skips cleanly when Redis is unreachable
+        rather than surfacing a ConnectionError from the not-found probe.
+        """
         bogus_task_id = f"tsk-nonexistent-{uuid.uuid4().hex[:8]}"
 
         with pytest.raises(TaskNotFoundError):
