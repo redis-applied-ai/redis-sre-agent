@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
 import { ConfirmDialog } from "../components/Modal";
@@ -7,6 +7,8 @@ import MemoryPanel from "../components/MemoryPanel";
 import TaskMonitor from "../components/TaskMonitor";
 import sreAgentApi, {
   ApprovalRecord,
+  FeedbackRecord,
+  FeedbackVerdict,
   PendingApprovalSummary,
   RedisCluster,
   RedisInstance,
@@ -26,6 +28,85 @@ const ErrorMessage = ({ message }: { message: string }) => (
     {message}
   </div>
 );
+
+interface FeedbackButtonsProps {
+  taskId: string;
+  initialVerdict?: FeedbackVerdict | null;
+  onError: (msg: string) => void;
+}
+
+const FeedbackButtons = ({
+  taskId,
+  initialVerdict,
+  onError,
+}: FeedbackButtonsProps) => {
+  const [verdict, setVerdict] = useState<FeedbackVerdict | null>(
+    initialVerdict ?? null,
+  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleClick = useCallback(
+    async (clicked: "up" | "down") => {
+      if (isSubmitting) return;
+      // Clicking the already-active verdict withdraws it
+      const nextVerdict: FeedbackVerdict =
+        verdict === clicked ? "withdrawn" : clicked;
+      const optimistic = nextVerdict === "withdrawn" ? null : nextVerdict;
+      const previous = verdict;
+      setVerdict(optimistic);
+      setIsSubmitting(true);
+      try {
+        const record = await sreAgentApi.submitFeedback(taskId, nextVerdict);
+        setVerdict(record.verdict === "withdrawn" ? null : record.verdict);
+      } catch (err) {
+        setVerdict(previous);
+        onError(
+          `Failed to submit feedback: ${err instanceof Error ? err.message : "Unknown error"}`,
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [taskId, verdict, isSubmitting, onError],
+  );
+
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <button
+        data-testid="feedback-up"
+        data-active={verdict === "up" ? "true" : "false"}
+        onClick={() => handleClick("up")}
+        disabled={isSubmitting}
+        title="Helpful"
+        className={`text-lg px-2 py-1 rounded transition-colors ${
+          isSubmitting ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+        } ${
+          verdict === "up"
+            ? "bg-green-100 text-green-700 border border-green-300"
+            : "hover:bg-redis-dusk-08 text-redis-dusk-04"
+        }`}
+      >
+        👍
+      </button>
+      <button
+        data-testid="feedback-down"
+        data-active={verdict === "down" ? "true" : "false"}
+        onClick={() => handleClick("down")}
+        disabled={isSubmitting}
+        title="Not helpful"
+        className={`text-lg px-2 py-1 rounded transition-colors ${
+          isSubmitting ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+        } ${
+          verdict === "down"
+            ? "bg-red-100 text-red-700 border border-red-300"
+            : "hover:bg-redis-dusk-08 text-redis-dusk-04"
+        }`}
+      >
+        👎
+      </button>
+    </div>
+  );
+};
 
 /**
  * Extract human-readable operation name from full tool name.
@@ -109,6 +190,9 @@ const Triage = () => {
     return window.localStorage.getItem("triage.showMemoryPanel") === "1";
   });
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
+  const [threadFeedback, setThreadFeedback] = useState<FeedbackRecord | null>(
+    null,
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -563,6 +647,7 @@ const Triage = () => {
     setShowNewConversation(false);
     setLiveModeLocked(sidebarActive);
     setShowWebSocketMonitor(sidebarActive);
+    setThreadFeedback(null);
     resetApprovalState();
 
     // On mobile only, switch to chat view
@@ -625,8 +710,15 @@ const Triage = () => {
       if (status.task_id) {
         const approvals = await sreAgentApi.getTaskApprovals(status.task_id);
         setApprovalHistory(approvals);
+        try {
+          const feedback = await sreAgentApi.getFeedback(status.task_id);
+          setThreadFeedback(feedback);
+        } catch {
+          setThreadFeedback(null);
+        }
       } else {
         setApprovalHistory([]);
+        setThreadFeedback(null);
       }
       if (!liveModeLocked) setShowWebSocketMonitor(active);
     } catch (err) {
@@ -1436,6 +1528,20 @@ const Triage = () => {
                           </div>
                         ))
                       )}
+                      {!isThreadBusy &&
+                        !showWebSocketMonitor &&
+                        activeTaskId &&
+                        messages.some((m) => m.role === "assistant") && (
+                          <div className="flex justify-start pl-0">
+                            <FeedbackButtons
+                              taskId={activeTaskId}
+                              initialVerdict={
+                                threadFeedback?.verdict ?? null
+                              }
+                              onError={(msg) => setError(msg)}
+                            />
+                          </div>
+                        )}
                       {isThreadBusy && (
                         <div className="text-redis-xs text-redis-dusk-04">
                           Task is running. Press Stop to cancel before sending a
