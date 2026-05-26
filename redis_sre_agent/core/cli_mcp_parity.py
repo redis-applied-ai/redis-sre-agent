@@ -17,6 +17,8 @@ EXCLUDED_CLI_COMMAND_PATHS = frozenset(
         "eval list",
         "eval live-suite",
         "eval run",
+        "feedback list",
+        "feedback show",
         "knowledge-pack build",
         "knowledge-pack inspect",
         "knowledge-pack load",
@@ -29,6 +31,9 @@ EXCLUDED_CLI_COMMAND_PATHS = frozenset(
 )
 
 CLI_TO_MCP_TOOL_NAMES = {
+    "feedback down": "redis_sre_submit_feedback",
+    "feedback up": "redis_sre_submit_feedback",
+    "feedback withdraw": "redis_sre_submit_feedback",
     "cache clear": "redis_sre_cache_clear",
     "cache stats": "redis_sre_cache_stats",
     "cluster backfill-instance-links": "redis_sre_backfill_instance_links",
