@@ -249,7 +249,10 @@ docker compose exec -T sre-agent uv run redis-sre-agent support-package list
 docker compose exec -T sre-agent uv run redis-sre-agent query -p <package_id> "Show database memory usage"
 ```
 
-### 9) See task status and thread contents
+### 9) Feedback on agent responses
+**feedback**: 👍 / 👎 / withdraw on any task — see [feedback.md](./feedback.md).
+
+### 10) See task status and thread contents
 Tasks track execution; threads hold the conversation + context.
 ```bash
 # Tasks
