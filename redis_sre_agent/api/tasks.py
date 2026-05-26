@@ -24,6 +24,7 @@ from redis_sre_agent.core.docket_tasks import (
     resume_task_after_approval,
     validate_task_resume_request,
 )
+from redis_sre_agent.core.feedback import get_feedback
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
@@ -39,6 +40,7 @@ async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskR
         raise HTTPException(status_code=404, detail="Task not found")
 
     tool_calls = await task_manager.get_task_tool_calls(state)
+    feedback = await get_feedback(task_id)
 
     return TaskResponse(
         task_id=state.task_id,
@@ -53,6 +55,7 @@ async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskR
         subject=state.metadata.subject if state.metadata else None,
         created_at=state.metadata.created_at if state.metadata else None,
         updated_at=state.metadata.updated_at if state.metadata else None,
+        feedback=feedback,
     )
 
 
