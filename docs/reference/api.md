@@ -99,6 +99,8 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `DELETE` | `/api/v1/tasks/{task_id}` | delete_task |
 | `GET` | `/api/v1/tasks/{task_id}` | get_task |
 | `GET` | `/api/v1/tasks/{task_id}/approvals` | list_task_approvals |
+| `GET` | `/api/v1/tasks/{task_id}/feedback` | get_task_feedback |
+| `POST` | `/api/v1/tasks/{task_id}/feedback` | submit_task_feedback |
 | `POST` | `/api/v1/tasks/{task_id}/resume` | resume_task |
 | `GET` | `/api/v1/tasks/{thread_id}/stream-info` | get_task_stream_info |
 | `GET` | `/api/v1/threads` | list_threads |
@@ -121,4 +123,5 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 
 | Method | Path | Summary |
 |---|---|---|
+| `GET` | `/api/v1/feedback` | list_feedback |
 | `GET` | `/api/v1/memory/thread/{thread_id}` | get_thread_memory |
