@@ -84,7 +84,7 @@ async def test_startup_context_mentions_truncated_skill_inventory():
                 return_value={
                     "skills": [
                         {
-                            "name": "Redis Cluster Health Check",
+                            "name": "Example Incident Brief",
                             "summary": "Run a fast health check for the cluster.",
                         },
                         {
@@ -104,6 +104,55 @@ async def test_startup_context_mentions_truncated_skill_inventory():
     assert "search for related skills" in context
 
 
+def test_skills_toc_lines_caps_rendered_rows_and_remaining_count():
+    lines = knowledge_context_module._skills_toc_lines(
+        [
+            {"name": "Skill One", "summary": "First."},
+            {"name": "Skill Two", "summary": "Second."},
+            {"name": "Skill Three", "summary": "Third."},
+        ],
+        total_skills=10,
+        displayed_limit=2,
+    )
+
+    rendered = "\n".join(lines)
+
+    assert "2 skills shown, 8 more available" in rendered
+    assert "- Skill One: First." in rendered
+    assert "- Skill Two: Second." in rendered
+    assert "Skill Three" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_startup_context_renders_skill_title_with_lookup_slug():
+    with (
+        patch(
+            "redis_sre_agent.agent.knowledge_context.get_pinned_documents_helper",
+            new=AsyncMock(return_value={"pinned_documents": []}),
+        ),
+        patch(
+            "redis_sre_agent.agent.knowledge_context.skills_check_helper",
+            new=AsyncMock(
+                return_value={
+                    "skills": [
+                        {
+                            "name": "example-incident-brief",
+                            "title": "Example Incident Brief",
+                            "summary": "Run a fast cluster health check.",
+                        }
+                    ]
+                }
+            ),
+        ),
+    ):
+        context = await build_startup_knowledge_context(version="latest")
+
+    assert (
+        "Example Incident Brief (`example-incident-brief`): Run a fast cluster health check."
+        in context
+    )
+
+
 @pytest.mark.asyncio
 async def test_startup_context_reports_actual_skill_count_when_backend_returns_fewer_rows():
     with (
@@ -117,7 +166,7 @@ async def test_startup_context_reports_actual_skill_count_when_backend_returns_f
                 return_value={
                     "skills": [
                         {
-                            "name": "Redis Cluster Health Check",
+                            "name": "Example Incident Brief",
                             "summary": "Run a fast health check for the cluster.",
                         }
                     ],
@@ -145,8 +194,8 @@ async def test_startup_context_uses_default_redis_skill_backend_for_inventory():
                 "id": "skill-0",
                 "document_hash": "hash-skill",
                 "chunk_index": 0,
-                "name": "Redis Cluster Health Check",
-                "title": "Redis Cluster Health Check",
+                "name": "Example Incident Brief",
+                "title": "Example Incident Brief",
                 "summary": "Run a fast health check for the cluster.",
                 "content": "Checklist content",
                 "source": "docs/latest/skill",
@@ -174,7 +223,7 @@ async def test_startup_context_uses_default_redis_skill_backend_for_inventory():
             context = await build_startup_knowledge_context(version="latest", skills_limit=5)
 
         assert "Skills you know:" in context
-        assert "Redis Cluster Health Check: Run a fast health check for the cluster." in context
+        assert "Example Incident Brief: Run a fast health check for the cluster." in context
         get_skills_index.assert_awaited_once_with(config=fake_settings)
         skills_index.query.assert_awaited_once()
     finally:
@@ -408,7 +457,7 @@ async def test_startup_context_carries_internal_skill_discovery_envelope():
     assert envelope["name"] == "skills_check"
     assert envelope["args"] == {
         "query": "",
-        "limit": 50,
+        "limit": 25,
         "offset": 0,
         "version": "latest",
     }
@@ -489,7 +538,7 @@ async def test_startup_context_uses_eval_scoped_knowledge_backend():
 
         async def skills_check(self, **kwargs):
             assert kwargs["query"] is None
-            assert kwargs["limit"] == 50
+            assert kwargs["limit"] == 25
             return {
                 "skills": [
                     {

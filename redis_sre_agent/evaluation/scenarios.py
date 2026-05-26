@@ -338,6 +338,7 @@ class EvalExpectations(BaseModel):
 
     required_tool_calls: list[EvalLogicalToolRef] = Field(default_factory=list)
     forbidden_tool_calls: list[EvalLogicalToolRef] = Field(default_factory=list)
+    required_response_patterns: list[str] = Field(default_factory=list)
     required_findings: list[str] = Field(default_factory=list)
     forbidden_claims: list[str] = Field(default_factory=list)
     required_sources: list[str] = Field(default_factory=list)

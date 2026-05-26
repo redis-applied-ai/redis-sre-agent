@@ -187,6 +187,15 @@ def test_find_skill_package_root_respects_boundary(tmp_path: Path):
     assert find_skill_package_root(document_path, boundary=corpus_root) is None
 
 
+def test_find_skill_package_root_accepts_package_directory(tmp_path: Path):
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: top-level\ndescription: outer package\n---\n",
+        encoding="utf-8",
+    )
+
+    assert find_skill_package_root(tmp_path) == tmp_path.resolve()
+
+
 def test_scaffold_skill_package_from_markdown_creates_package_skeleton(tmp_path: Path):
     legacy_skill = tmp_path / "legacy-skill.md"
     legacy_skill.write_text(

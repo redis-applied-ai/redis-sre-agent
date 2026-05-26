@@ -18,6 +18,7 @@
       "target_handle": "tgt_instance_runtime_cache"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "is client-memory overhead",
     "explicit client list enumeration",

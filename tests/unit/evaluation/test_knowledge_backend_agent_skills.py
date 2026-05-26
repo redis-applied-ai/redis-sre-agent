@@ -1,5 +1,6 @@
 """Tests for Agent Skills packages in the fixture-backed eval knowledge backend."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -17,9 +18,10 @@ def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
     corpus_root = tmp_path / "fixtures" / "corpora" / "agent-skills" / "2026-04-22"
     skills_dir = corpus_root / "skills"
     legacy_skill = skills_dir / "legacy-triage.md"
-    agent_skill = skills_dir / "redis-maintenance-triage"
+    agent_skill = skills_dir / "example-incident-brief"
     (agent_skill / "references").mkdir(parents=True)
     (agent_skill / "scripts").mkdir()
+    (agent_skill / "agents").mkdir()
 
     legacy_skill.parent.mkdir(parents=True, exist_ok=True)
     legacy_skill.write_text(
@@ -30,22 +32,60 @@ def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
         "\n".join(
             [
                 "---",
-                "name: redis-maintenance-triage",
-                "description: Investigate maintenance mode before failover.",
-                "summary: Check maintenance state before disruptive actions.",
+                "name: example-incident-brief",
+                "description: Produce an incident brief from generic tool evidence.",
+                "summary: Build a structured incident brief from evidence.",
                 "---",
                 "",
-                "Agent Skills entrypoint body",
+                "# Example Incident Brief",
+                "",
+                "## Output structure",
+                "",
+                "Return one markdown document in this shape:",
+                "",
+                "```markdown",
+                "# Incident Brief: <incident name>",
+                "",
+                "**Incident ID:** <incident id>",
+                "**Primary service:** <service name>",
+                "",
+                "## Summary",
+                "",
+                "## Evidence Timeline",
+                "",
+                "## Tool Findings",
+                "",
+                "### Inventory",
+                "",
+                "### Metrics",
+                "",
+                "## Open Questions",
+                "```",
             ]
         ),
         encoding="utf-8",
     )
-    (agent_skill / "references" / "maintenance-checklist.md").write_text(
-        "---\ntitle: Maintenance Checklist\ndescription: Evidence checklist.\n---\n\nChecklist body\n",
+    (agent_skill / "references" / "evidence-checklist.md").write_text(
+        "---\ntitle: Evidence Checklist\ndescription: Evidence checklist.\n---\n\nChecklist body\n",
         encoding="utf-8",
     )
     (agent_skill / "scripts" / "collect_context.sh").write_text(
         "#!/usr/bin/env bash\necho collect\n",
+        encoding="utf-8",
+    )
+    (agent_skill / "agents" / "openai.yaml").write_text(
+        "\n".join(
+            [
+                "display_name: Example Incident Brief",
+                "preferred_entrypoint: SKILL.md",
+                "workflow_contract:",
+                "  required_tool_calls:",
+                "    - get_incident",
+                "    - get_metric_window",
+                "  progress_checklist:",
+                "    - Retrieve the incident record before writing the brief.",
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -63,7 +103,7 @@ def _write_scenario_with_agent_skills(tmp_path: Path) -> EvalScenario:
                 },
                 "execution": {
                     "lane": "full_turn",
-                    "query": "Check maintenance mode before failover.",
+                    "query": "Produce an incident brief.",
                     "route_via_router": True,
                 },
                 "knowledge": {
@@ -84,21 +124,21 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
     scenario = _write_scenario_with_agent_skills(tmp_path)
     backend = build_fixture_knowledge_backend(scenario)
 
-    skills = await backend.skills_check(query="maintenance", version="latest")
-    agent_skill = await backend.get_skill(skill_name="redis-maintenance-triage", version="latest")
+    skills = await backend.skills_check(query="incident", version="latest")
+    agent_skill = await backend.get_skill(skill_name="example-incident-brief", version="latest")
     agent_skill_resource = await backend.get_skill_resource(
-        skill_name="redis-maintenance-triage",
-        resource_path="references/maintenance-checklist.md",
+        skill_name="example-incident-brief",
+        resource_path="references/evidence-checklist.md",
         version="latest",
     )
     legacy = await backend.get_skill(skill_name="legacy-triage", version="latest")
 
     assert {skill["name"] for skill in skills["skills"]} == {
         "legacy-triage",
-        "redis-maintenance-triage",
+        "example-incident-brief",
     }
     agent_skill_row = next(
-        skill for skill in skills["skills"] if skill["name"] == "redis-maintenance-triage"
+        skill for skill in skills["skills"] if skill["name"] == "example-incident-brief"
     )
     legacy_skill_row = next(skill for skill in skills["skills"] if skill["name"] == "legacy-triage")
     assert agent_skill_row["protocol"] == "agent_skills_v1"
@@ -106,8 +146,8 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
     assert legacy_skill_row["matched_resource_path"] == ""
     assert agent_skill["references"] == [
         {
-            "path": "references/maintenance-checklist.md",
-            "title": "Maintenance Checklist",
+            "path": "references/evidence-checklist.md",
+            "title": "Evidence Checklist",
             "summary": "Evidence checklist.",
         }
     ]
@@ -117,6 +157,102 @@ async def test_fixture_backend_loads_agent_skills_and_legacy_skills(tmp_path: Pa
             "description": "Script resource at collect_context.sh",
         }
     ]
+    assert agent_skill["output_contract"] == {
+        "mode": "markdown",
+        "instructions": [
+            "Return one markdown document only.",
+            "Do not rename required headings.",
+            "Use the required headings verbatim and in order.",
+            "Include all required sections even when brief.",
+        ],
+        "validation_checklist": [
+            "Confirm the final answer follows the markdown template from the skill's Output structure section.",
+            "Confirm the document ends after `## Open Questions` with no footer.",
+        ],
+        "required_preamble_lines": [
+            "# Incident Brief: <incident name>",
+            "**Incident ID:** <incident id>",
+            "**Primary service:** <service name>",
+        ],
+        "required_order": [
+            "## Summary",
+            "## Evidence Timeline",
+            "## Tool Findings",
+            "## Open Questions",
+        ],
+        "required_subsections": ["### Inventory", "### Metrics"],
+        "required_patterns": [
+            {
+                "description": "Put `# Incident Brief: <incident name>` on its own line, add a blank line, then place `**Incident ID:**`, `**Primary service:**` on separate lines.",
+                "pattern": "(?s)^\\#\\ Incident\\ Brief:\\ .+?\\\n\\\n\\*\\*Incident\\ ID:\\*\\*\\ .+?\\\n\\*\\*Primary\\ service:\\*\\*\\ .+?",
+            },
+            {
+                "description": "Include a line matching `**Incident ID:** <incident id>`.",
+                "pattern": "(?m)^\\*\\*Incident\\ ID:\\*\\*\\ .+?$",
+            },
+            {
+                "description": "Include a line matching `**Primary service:** <service name>`.",
+                "pattern": "(?m)^\\*\\*Primary\\ service:\\*\\*\\ .+?$",
+            },
+            {
+                "description": "End the document in the required `## Open Questions` section without adding another `##` section.",
+                "pattern": "(?s)\\#\\#\\ Open\\ Questions(?:(?!\\n##\\s).)*\\s*$",
+            },
+        ],
+        "must_include_even_if_empty": True,
+        "template": "\n".join(
+            [
+                "# Incident Brief: <incident name>",
+                "",
+                "**Incident ID:** <incident id>",
+                "**Primary service:** <service name>",
+                "",
+                "## Summary",
+                "",
+                "## Evidence Timeline",
+                "",
+                "## Tool Findings",
+                "",
+                "### Inventory",
+                "",
+                "### Metrics",
+                "",
+                "## Open Questions",
+            ]
+        ),
+    }
+    final_section_pattern = agent_skill["output_contract"]["required_patterns"][-1]["pattern"]
+    assert re.search(
+        final_section_pattern,
+        "## Summary\nok\n\n## Evidence Timeline\nnow\n\n## Tool Findings\n\n"
+        "### Inventory\nok\n\n### Metrics\nok\n\n## Open Questions\nnone",
+    )
+    assert (
+        re.search(
+            final_section_pattern,
+            "## Summary\nok\n\n## Open Questions\nnone\n\n## Footer\nextra",
+        )
+        is None
+    )
+    assert agent_skill["workflow_contract"] == {
+        "required_tool_calls": ["get_incident", "get_metric_window"],
+        "progress_checklist": ["Retrieve the incident record before writing the brief."],
+    }
+    assert agent_skill["contract_summary"][0].startswith(
+        "This skill defines a binding output contract."
+    )
+    assert (
+        "Output pattern: Include a line matching `**Incident ID:** <incident id>`."
+        in agent_skill["contract_summary"]
+    )
+    assert (
+        "Validation checklist: Confirm the document ends after `## Open Questions` with no footer."
+        in agent_skill["contract_summary"]
+    )
+    assert (
+        "Workflow checklist: Retrieve the incident record before writing the brief."
+        in agent_skill["contract_summary"]
+    )
     assert agent_skill_resource["resource_kind"] == "reference"
     assert agent_skill_resource["content"] == "Checklist body"
     assert legacy == {"skill_name": "legacy-triage", "full_content": "Legacy body"}
@@ -180,14 +316,14 @@ async def test_fixture_backend_skills_check_keeps_best_matching_resource_for_que
         [
             FixtureKnowledgeDocument(
                 document_hash="entrypoint-doc",
-                title="Redis Maintenance Triage",
-                name="redis-maintenance-triage",
-                content="General maintenance overview.",
-                source="file://skills/redis-maintenance-triage/SKILL.md",
+                title="Example Incident Brief",
+                name="example-incident-brief",
+                content="General incident overview.",
+                source="file://skills/example-incident-brief/SKILL.md",
                 category="shared",
                 doc_type="skill",
                 severity="medium",
-                summary="General maintenance guidance.",
+                summary="General incident guidance.",
                 priority="normal",
                 pinned=False,
                 version="latest",
@@ -201,16 +337,14 @@ async def test_fixture_backend_skills_check_keeps_best_matching_resource_for_que
             ),
             FixtureKnowledgeDocument(
                 document_hash="reference-doc",
-                title="Maintenance Checklist",
-                name="redis-maintenance-triage",
-                content="Checklist body includes failover prechecks and owner confirmation.",
-                source=(
-                    "file://skills/redis-maintenance-triage/references/maintenance-checklist.md"
-                ),
+                title="Evidence Checklist",
+                name="example-incident-brief",
+                content="Checklist body includes timeline evidence and owner confirmation.",
+                source=("file://skills/example-incident-brief/references/evidence-checklist.md"),
                 category="shared",
                 doc_type="skill",
                 severity="medium",
-                summary="Detailed failover prechecks.",
+                summary="Detailed evidence checklist.",
                 priority="normal",
                 pinned=False,
                 version="latest",
@@ -219,17 +353,18 @@ async def test_fixture_backend_skills_check_keeps_best_matching_resource_for_que
                 provenance={},
                 protocol="agent_skills_v1",
                 resource_kind="reference",
-                resource_path="references/maintenance-checklist.md",
+                resource_path="references/evidence-checklist.md",
                 has_references=True,
             ),
         ]
     )
 
-    result = await backend.skills_check(query="failover prechecks", version="latest")
+    result = await backend.skills_check(query="timeline evidence", version="latest")
 
-    assert result["skills"][0]["name"] == "redis-maintenance-triage"
+    assert result["skills"][0]["name"] == "example-incident-brief"
     assert result["skills"][0]["matched_resource_kind"] == "reference"
-    assert result["skills"][0]["matched_resource_path"] == "references/maintenance-checklist.md"
+    assert result["skills"][0]["matched_resource_path"] == "references/evidence-checklist.md"
+    assert result["search_type"] == "semantic"
 
 
 @pytest.mark.asyncio
@@ -238,14 +373,14 @@ async def test_fixture_backend_skills_check_without_query_prefers_entrypoint_rep
         [
             FixtureKnowledgeDocument(
                 document_hash="entrypoint-doc",
-                title="Redis Maintenance Triage",
-                name="redis-maintenance-triage",
-                content="General maintenance overview.",
-                source="file://skills/redis-maintenance-triage/SKILL.md",
+                title="Example Incident Brief",
+                name="example-incident-brief",
+                content="General incident overview.",
+                source="file://skills/example-incident-brief/SKILL.md",
                 category="shared",
                 doc_type="skill",
                 severity="medium",
-                summary="General maintenance guidance.",
+                summary="General incident guidance.",
                 priority="normal",
                 pinned=False,
                 version="latest",
@@ -260,9 +395,9 @@ async def test_fixture_backend_skills_check_without_query_prefers_entrypoint_rep
             FixtureKnowledgeDocument(
                 document_hash="uppercase-reference-doc",
                 title="Agent Skills Overview",
-                name="redis-maintenance-triage",
+                name="example-incident-brief",
                 content="High-level overview.",
-                source="file://skills/redis-maintenance-triage/AGENTS.md",
+                source="file://skills/example-incident-brief/AGENTS.md",
                 category="shared",
                 doc_type="skill",
                 severity="medium",
@@ -283,9 +418,25 @@ async def test_fixture_backend_skills_check_without_query_prefers_entrypoint_rep
 
     result = await backend.skills_check(version="latest")
 
-    assert result["skills"][0]["name"] == "redis-maintenance-triage"
+    assert result["skills"][0]["name"] == "example-incident-brief"
     assert result["skills"][0]["matched_resource_kind"] == "entrypoint"
     assert result["skills"][0]["matched_resource_path"] == "SKILL.md"
+    assert result["search_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_fixture_backend_skills_check_reports_unsupported_hybrid_search():
+    backend = FixtureKnowledgeBackend([])
+
+    result = await backend.skills_check(
+        query="incident",
+        search_type="hybrid",
+        version="latest",
+    )
+
+    assert result["error"] == "unsupported_search_type"
+    assert result["requested_search_type"] == "hybrid"
+    assert result["supported_search_types"] == ["semantic", "keyword"]
 
 
 @pytest.mark.asyncio
@@ -294,10 +445,10 @@ async def test_fixture_backend_skills_check_prefers_skill_description_for_summar
         [
             FixtureKnowledgeDocument(
                 document_hash="entrypoint-doc",
-                title="Redis Maintenance Triage",
-                name="redis-maintenance-triage",
-                content="General maintenance overview.",
-                source="file://skills/redis-maintenance-triage/SKILL.md",
+                title="Example Incident Brief",
+                name="example-incident-brief",
+                content="General incident overview.",
+                source="file://skills/example-incident-brief/SKILL.md",
                 category="shared",
                 doc_type="skill",
                 severity="medium",

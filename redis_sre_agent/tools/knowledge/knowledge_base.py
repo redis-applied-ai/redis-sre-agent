@@ -260,7 +260,10 @@ class KnowledgeBaseToolProvider(ToolProvider):
                 name=self._make_tool_name("get_skill"),
                 description=(
                     "Retrieve the complete content of a skill by skill name. "
-                    "Use the name returned by skills_check."
+                    "Use the name returned by skills_check. "
+                    "Agent Skills packages may also return provider-specific contract fields such as "
+                    "`output_contract`, `workflow_contract`, and `contract_summary`; when present, "
+                    "treat them as binding instructions for the final answer and required follow-up work."
                 ),
                 capability=ToolCapability.KNOWLEDGE,
                 parameters={
@@ -517,13 +520,15 @@ class KnowledgeBaseToolProvider(ToolProvider):
         limit: int = 20,
         offset: int = 0,
         version: Optional[str] = "latest",
+        search_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """List available skills from the knowledge base."""
         limit = _coerce_positive_int(limit, default=20)
         offset = _coerce_non_negative_int(offset, default=0)
         logger.info(
-            "Checking skills (query=%s, limit=%s, offset=%s, version=%s)",
+            "Checking skills (query=%s, search_type=%s, limit=%s, offset=%s, version=%s)",
             bool(query),
+            search_type,
             limit,
             offset,
             version,
@@ -532,6 +537,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
             "tool.knowledge.skills_check",
             attributes={
                 "query.len": len(query or ""),
+                "search_type": search_type or "",
                 "limit": int(limit),
                 "offset": int(offset),
                 "version": version or "all",
@@ -542,6 +548,7 @@ class KnowledgeBaseToolProvider(ToolProvider):
                 limit=limit,
                 offset=offset,
                 version=version,
+                search_type=search_type,
             )
 
     async def get_skill(self, skill_name: str) -> Dict[str, Any]:

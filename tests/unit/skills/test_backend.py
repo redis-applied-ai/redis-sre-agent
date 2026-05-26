@@ -79,6 +79,8 @@ async def test_list_skills_collapses_package_resource_matches_by_skill():
         )
 
     assert result["results_count"] == 2
+    assert result["search_type"] == "semantic"
+    assert result["supported_search_types"] == ["semantic", "keyword", "hybrid"]
     assert [skill["name"] for skill in result["skills"]] == [
         "redis-maintenance-triage",
         "memory-pressure-triage",
@@ -134,6 +136,7 @@ async def test_list_skills_without_query_prefers_entrypoint_for_package_represen
         )
 
     assert result["results_count"] == 1
+    assert result["search_type"] is None
     assert result["skills"][0]["matched_resource_path"] == "SKILL.md"
     assert result["skills"][0]["matched_resource_kind"] == "entrypoint"
 

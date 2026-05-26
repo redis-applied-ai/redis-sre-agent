@@ -24,5 +24,6 @@
     "live-system-boundary",
     "target-discovery-before-live-access"
   ],
-  "expected_routing_decision": "chat"
+  "expected_routing_decision": "chat",
+  "required_response_patterns": []
 }

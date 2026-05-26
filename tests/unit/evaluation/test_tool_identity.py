@@ -11,10 +11,17 @@ from redis_sre_agent.evaluation.scenarios import EvalScenario
 from redis_sre_agent.evaluation.tool_identity import (
     LogicalToolIdentity,
     ToolIdentityCatalog,
+    normalize_tool_name_token,
 )
 from redis_sre_agent.tools.mcp.provider import MCPToolProvider
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 from redis_sre_agent.tools.protocols import ToolProvider
+
+
+def test_normalize_tool_name_token_collapses_whitespace_and_separator_variants():
+    assert normalize_tool_name_token("Example\tIncident  List-Related\nSignals") == (
+        "example_incident_list_related_signals"
+    )
 
 
 class StubProvider(ToolProvider):

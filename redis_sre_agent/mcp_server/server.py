@@ -1269,6 +1269,7 @@ async def redis_sre_get_related_knowledge_fragments(
 @mcp.tool()
 async def redis_sre_list_skills(
     query: Optional[str] = None,
+    search_type: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
     version: Optional[str] = "latest",
@@ -1276,7 +1277,8 @@ async def redis_sre_list_skills(
     """List skills from the active skill backend.
 
     Args:
-        query: Optional search query for relevance-ranked matching.
+        query: Optional search query for skill lookup.
+        search_type: Optional search type. Defaults to semantic when query is present.
         limit: Maximum number of skills to return.
         offset: Number of skills to skip for pagination.
         version: Optional version filter. Defaults to "latest".
@@ -1287,8 +1289,9 @@ async def redis_sre_list_skills(
     from redis_sre_agent.core.knowledge_helpers import skills_check_helper
 
     logger.info(
-        "MCP list_skills: query=%s limit=%s offset=%s version=%s",
+        "MCP list_skills: query=%s search_type=%s limit=%s offset=%s version=%s",
         bool(query),
+        search_type,
         limit,
         offset,
         version,
@@ -1297,6 +1300,7 @@ async def redis_sre_list_skills(
     try:
         return await skills_check_helper(
             query=query,
+            search_type=search_type,
             limit=limit,
             offset=offset,
             version=version,
@@ -1308,6 +1312,7 @@ async def redis_sre_list_skills(
             "skills": [],
             "total": 0,
             "query": query,
+            "search_type": search_type,
             "limit": limit,
             "offset": offset,
             "version": version,

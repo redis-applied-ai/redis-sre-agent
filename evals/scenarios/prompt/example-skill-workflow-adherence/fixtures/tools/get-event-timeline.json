@@ -1,0 +1,17 @@
+{
+  "incident_id": "inc-001",
+  "events": [
+    {
+      "timestamp": "2026-04-14T10:07:00Z",
+      "summary": "checkout-api deploy api-2026.05.14.7 completed"
+    },
+    {
+      "timestamp": "2026-04-14T10:18:00Z",
+      "summary": "p95 latency alert fired for checkout-api"
+    },
+    {
+      "timestamp": "2026-04-14T10:42:00Z",
+      "summary": "rollback started by payments-platform"
+    }
+  ]
+}

@@ -12,21 +12,23 @@ from redis_sre_agent.core.instances import (
     get_instances,
     save_instances,
 )
-from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.threads import ThreadManager
 
 
 @pytest.fixture
-async def thread_manager():
+async def thread_manager(async_redis_client):
     """Get the ThreadManager bound to the test Redis."""
-    manager = ThreadManager(redis_client=get_redis_client())
+    manager = ThreadManager(redis_client=async_redis_client)
     yield manager
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_tools_connect_to_correct_instance(thread_manager):
+async def test_tools_connect_to_correct_instance(thread_manager, async_redis_client):
     """Test that diagnostic tools connect to the specified instance, not default Redis."""
+    from redis_sre_agent.core.tasks import TaskManager
+
+    task_manager = TaskManager(redis_client=async_redis_client)
 
     # 1. Register a Redis Enterprise instance (simulating user's production instance)
     test_instance = RedisInstance(
@@ -63,6 +65,7 @@ async def test_tools_connect_to_correct_instance(thread_manager):
 
     print(f"✅ Created thread: {thread_id}")
     print(f"   Instance context: {test_instance.id}")
+    task_id = await task_manager.create_task(thread_id=thread_id, user_id="test-user")
 
     # 3. Ask about the instance's health (this should trigger diagnostics)
     query = f"Check the health of Redis instance {test_instance.name}"
@@ -78,26 +81,29 @@ async def test_tools_connect_to_correct_instance(thread_manager):
         await process_agent_turn(
             thread_id=thread_id,
             message=query,
+            task_id=task_id,
         )
     except Exception as e:
         print(f"\n⚠️  Agent execution failed (expected): {e}")
 
     # 5. Verify the thread state and check what happened
     thread_state = await thread_manager.get_thread(thread_id)
+    task_state = await task_manager.get_task_state(task_id)
+    task_updates = task_state.updates if task_state else []
 
     print("\n📊 Thread state:")
     print(f"   Context keys: {list(thread_state.context.keys())}")
-    print(f"   Updates: {len(thread_state.updates)}")
-    print(f"   Result: {thread_state.result}")
+    print(f"   Updates: {len(task_updates)}")
+    print(f"   Result: {task_state.result if task_state else None}")
 
     # Print ALL updates to see what happened
     print("\n📝 All updates:")
-    for i, update in enumerate(thread_state.updates):
+    for i, update in enumerate(task_updates):
         print(f"   {i + 1}. [{update.update_type}] {update.message[:150]}")
 
     # Check the updates for evidence of which Redis URL was used
     redis_urls_mentioned = []
-    for update in thread_state.updates:
+    for update in task_updates:
         if "redis://" in update.message:
             print(f"   Update with Redis URL: {update.message[:100]}")
             # Extract Redis URLs from the message
@@ -108,15 +114,17 @@ async def test_tools_connect_to_correct_instance(thread_manager):
 
     # Also check the final result
     result_str = ""
-    if thread_state.result:
+    if task_state and task_state.result:
         print("\n📄 Final result:")
-        result_str = str(thread_state.result)
+        result_str = str(task_state.result)
         print(f"   {result_str[:500]}")
         if "redis://" in result_str:
             import re
 
             urls = re.findall(r"redis://[^\s]+", result_str)
             redis_urls_mentioned.extend(urls)
+    elif task_state and task_state.error_message:
+        result_str = task_state.error_message
 
     print("\n🔍 Redis URLs mentioned in updates:")
     for url in set(redis_urls_mentioned):

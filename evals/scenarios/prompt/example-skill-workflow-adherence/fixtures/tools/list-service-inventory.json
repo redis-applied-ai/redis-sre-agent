@@ -1,0 +1,11 @@
+{
+  "incident_id": "inc-001",
+  "services": [
+    {
+      "name": "checkout-api",
+      "owner": "payments-platform",
+      "dependencies": ["cart-api", "pricing-api"],
+      "last_deploy": "api-2026.05.14.7"
+    }
+  ]
+}

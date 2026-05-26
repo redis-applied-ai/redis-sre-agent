@@ -1,0 +1,8 @@
+{
+  "incident_id": "inc-001",
+  "owner": "payments-platform",
+  "notes": [
+    "Rollback owner is payments-platform on-call.",
+    "Confirm whether cart-api retries amplified latency before closing the incident."
+  ]
+}

@@ -19,6 +19,7 @@ from redis_sre_agent.evaluation.tool_identity import (
     LogicalToolIdentity,
     concrete_provider_family_prefixes,
     normalize_provider_family,
+    normalize_tool_name_token,
 )
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:[-'][a-z0-9]+)*")
@@ -95,7 +96,7 @@ def _infer_trace_logical_identity(
     scenario: EvalScenario,
     concrete_name: str,
 ) -> LogicalToolIdentity | None:
-    normalized_name = _normalize_text(concrete_name).replace(" ", "_")
+    normalized_name = normalize_tool_name_token(concrete_name)
     if not normalized_name:
         return None
     if normalized_name == "knowledge.pinned_context":
@@ -106,7 +107,7 @@ def _infer_trace_logical_identity(
 
     candidate_operations: list[tuple[int, LogicalToolIdentity]] = []
     for provider_family, operation_map in scenario.tools.providers.items():
-        raw_provider = _normalize_text(provider_family).replace(" ", "_")
+        raw_provider = normalize_tool_name_token(provider_family)
         canonical_provider = normalize_provider_family(raw_provider)
         provider_prefixes = {
             f"{provider_prefix}_"
@@ -115,7 +116,7 @@ def _infer_trace_logical_identity(
         if not any(normalized_name.startswith(prefix) for prefix in provider_prefixes):
             continue
         for operation in operation_map:
-            normalized_operation = _normalize_text(operation).replace(" ", "_")
+            normalized_operation = normalize_tool_name_token(operation)
             if not normalized_name.endswith(f"_{normalized_operation}"):
                 continue
             payload: dict[str, Any] = {
@@ -133,6 +134,28 @@ def _infer_trace_logical_identity(
                 (
                     len(normalized_operation),
                     LogicalToolIdentity.model_validate(payload),
+                )
+            )
+
+    for server_name, server_config in scenario.tools.mcp_servers.items():
+        normalized_server_name = normalize_tool_name_token(server_name)
+        provider_prefix = f"mcp_{normalized_server_name}_"
+        if not normalized_name.startswith(provider_prefix):
+            continue
+        for operation in server_config.tools:
+            normalized_operation = normalize_tool_name_token(operation)
+            if not normalized_name.endswith(f"_{normalized_operation}"):
+                continue
+            candidate_operations.append(
+                (
+                    len(normalized_operation),
+                    LogicalToolIdentity.model_validate(
+                        {
+                            "provider_family": "mcp",
+                            "server_name": server_name,
+                            "operation": normalized_operation,
+                        }
+                    ),
                 )
             )
 
@@ -234,6 +257,13 @@ def _contains_phrase(text: str, phrase: str) -> bool:
             continue
         return True
     return False
+
+
+def _matches_response_pattern(text: str, pattern: str) -> bool:
+    try:
+        return re.search(pattern, text) is not None
+    except re.error:
+        return False
 
 
 def _pass(message: str, *, expected: Any = None, actual: Any = None) -> EvalAssertionResult:
@@ -378,6 +408,25 @@ def score_structured_assertions(
                 )
             )
 
+    required_response_patterns: list[EvalAssertionResult] = []
+    for expected in scenario.expectations.required_response_patterns:
+        if _matches_response_pattern(final_answer, expected):
+            required_response_patterns.append(
+                _pass(
+                    "Observed required response pattern in final answer",
+                    expected=expected,
+                    actual=final_answer,
+                )
+            )
+        else:
+            required_response_patterns.append(
+                _fail(
+                    "Missing required response pattern in final answer",
+                    expected=expected,
+                    actual=final_answer,
+                )
+            )
+
     forbidden_claims: list[EvalAssertionResult] = []
     for expected in scenario.expectations.forbidden_claims:
         if _contains_phrase(answer, expected):
@@ -436,6 +485,7 @@ def score_structured_assertions(
         required_tool_calls=required_tool_calls,
         forbidden_tool_calls=forbidden_tool_calls,
         required_sources=required_sources,
+        required_response_patterns=required_response_patterns,
         forbidden_claims=forbidden_claims,
         required_findings=required_findings,
         expected_routing_decision=expected_routing_decision,
@@ -452,6 +502,7 @@ def flatten_structured_assertions(
         "required_tool_call": results.required_tool_calls,
         "forbidden_tool_call": results.forbidden_tool_calls,
         "required_source": results.required_sources,
+        "required_response_pattern": results.required_response_patterns,
         "forbidden_claim": results.forbidden_claims,
         "required_finding": results.required_findings,
     }

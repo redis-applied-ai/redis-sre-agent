@@ -17,6 +17,7 @@
       "operation": "info"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "maintenance mode explains the failover churn",
     "verify replica health before changing maintenance state"

@@ -1,6 +1,7 @@
 {
   "required_tool_calls": [],
   "forbidden_tool_calls": [],
+  "required_response_patterns": [],
   "required_findings": [
     "check maintenance mode before deeper failover triage"
   ],

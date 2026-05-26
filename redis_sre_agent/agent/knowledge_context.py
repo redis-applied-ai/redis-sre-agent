@@ -54,9 +54,16 @@ def _skills_toc_lines(
     skills: List[Dict[str, Any]],
     *,
     total_skills: Optional[int] = None,
+    displayed_limit: Optional[int] = None,
 ) -> List[str]:
     """Render the ADR skills table of contents lines."""
     if not skills:
+        return []
+
+    displayed_skills = skills
+    if displayed_limit is not None:
+        displayed_skills = skills[: max(displayed_limit, 0)]
+    if not displayed_skills:
         return []
 
     lines = [
@@ -66,18 +73,25 @@ def _skills_toc_lines(
         "- If a listed skill matches the request, retrieve it with `get_skill` before claiming that you used, followed, or executed it.",
         "- If you use any retrieved skills during your turn, add a note to your answer saying which skill(s) you used.",
     ]
-    if total_skills is not None and total_skills > len(skills):
-        remaining = total_skills - len(skills)
-        shown = len(skills)
+    effective_total_skills = total_skills
+    if effective_total_skills is None and len(skills) > len(displayed_skills):
+        effective_total_skills = len(skills)
+    if effective_total_skills is not None and effective_total_skills > len(displayed_skills):
+        shown = len(displayed_skills)
+        remaining = effective_total_skills - shown
         lines.append(
             "- This startup inventory is truncated: "
             f"{shown} skill{'s' if shown != 1 else ''} shown, {remaining} more available in the backend. "
             "If you need a related skill that is not listed here, search for related skills before concluding there is no relevant match."
         )
-    for skill in skills:
-        name = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
+    for skill in displayed_skills:
+        title = str(skill.get("title", "")).strip() or str(skill.get("name", "")).strip()
+        lookup_name = str(skill.get("name", "")).strip()
         summary = str(skill.get("summary", "")).strip() or str(skill.get("description", "")).strip()
-        lines.append(f"- {name}: {summary}")
+        if lookup_name and title and lookup_name != title:
+            lines.append(f"- {title} (`{lookup_name}`): {summary}")
+        else:
+            lines.append(f"- {title or lookup_name}: {summary}")
     return lines
 
 
@@ -226,12 +240,13 @@ def _build_internal_startup_skills_envelope(
 
     results: List[Dict[str, Any]] = []
     for skill in skills:
-        title = str(skill.get("name", "")).strip() or str(skill.get("title", "")).strip()
+        title = str(skill.get("title", "")).strip() or str(skill.get("name", "")).strip()
+        lookup_name = str(skill.get("name", "")).strip()
         document_hash = str(skill.get("document_hash", "")).strip()
         results.append(
             {
-                "id": document_hash or title,
-                "title": title or document_hash or "Skill",
+                "id": document_hash or lookup_name or title,
+                "title": title or lookup_name or document_hash or "Skill",
                 "source": str(skill.get("source", "")).strip(),
                 "document_hash": document_hash,
                 "doc_type": "skill",
@@ -354,6 +369,7 @@ async def build_startup_knowledge_context(
     skills_lines = _skills_toc_lines(
         skill_rows,
         total_skills=normalized_total_skills,
+        displayed_limit=effective_skills_limit,
     )
     if skills_lines:
         sections.append("\n".join(skills_lines))

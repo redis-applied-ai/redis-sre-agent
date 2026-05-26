@@ -1,0 +1,11 @@
+{
+  "incident_id": "inc-001",
+  "service": "checkout-api",
+  "window": "2026-04-14T10:00:00Z/2026-04-14T11:00:00Z",
+  "metrics": {
+    "p95_latency_ms_before": 180,
+    "p95_latency_ms_peak": 920,
+    "error_rate_peak_percent": 2.4,
+    "request_rate_change_percent": 3
+  }
+}

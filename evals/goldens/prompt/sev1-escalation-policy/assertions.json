@@ -6,5 +6,6 @@
   "forbidden_claims": [
     "wait until tomorrow",
     "wait until business hours"
-  ]
+  ],
+  "required_response_patterns": []
 }

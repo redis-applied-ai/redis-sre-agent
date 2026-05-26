@@ -137,6 +137,7 @@ class StructuredAssertionResults(BaseModel):
     required_tool_calls: list[EvalAssertionResult] = Field(default_factory=list)
     forbidden_tool_calls: list[EvalAssertionResult] = Field(default_factory=list)
     required_sources: list[EvalAssertionResult] = Field(default_factory=list)
+    required_response_patterns: list[EvalAssertionResult] = Field(default_factory=list)
     forbidden_claims: list[EvalAssertionResult] = Field(default_factory=list)
     required_findings: list[EvalAssertionResult] = Field(default_factory=list)
     expected_routing_decision: EvalAssertionResult | None = None
@@ -148,6 +149,7 @@ class StructuredAssertionResults(BaseModel):
             *self.required_tool_calls,
             *self.forbidden_tool_calls,
             *self.required_sources,
+            *self.required_response_patterns,
             *self.forbidden_claims,
             *self.required_findings,
         ]
@@ -382,6 +384,7 @@ class EvalReportBundle(BaseModel):
             len(self.structured_assertion_results.required_tool_calls)
             + len(self.structured_assertion_results.forbidden_tool_calls)
             + len(self.structured_assertion_results.required_sources)
+            + len(self.structured_assertion_results.required_response_patterns)
             + len(self.structured_assertion_results.forbidden_claims)
             + len(self.structured_assertion_results.required_findings)
             + (1 if self.structured_assertion_results.expected_routing_decision is not None else 0)

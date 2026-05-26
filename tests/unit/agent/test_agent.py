@@ -62,6 +62,16 @@ def mock_sre_tasks():
                     yield mocks
 
 
+@pytest.fixture(autouse=True)
+def mock_configured_instances():
+    """Keep agent unit tests isolated from locally configured Redis instances."""
+    with patch(
+        "redis_sre_agent.agent.langgraph_agent.get_instances",
+        AsyncMock(return_value=[]),
+    ):
+        yield
+
+
 class TestSRELangGraphAgent:
     """Test cases for SRE LangGraph Agent."""
 

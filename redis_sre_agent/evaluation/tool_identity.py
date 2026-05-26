@@ -33,6 +33,11 @@ def _normalize_optional_token(value: Any) -> str | None:
     return normalized or None
 
 
+def normalize_tool_name_token(value: Any) -> str:
+    normalized = " ".join(str(value or "").strip().lower().split())
+    return normalized.replace("-", "_").replace(" ", "_")
+
+
 def normalize_provider_family(provider_family: str) -> str:
     """Return the canonical scenario-facing provider family."""
     normalized = _normalize_token(provider_family)

@@ -18,6 +18,7 @@
       "target_handle": "tgt_instance_sessions_cache"
     }
   ],
+  "required_response_patterns": [],
   "required_findings": [
     "slowlog points to an application anti-pattern",
     "prefer fixing the command pattern before changing Redis configuration"
