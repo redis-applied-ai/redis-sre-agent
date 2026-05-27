@@ -6,7 +6,6 @@ which agent should handle them based on context and query content.
 """
 
 import logging
-import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -19,20 +18,6 @@ from redis_sre_agent.core.targets import get_attached_target_handles_from_contex
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 
 logger = logging.getLogger(__name__)
-
-_EXPLICIT_DEEP_TRIAGE_PATTERNS = (
-    re.compile(r"\bdeep[\s-]+triage\b"),
-    re.compile(r"\bdeep[\s-]+research\b"),
-    re.compile(r"\bdeep[\s-]+analysis\b"),
-    re.compile(r"\bdeep[\s-]+dive\b"),
-    re.compile(r"\bgo[\s-]+deep\b"),
-    re.compile(r"\bdig[\s-]+deep\b"),
-    re.compile(r"\binvestigate[\s-]+deeply\b"),
-    re.compile(r"\bcomprehensive[\s-]+triage\b"),
-    re.compile(r"\bfull[\s-]+triage\b"),
-    re.compile(r"\bexhaustive[\s-]+analysis\b"),
-    re.compile(r"\bthorough[\s-]+investigation\b"),
-)
 
 
 class AgentType(Enum):
@@ -66,12 +51,6 @@ def format_conversation_context(
         lines.append(f"{role}: {content}")
 
     return "\n".join(lines)
-
-
-def _query_explicitly_requests_deep_triage(query: str) -> bool:
-    """Return True when the user directly requests the heavy triage path."""
-    query_text = (query or "").lower()
-    return any(pattern.search(query_text) for pattern in _EXPLICIT_DEEP_TRIAGE_PATTERNS)
 
 
 async def route_to_appropriate_agent(
@@ -111,28 +90,17 @@ async def route_to_appropriate_agent(
         logger.info("Support package provided - routing to REDIS_TRIAGE for diagnostic tools")
         return AgentType.REDIS_TRIAGE
 
-    # 2. Explicit deep triage requests need triage before target discovery resolves scope.
-    if not has_diagnostic_scope and _query_explicitly_requests_deep_triage(query):
-        logger.info("Zero-scope query explicitly requested deep triage - routing to REDIS_TRIAGE")
-        return AgentType.REDIS_TRIAGE
-
-    # 3. No diagnostic scope (instance/cluster) - default to chat.
-    # Chat now serves as the zero-scope knowledge/default agent.
-    if not has_diagnostic_scope:
-        logger.info(
-            "No diagnostic scope - routing to REDIS_CHAT as the default general-purpose agent"
-        )
-        return AgentType.REDIS_CHAT
-
-    # 4. Has instance or cluster scope - decide between triage (full) and chat (quick)
-    # Check user preferences first
+    # 2. Has user preference and diagnostic scope - use it.
+    # Zero-scope requests still go through intent routing before target discovery.
     if user_preferences and user_preferences.get("preferred_agent"):
         preferred = user_preferences["preferred_agent"]
-        if preferred in [agent.value for agent in AgentType]:
+        if has_diagnostic_scope and preferred in [agent.value for agent in AgentType]:
             logger.info(f"Using user preference: {preferred}")
             return AgentType(preferred)
 
-    # 5. Use LLM to categorize triage vs chat
+    # 3. Use LLM to categorize triage vs chat.
+    # This must run before the zero-scope fallback so explicit deep-triage
+    # requests can enter target discovery.
     context_str = format_conversation_context(conversation_history)
 
     try:
@@ -140,8 +108,9 @@ async def route_to_appropriate_agent(
 
         system_prompt = """You are a query categorization system for a Redis SRE agent.
 
-The user has Redis diagnostic scope available (instance and/or cluster). Determine what kind of agent should handle their query.
+Determine what kind of agent should handle the user's query.
 Consider the conversation context if provided - a follow-up like "yes", "sure", or "check that" refers to the previous discussion.
+Redis diagnostic scope may or may not already be attached. If no scope is attached, a DEEP_TRIAGE result can still be used to discover a target from the user's natural language.
 
 1. DEEP_TRIAGE: ONLY use this for explicit requests for deep, comprehensive, or multi-topic analysis.
    Trigger phrases (must explicitly appear):
@@ -172,7 +141,7 @@ DEFAULT TO CHAT unless you see explicit deep/exhaustive keywords.
 
 Respond with ONLY one word: either "DEEP_TRIAGE" or "CHAT"."""
 
-        scope_hint = ""
+        scope_hint = " [Scope: none attached]"
         if has_cluster and not has_instance:
             scope_hint = " [Scope: cluster]"
         elif has_instance:

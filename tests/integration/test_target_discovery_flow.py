@@ -546,6 +546,14 @@ async def test_process_agent_turn_pre_resolves_target_scope_for_deep_triage(
 
     with (
         patch(
+            "redis_sre_agent.agent.router.create_nano_llm",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "redis_sre_agent.agent.router.guarded_ainvoke",
+            new=AsyncMock(return_value=MagicMock(content="DEEP_TRIAGE")),
+        ),
+        patch(
             "redis_sre_agent.core.docket_tasks.run_agent_with_progress",
             new=AsyncMock(return_value=fake_agent_result),
         ),

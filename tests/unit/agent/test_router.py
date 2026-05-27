@@ -33,15 +33,21 @@ class TestRouteToAppropriateAgent:
     """Test the route_to_appropriate_agent function."""
 
     async def test_no_instance_routes_to_chat(self):
-        """Zero-scope queries should use chat as the default general-purpose agent."""
+        """Zero-scope queries should use nano routing before defaulting to chat."""
         with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "CHAT"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
             result = await route_to_appropriate_agent(
                 query="What are Redis best practices?",
                 context=None,
             )
 
             assert result == AgentType.REDIS_CHAT
-            mock_create.assert_not_called()
+            mock_create.assert_called_once()
 
     async def test_instance_with_deep_triage_request_routes_to_triage(self):
         """Test that deep triage requests with instance route to triage agent."""
@@ -97,16 +103,34 @@ class TestRouteToAppropriateAgent:
             "Run a comprehensive triage for the prod orders cache",
         ],
     )
-    async def test_zero_scope_deep_language_routes_to_triage_without_llm(self, query):
+    async def test_zero_scope_deep_language_routes_to_triage_with_llm(self, query):
         """Zero-scope deep-triage requests should enter target discovery."""
         with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "DEEP_TRIAGE"
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_llm
+
             result = await route_to_appropriate_agent(
                 query=query,
                 context=None,
             )
 
         assert result == AgentType.REDIS_TRIAGE
-        mock_create.assert_not_called()
+        mock_create.assert_called_once()
+
+    async def test_zero_scope_llm_error_defaults_to_chat(self):
+        """Zero-scope LLM routing failures should still default to chat."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            mock_create.side_effect = Exception("LLM unavailable")
+
+            result = await route_to_appropriate_agent(
+                query="What are Redis best practices?",
+                context=None,
+            )
+
+            assert result == AgentType.REDIS_CHAT
 
     async def test_user_preference_respected(self):
         """Test that user preferences are respected when instance exists."""
