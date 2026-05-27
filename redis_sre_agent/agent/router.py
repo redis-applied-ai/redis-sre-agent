@@ -6,6 +6,7 @@ which agent should handle them based on context and query content.
 """
 
 import logging
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +19,20 @@ from redis_sre_agent.core.targets import get_attached_target_handles_from_contex
 from .cluster_diagnostics import cluster_query_requests_db_diagnostics
 
 logger = logging.getLogger(__name__)
+
+_EXPLICIT_DEEP_TRIAGE_PATTERNS = (
+    re.compile(r"\bdeep[\s-]+triage\b"),
+    re.compile(r"\bdeep[\s-]+research\b"),
+    re.compile(r"\bdeep[\s-]+analysis\b"),
+    re.compile(r"\bdeep[\s-]+dive\b"),
+    re.compile(r"\bgo[\s-]+deep\b"),
+    re.compile(r"\bdig[\s-]+deep\b"),
+    re.compile(r"\binvestigate[\s-]+deeply\b"),
+    re.compile(r"\bcomprehensive[\s-]+triage\b"),
+    re.compile(r"\bfull[\s-]+triage\b"),
+    re.compile(r"\bexhaustive[\s-]+analysis\b"),
+    re.compile(r"\bthorough[\s-]+investigation\b"),
+)
 
 
 class AgentType(Enum):
@@ -51,6 +66,12 @@ def format_conversation_context(
         lines.append(f"{role}: {content}")
 
     return "\n".join(lines)
+
+
+def _query_explicitly_requests_deep_triage(query: str) -> bool:
+    """Return True when the user directly requests the heavy triage path."""
+    query_text = (query or "").lower()
+    return any(pattern.search(query_text) for pattern in _EXPLICIT_DEEP_TRIAGE_PATTERNS)
 
 
 async def route_to_appropriate_agent(
@@ -90,7 +111,12 @@ async def route_to_appropriate_agent(
         logger.info("Support package provided - routing to REDIS_TRIAGE for diagnostic tools")
         return AgentType.REDIS_TRIAGE
 
-    # 2. No diagnostic scope (instance/cluster) - default to chat.
+    # 2. Explicit deep triage requests need triage before target discovery resolves scope.
+    if not has_diagnostic_scope and _query_explicitly_requests_deep_triage(query):
+        logger.info("Zero-scope query explicitly requested deep triage - routing to REDIS_TRIAGE")
+        return AgentType.REDIS_TRIAGE
+
+    # 3. No diagnostic scope (instance/cluster) - default to chat.
     # Chat now serves as the zero-scope knowledge/default agent.
     if not has_diagnostic_scope:
         logger.info(
@@ -98,7 +124,7 @@ async def route_to_appropriate_agent(
         )
         return AgentType.REDIS_CHAT
 
-    # 3. Has instance or cluster scope - decide between triage (full) and chat (quick)
+    # 4. Has instance or cluster scope - decide between triage (full) and chat (quick)
     # Check user preferences first
     if user_preferences and user_preferences.get("preferred_agent"):
         preferred = user_preferences["preferred_agent"]
@@ -106,7 +132,7 @@ async def route_to_appropriate_agent(
             logger.info(f"Using user preference: {preferred}")
             return AgentType(preferred)
 
-    # 4. Use LLM to categorize triage vs chat
+    # 5. Use LLM to categorize triage vs chat
     context_str = format_conversation_context(conversation_history)
 
     try:

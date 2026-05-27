@@ -89,14 +89,24 @@ class TestRouteToAppropriateAgent:
 
             assert result == AgentType.REDIS_CHAT
 
-    async def test_zero_scope_deep_language_still_defaults_to_chat(self):
-        """Until target discovery lands, zero-scope requests stay on chat even if phrased broadly."""
-        result = await route_to_appropriate_agent(
-            query="Do a deep triage on Redis best practices",
-            context=None,
-        )
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "Do a deep triage on database 12345",
+            "Do a deep triage on orders-cache-prod",
+            "Run a comprehensive triage for the prod orders cache",
+        ],
+    )
+    async def test_zero_scope_deep_language_routes_to_triage_without_llm(self, query):
+        """Zero-scope deep-triage requests should enter target discovery."""
+        with patch("redis_sre_agent.agent.router.create_nano_llm") as mock_create:
+            result = await route_to_appropriate_agent(
+                query=query,
+                context=None,
+            )
 
-        assert result == AgentType.REDIS_CHAT
+        assert result == AgentType.REDIS_TRIAGE
+        mock_create.assert_not_called()
 
     async def test_user_preference_respected(self):
         """Test that user preferences are respected when instance exists."""
