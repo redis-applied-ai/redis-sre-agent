@@ -99,6 +99,12 @@ Generated from the Click command tree.
 - eval list — List known eval scenario ids.
 - eval live-suite — Run one configured live-model eval suite.
 - eval run — Run one mocked eval scenario.
+- feedback — Agent response feedback commands (up / down / withdraw / show / list).
+- feedback down — Submit a thumbs-down for TASK_ID.
+- feedback list — List feedback views with optional filters.
+- feedback show — Show current feedback for TASK_ID (joined view with task info).
+- feedback up — Submit a thumbs-up for TASK_ID.
+- feedback withdraw — Withdraw feedback for TASK_ID (sets verdict to 'withdrawn').
 - version — Show the Redis SRE Agent version.
 
 See How-to guides for examples.

@@ -9,6 +9,8 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from redis_sre_agent import __version__
 from redis_sre_agent.api.clusters import router as clusters_router
+from redis_sre_agent.api.feedback import list_router as feedback_list_router
+from redis_sre_agent.api.feedback import router as feedback_router
 from redis_sre_agent.api.health import router as health_router
 from redis_sre_agent.api.instances import router as instances_router
 from redis_sre_agent.api.knowledge import router as knowledge_router
@@ -199,6 +201,8 @@ app.include_router(knowledge_router, tags=["Knowledge"])
 # Mount the Threads/Tasks APIs under /api/v1
 app.include_router(threads_router, prefix="/api/v1", tags=["Threads"])
 app.include_router(tasks_api_router, prefix="/api/v1", tags=["Tasks"])
+app.include_router(feedback_router)
+app.include_router(feedback_list_router)
 app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
 
 app.include_router(schedules_router, tags=["Schedules"])

@@ -104,6 +104,8 @@ class TestCliMcpParityHelpers:
             "eval list",
             "eval live-suite",
             "eval run",
+            "feedback list",
+            "feedback show",
             "knowledge-pack build",
             "knowledge-pack inspect",
             "knowledge-pack load",

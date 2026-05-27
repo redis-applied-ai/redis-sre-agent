@@ -3094,6 +3094,92 @@ async def redis_sre_delete_instance(instance_id: str, confirm: bool = False) -> 
         }
 
 
+@mcp.tool()
+async def redis_sre_submit_feedback(
+    task_id: str,
+    verdict: str,
+    comment: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Submit, update, or withdraw feedback for a completed task.
+
+    Records a thumbs-up / thumbs-down / withdrawal against a task so the
+    SRE team can track agent quality over time.
+
+    Args:
+        task_id: The task ID returned by redis_sre_deep_triage / redis_sre_general_chat
+        verdict: One of "up", "down", or "withdrawn"
+        comment: Optional free-text explanation (max 2048 chars)
+
+    Returns:
+        FeedbackRecord dict with task_id, verdict, comment, created_at, updated_at
+
+    Raises:
+        pydantic.ValidationError: verdict is not one of "up"/"down"/"withdrawn",
+            or comment exceeds 2048 chars.
+        TaskNotFoundError: the task_id does not exist in Redis.
+
+    Note: Unlike redis_sre_general_chat and redis_sre_deep_triage, this tool
+    deliberately does NOT catch exceptions into success-shaped error dicts
+    ({"error": ..., "status": "failed"}). Validation errors and TaskNotFoundError
+    are meaningful signals that MCP callers should handle — swallowing them would
+    hide misuse (wrong verdict value, stale task_id) behind a silent "failed" dict.
+    """
+    # Deferred import — avoids potential import cycles (matches pattern at server.py:338+).
+    from redis_sre_agent.core.feedback import submit_feedback
+
+    record = await submit_feedback(task_id, verdict, comment)
+    return record.model_dump(mode="json")
+
+
+@mcp.tool()
+async def redis_sre_get_feedback(task_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch the joined feedback view for a single task.
+
+    Returns the FeedbackView dict (feedback + task) when feedback exists for the task,
+    or null when the task is known but has not been rated yet.
+    Raises TaskNotFoundError (propagated as a native MCP error) when the task itself does not exist.
+
+    Note: Like redis_sre_submit_feedback (and unlike redis_sre_general_chat), this tool
+    deliberately does NOT catch exceptions into success-shaped error dicts
+    ({"error": ..., "status": "failed"}). TaskNotFoundError is a meaningful signal
+    that MCP callers should handle.
+    """
+    # Deferred import — avoids potential import cycles (matches pattern at server.py:338+).
+    from redis_sre_agent.core.feedback import get_feedback_view
+
+    view = await get_feedback_view(task_id)
+    return view.model_dump(mode="json") if view is not None else None
+
+
+@mcp.tool()
+async def redis_sre_list_feedback(
+    since: Optional[str] = None,
+    verdict: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """List feedback views with optional filters.
+
+    Filters apply AND-semantics; results are sorted by feedback.updated_at descending and clamped to a max of 500.
+    Validation errors propagate as MCP-native errors (e.g. invalid `since` format or unknown `verdict`/`status`).
+
+    Returns: {"items": [<FeedbackView dict>, ...], "count": int}
+
+    Note: Like redis_sre_submit_feedback (and unlike redis_sre_general_chat), this tool
+    deliberately does NOT catch exceptions into success-shaped error dicts
+    ({"error": ..., "status": "failed"}). Validation errors are meaningful signals
+    that MCP callers should handle.
+    """
+    # Deferred import — avoids potential import cycles (matches pattern at server.py:338+).
+    from redis_sre_agent.core.feedback import list_feedback_views
+
+    views = await list_feedback_views(since=since, verdict=verdict, status=status, limit=limit)
+    return {
+        "items": [v.model_dump(mode="json") for v in views],
+        "count": len(views),
+    }
+
+
 # ============================================================================
 # Server runners
 # ============================================================================

@@ -55,6 +55,25 @@ make local-services-logs # Tail logs
 - Written specs: `specs/`
 - Source documents: `source_documents/`
 
+## Feedback
+
+### HTTP endpoints
+- `POST /api/v1/tasks/{task_id}/feedback` — submit or update feedback; body `{"verdict":"up"|"down"|"withdrawn","comment":"..."}` (comment optional, max 2048 chars); returns `FeedbackRecord` (200) or 404 when task absent; invalid verdict or oversized comment → 422.
+- `GET /api/v1/tasks/{task_id}/feedback` — retrieve current feedback; returns `FeedbackRecord` (200) or 404 when no feedback exists.
+
+### MCP tool
+- `redis_sre_submit_feedback(task_id, verdict, comment?)` — thin wrapper around `submit_feedback()`; propagates `pydantic.ValidationError` and `TaskNotFoundError` as native MCP errors (not success-shaped error dicts).
+
+### CLI commands
+- `redis-sre-agent feedback up <task_id> [--comment "..."]`
+- `redis-sre-agent feedback down <task_id> [--comment "..."]`
+- `redis-sre-agent feedback withdraw <task_id>`
+- `redis-sre-agent feedback show <task_id>`
+- `redis-sre-agent feedback list [--since <Ns|m|h|d>] [--verdict up|down|withdrawn] [--limit N]`
+
+### How feedback works
+All feedback writes go through `submit_feedback()` in `redis_sre_agent/core/feedback.py`. HTTP, MCP, and CLI surfaces are thin wrappers. The Redis hash at `sre:feedback:task:{task_id}` is the source of truth; `created_at` is `HSETNX`-anchored to be concurrency-safe; a `feedback_submitted` event is published to `sre:stream:task:{thread_id}` after every successful write. To add a new surface, wrap `submit_feedback()` — do not write to the Redis hash directly.
+
 ## Specs
 - Put newly written design specs and implementation specs in `specs/`.
 - Prefer `specs/` over `docs/` for work-in-progress or review-oriented specification documents.

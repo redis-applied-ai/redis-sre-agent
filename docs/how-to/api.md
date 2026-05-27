@@ -259,6 +259,7 @@ curl -fsS http://localhost:8080/api/v1/schedules/<schedule_id>/runs | jq
 - Tasks: `GET /api/v1/tasks/{task_id}`
 - Threads: `GET /api/v1/threads`, `GET /api/v1/threads/{thread_id}`
 - WebSocket: `ws://localhost:8080/api/v1/ws/tasks/{thread_id}`
+- **Feedback**: `POST/GET /api/v1/tasks/{task_id}/feedback` — see [feedback.md](./feedback.md).
 
 #### Approval-driven tasks
 Some write actions pause a task in `awaiting_approval`. When that happens:

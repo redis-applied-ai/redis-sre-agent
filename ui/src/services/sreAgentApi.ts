@@ -1,4 +1,15 @@
 // SRE Agent API service - Task-based implementation
+
+export type FeedbackVerdict = "up" | "down" | "withdrawn";
+
+export interface FeedbackRecord {
+  task_id: string;
+  verdict: FeedbackVerdict;
+  comment: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
   content: string;
@@ -72,6 +83,7 @@ export interface TaskStatusResponse {
   error_message?: string;
   pending_approval?: PendingApprovalSummary | null;
   resume_supported: boolean;
+  feedback?: FeedbackRecord | null;
   metadata: {
     created_at: string;
     updated_at: string;
@@ -1575,6 +1587,40 @@ class SREAgentAPI {
       throw new Error(
         `Failed to reset knowledge settings: ${response.statusText}`,
       );
+    }
+    return response.json();
+  }
+
+  async submitFeedback(
+    taskId: string,
+    verdict: FeedbackVerdict,
+    comment?: string,
+  ): Promise<FeedbackRecord> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/feedback`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ verdict, comment: comment ?? null }),
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+    return response.json();
+  }
+
+  async getFeedback(taskId: string): Promise<FeedbackRecord | null> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/feedback`,
+    );
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
     return response.json();
   }

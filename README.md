@@ -18,6 +18,7 @@ Documentation: <https://redis-applied-ai.github.io/redis-sre-agent/>
 - Route work through a background worker and persist tasks, threads, and citations.
 - Analyze Redis Enterprise support packages alongside live targets.
 - Expose the same core capabilities through a CLI, REST API, Docker stack, and MCP server.
+- **Response feedback**: Capture 👍 / 👎 / withdrawn user feedback on agent responses from any interface (UI, HTTP, MCP, CLI). See [docs/how-to/feedback.md](./docs/how-to/feedback.md).
 
 ## Five-Minute Quickstart
 

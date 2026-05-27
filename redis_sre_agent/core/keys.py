@@ -148,6 +148,11 @@ class RedisKeys:
         return f"sre:task:{task_id}:resume_state"
 
     @staticmethod
+    def feedback_task(task_id: str) -> str:
+        """Key for agent feedback associated with a task."""
+        return f"sre:feedback:task:{task_id}"
+
+    @staticmethod
     def approval(approval_id: str) -> str:
         """Key for a serialized approval record."""
         return f"sre:approval:{approval_id}"

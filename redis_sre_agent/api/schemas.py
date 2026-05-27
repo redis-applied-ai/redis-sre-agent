@@ -11,6 +11,14 @@ from redis_sre_agent.core.approvals import (
     ApprovalRecord,
     PendingApprovalSummary,
 )
+from redis_sre_agent.core.feedback import (  # noqa: F401 — re-exported for API consumers
+    ConversationMessage,
+    FeedbackRecord,
+    FeedbackSubmitRequest,
+    FeedbackView,
+    TaskInfo,
+    ToolCallSummary,
+)
 from redis_sre_agent.core.tasks import TaskStatus
 
 
@@ -107,6 +115,7 @@ class TaskResponse(BaseModel):
     subject: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    feedback: Optional[FeedbackRecord] = None
 
 
 class TaskResumeRequest(BaseModel):
