@@ -1,0 +1,58 @@
+id: prompt/chat-max-iteration-terminal-response
+name: Chat max iteration terminal response
+description: Exercise the chat agent path where the iteration budget is exhausted after tool evidence is gathered but before terminal assistant text is emitted.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.ChatAgent.process_query
+    - https://github.com/redis-applied-ai/redis-sre-agent/issues/165
+  synthetic:
+    is_synthetic: true
+    method: issue-regression-fixture
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/chat-max-iteration-terminal-response/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+execution:
+  lane: agent_only
+  agent: redis_chat
+  query: >
+    The checkout cache health check keeps looping through tools. If you hit the
+    turn budget after getting health evidence, still give me the best answer
+    you can from what you gathered.
+  max_tool_steps: 1
+  llm_mode: replay
+knowledge:
+  mode: disabled
+  version: latest
+tools:
+  mcp_servers:
+    max_iteration_fixture:
+      capability: diagnostics
+      tools:
+        get_cluster_health:
+          description: Return synthetic checkout cache health evidence.
+          input_schema:
+            type: object
+            properties:
+              cluster:
+                type: string
+          result: fixtures/tools/cluster-health.json
+expectations:
+  required_tool_calls:
+    - provider_family: mcp
+      server_name: max_iteration_fixture
+      operation: get_cluster_health
+  required_response_patterns:
+    - (?i)degraded
+    - (?i)memory
+  required_findings:
+    - cluster health is degraded
+    - memory check failed
+  forbidden_claims:
+    - I couldn't process that query. Please try rephrasing.
+  expected_routing_decision: chat

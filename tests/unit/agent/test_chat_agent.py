@@ -1773,6 +1773,108 @@ class TestChatAgentStartupContext:
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.create_llm")
     @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_synthesizes_response_after_iteration_limit(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(
+            return_value=AIMessage(content="Best-effort answer from gathered evidence.")
+        )
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="test-session",
+            user_id=None,
+            query="Is the cluster healthy?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        tool_envelopes = [
+            {
+                "tool_key": "get_cluster_health",
+                "name": "get_cluster_health",
+                "data": {"status": "degraded", "failed_checks": ["memory"]},
+            }
+        ]
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [
+                HumanMessage(content="Is the cluster healthy?"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "name": "get_cluster_health",
+                            "args": {},
+                        }
+                    ],
+                ),
+                ToolMessage(
+                    content='{"status": "degraded", "failed_checks": ["memory"]}',
+                    tool_call_id="call-1",
+                    name="get_cluster_health",
+                ),
+            ],
+            "signals_envelopes": tool_envelopes,
+            "iteration_count": 2,
+            "max_iterations": 2,
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Is the cluster healthy?",
+                session_id="test-session",
+                user_id=None,
+                max_iterations=2,
+            )
+
+        assert response.response == "Best-effort answer from gathered evidence."
+        assert response.tool_envelopes == tool_envelopes
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with(response.response)
+        mock_llm.ainvoke.assert_awaited_once()
+        synthesis_messages = mock_llm.ainvoke.await_args.args[0]
+        assert "Iteration budget: 2/2" in str(synthesis_messages[-1].content)
+        assert "get_cluster_health" in str(synthesis_messages[-1].content)
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
     async def test_process_query_rejects_blank_terminal_ai_message(
         self, mock_create_mini_llm, mock_create_llm
     ):
