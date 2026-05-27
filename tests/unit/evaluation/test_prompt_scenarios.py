@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import yaml
+from langchain_core.messages import AIMessage
 
 from redis_sre_agent.agent.knowledge_context import build_startup_knowledge_context
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
+from redis_sre_agent.evaluation.assertions import score_structured_assertions
+from redis_sre_agent.evaluation.fake_mcp import build_fixture_mcp_runtime
 from redis_sre_agent.evaluation.fixture_layout import (
     CORPORA_ROOT,
     golden_assertions_path,
@@ -18,10 +22,14 @@ from redis_sre_agent.evaluation.fixture_layout import (
     scenario_manifest_path,
     shared_fixtures_dir,
 )
+from redis_sre_agent.evaluation.injection import eval_injection_scope
 from redis_sre_agent.evaluation.knowledge_backend import build_fixture_knowledge_backend
 from redis_sre_agent.evaluation.runtime import load_eval_scenario
 from redis_sre_agent.evaluation.scenarios import ExecutionLane, KnowledgeMode
-from redis_sre_agent.evaluation.tool_runtime import build_fixture_tool_runtime
+from redis_sre_agent.evaluation.tool_runtime import (
+    FixtureBehaviorState,
+    build_fixture_tool_runtime,
+)
 from redis_sre_agent.tools.models import Tool, ToolCapability, ToolDefinition, ToolMetadata
 from redis_sre_agent.tools.protocols import ToolProvider
 
@@ -76,6 +84,46 @@ class _FakeKnowledgeAgent:
             }
         )
         return SimpleNamespace(response="boundary stated", tool_envelopes=[])
+
+
+class _LoopingToolLLM:
+    def __init__(self) -> None:
+        self.bound_tool_names: list[str] = []
+        self.invocations: list[list] = []
+
+    def bind_tools(self, tools):
+        self.bound_tool_names = [
+            str(getattr(tool, "name", "")) for tool in tools if getattr(tool, "name", "")
+        ]
+        return self
+
+    def _health_tool_name(self) -> str:
+        for name in self.bound_tool_names:
+            if name.endswith("_get_cluster_health"):
+                return name
+        raise AssertionError(f"health tool was not bound: {self.bound_tool_names}")
+
+    async def ainvoke(self, messages):
+        self.invocations.append(list(messages))
+        call_number = len(self.invocations)
+        if call_number <= 2:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": f"health-call-{call_number}",
+                        "name": self._health_tool_name(),
+                        "args": {"cluster": "checkout-cache-prod"},
+                    }
+                ],
+            )
+
+        return AIMessage(
+            content=(
+                "Cluster health is degraded. Memory check failed: memory fragmentation "
+                "is elevated and eviction pressure is active."
+            )
+        )
 
 
 def _normalize_loaded_date(value):
@@ -467,3 +515,61 @@ def test_prompt_scenario_corpora_ship_authoritative_manifests_and_core_fixtures(
     assert (
         shared_fixtures_dir("startup/policies") / "target-discovery-before-live-access.md"
     ).exists()
+
+
+@pytest.mark.asyncio
+async def test_chat_max_iteration_terminal_response_eval_regression():
+    scenario_id = "chat-max-iteration-terminal-response"
+    scenario = load_eval_scenario(scenario_manifest_path("prompt", scenario_id))
+    metadata = yaml.safe_load(
+        golden_metadata_path("prompt", scenario_id).read_text(encoding="utf-8")
+    )
+    assertions = json.loads(golden_assertions_path("prompt", scenario_id).read_text("utf-8"))
+    assert metadata["scenario_id"] == scenario.id
+    assert metadata["source_pack"] == scenario.provenance.source_pack
+    assert _normalize_loaded_date(metadata["source_pack_version"]) == "2026-04-14"
+    assert _normalize_assertion_payload(assertions) == _normalized_expectations(scenario)
+    assert golden_expected_response_path("prompt", scenario_id).read_text("utf-8").strip()
+
+    behavior_state = FixtureBehaviorState()
+    mcp_runtime = build_fixture_mcp_runtime(scenario, state=behavior_state)
+    assert mcp_runtime is not None
+
+    fake_llm = _LoopingToolLLM()
+    with (
+        eval_injection_scope(
+            knowledge_backend=build_fixture_knowledge_backend(scenario),
+            mcp_servers=mcp_runtime.get_server_configs(),
+            mcp_runtime=mcp_runtime,
+        ),
+        patch("redis_sre_agent.agent.chat_agent.create_llm", return_value=fake_llm),
+        patch("redis_sre_agent.agent.chat_agent.create_mini_llm", return_value=fake_llm),
+    ):
+        result = await run_agent_only_scenario(
+            scenario,
+            session_id="eval::prompt::chat-max-iteration-terminal-response",
+            user_id="eval-regression",
+        )
+
+    response = result.response
+    assert response.response != "I couldn't process that query. Please try rephrasing."
+    assert len(fake_llm.invocations) == 3
+    synthesis_prompt = str(fake_llm.invocations[-1][-1].content)
+    assert "Iteration budget: 2/2" in synthesis_prompt
+    assert "get_cluster_health" in synthesis_prompt
+    assert "checkout-cache-prod" in synthesis_prompt
+
+    assertion_results = score_structured_assertions(
+        scenario,
+        tool_trace=response.tool_envelopes,
+        final_answer=response.response,
+        actual_routing_decision=result.agent_name,
+    )
+    grouped_assertions = [
+        *assertion_results.required_tool_calls,
+        *assertion_results.required_response_patterns,
+        *assertion_results.forbidden_claims,
+        *assertion_results.required_findings,
+    ]
+    failures = [assertion.message for assertion in grouped_assertions if not assertion.passed]
+    assert assertion_results.all_passed, failures

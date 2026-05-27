@@ -1,0 +1,23 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "mcp",
+      "server_name": "max_iteration_fixture",
+      "operation": "get_cluster_health"
+    }
+  ],
+  "forbidden_tool_calls": [],
+  "required_response_patterns": [
+    "(?i)degraded",
+    "(?i)memory"
+  ],
+  "required_findings": [
+    "cluster health is degraded",
+    "memory check failed"
+  ],
+  "forbidden_claims": [
+    "I couldn't process that query. Please try rephrasing."
+  ],
+  "required_sources": [],
+  "expected_routing_decision": "chat"
+}

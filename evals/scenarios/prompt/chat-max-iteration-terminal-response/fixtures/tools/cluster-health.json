@@ -1,0 +1,11 @@
+{
+  "cluster": "checkout-cache-prod",
+  "failed_checks": [
+    {
+      "check": "memory",
+      "detail": "memory fragmentation is elevated and eviction pressure is active",
+      "severity": "warning"
+    }
+  ],
+  "status": "degraded"
+}
