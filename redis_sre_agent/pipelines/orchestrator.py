@@ -8,10 +8,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from .ingestion.processor import IngestionPipeline
 from .scraper.base import ArtifactStorage
 from .scraper.redis_cloud_api import RedisCloudAPIScraper
-from .scraper.redis_docs import RedisDocsScraper, RedisRunbookScraper
+from .scraper.redis_docs import RedisDocsScraper
 from .scraper.redis_docs_local import RedisDocsLocalScraper
 from .scraper.redis_kb import RedisKBScraper
-from .scraper.runbook_generator import RunbookGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +22,8 @@ class PipelineOrchestrator:
     SCRAPER_CLASSES = {
         "redis_docs": RedisDocsScraper,
         "redis_docs_local": RedisDocsLocalScraper,
-        "redis_runbooks": RedisRunbookScraper,
         "redis_kb": RedisKBScraper,
         "redis_cloud_api": RedisCloudAPIScraper,
-        "runbook_generator": RunbookGenerator,
     }
 
     ProgressCallback = Callable[[str, str, Optional[Dict[str, Any]]], Awaitable[None]]
@@ -46,7 +43,6 @@ class PipelineOrchestrator:
         self.storage = ArtifactStorage(self.artifacts_path)
 
         # Only instantiate scrapers that are requested (or all if none specified)
-        # This avoids requiring OPENAI_API_KEY when not using runbook_generator
         scrapers_to_init = scrapers if scrapers is not None else list(self.SCRAPER_CLASSES.keys())
         self.scrapers = {}
         for scraper_name in scrapers_to_init:

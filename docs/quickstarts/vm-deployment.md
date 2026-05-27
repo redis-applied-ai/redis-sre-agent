@@ -158,7 +158,7 @@ scp -r user@build-server:/path/to/artifacts ./artifacts
 
 ### Option B: Build Artifacts Locally
 ```bash
-# Prepare source documents (scrape docs, generate runbooks)
+# Prepare local source documents
 uv run redis-sre-agent pipeline prepare-sources \
     --source-dir ./source_documents \
     --artifacts-path ./artifacts \

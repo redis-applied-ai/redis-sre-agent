@@ -88,37 +88,6 @@ def _merge_source_document_changes(source_changes_list: list[dict | None]) -> di
     return merged if saw_changes else None
 
 
-def _echo_runbook_test_result(result: dict) -> None:
-    """Print the outcome of a runbook URL extraction check."""
-    if result["success"]:
-        click.echo("   ✅ Success!")
-        click.echo(f"   📊 Content length: {result['content_length']} chars")
-        click.echo(f"   🏷️  Source type: {result['source_type']}")
-        click.echo(f"   👁️  Preview: {result['content_preview'][:200]}...")
-    else:
-        click.echo(f"   ❌ Failed: {result.get('error', 'Unknown error')}")
-
-
-def _echo_generated_runbook(document, saved_path: str | None = None) -> None:
-    """Print details for one generated runbook document."""
-    click.echo(f"   ✅ Generated runbook: {document.title}")
-    click.echo(f"   📂 Category: {document.category}")
-    click.echo(f"   🚨 Severity: {document.severity}")
-    click.echo(f"   📏 Length: {len(document.content)} characters")
-    if saved_path is not None:
-        click.echo(f"   💾 Saved to: {saved_path}")
-
-
-def _echo_runbook_job_results(results: dict) -> None:
-    """Print summary details for a full runbook generation pass."""
-    click.echo("✅ Runbook generation completed!")
-    click.echo(f"   📝 Documents generated: {results['documents_scraped']}")
-    click.echo(f"   💾 Documents saved: {results['documents_saved']}")
-    click.echo(f"   📅 Batch date: {results['batch_date']}")
-    for category, count in results["categories"].items():
-        click.echo(f"   📂 {category}: {count} runbooks")
-
-
 @click.group()
 def pipeline():
     """Data pipeline commands for scraping and ingestion."""
@@ -129,7 +98,7 @@ def pipeline():
 @click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
 @click.option(
     "--scrapers",
-    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
+    help="Comma-separated list of scrapers to run (redis_docs,redis_docs_local,redis_kb,redis_cloud_api)",
 )
 @click.option(
     "--latest-only",
@@ -423,78 +392,6 @@ def cleanup(keep_days: int, artifacts_path: str):
             raise
 
     return asyncio.run(run_cleanup())
-
-
-@pipeline.command()
-@click.option("--url", help="Add a single URL to generate a runbook from")
-@click.option("--test-url", help="Test URL extraction without generating full runbook")
-@click.option("--list-urls", is_flag=True, help="List currently configured URLs")
-@click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
-def runbooks(url: str, test_url: str, list_urls: bool, artifacts_path: str):
-    """Generate standardized runbooks from web sources using GPT-5."""
-
-    async def run_runbook_operations():
-        from ..pipelines.orchestrator import PipelineOrchestrator
-
-        # Only instantiate the runbook_generator scraper
-        orchestrator = PipelineOrchestrator(artifacts_path, scrapers=["runbook_generator"])
-        generator = orchestrator.scrapers["runbook_generator"]
-
-        if list_urls:
-            click.echo("📋 Currently configured runbook URLs:")
-            for i, configured_url in enumerate(generator.get_configured_urls(), 1):
-                click.echo(f"   {i}. {configured_url}")
-            return
-
-        if test_url:
-            click.echo(f"🧪 Testing URL extraction: {test_url}")
-            result = await generator.test_url_extraction(test_url)
-            _echo_runbook_test_result(result)
-            return
-
-        if url:
-            # Add single URL and generate runbook
-            click.echo(f"📝 Adding URL and generating runbook: {url}")
-
-            added = await generator.add_runbook_url(url)
-            if added:
-                click.echo("   ✅ URL added to configuration")
-            else:
-                click.echo("   ℹ️  URL already in configuration")
-
-            # Generate runbook for just this URL
-            temp_config = generator.config.copy()
-            temp_config["runbook_urls"] = [url]
-
-            from ..pipelines.scraper.base import ArtifactStorage
-
-            temp_storage = ArtifactStorage(artifacts_path)
-            temp_generator = generator.__class__(temp_storage, temp_config)
-
-            documents = await temp_generator.scrape()
-
-            if documents:
-                doc = documents[0]
-                path = temp_storage.save_document(doc)
-                _echo_generated_runbook(doc, path)
-            else:
-                click.echo(f"   ❌ Failed to generate runbook from {url}")
-
-            return
-
-        # Default: run all configured URLs
-        click.echo("🚀 Generating runbooks from all configured URLs...")
-
-        try:
-            results = await generator.run_scraping_job()
-            _echo_runbook_job_results(results)
-
-        except Exception as e:
-            log_cli_exception(__name__, "pipeline CLI command failed", e)
-            click.echo(f"❌ Runbook generation failed: {e}")
-            raise
-
-    return asyncio.run(run_runbook_operations())
 
 
 @pipeline.command()

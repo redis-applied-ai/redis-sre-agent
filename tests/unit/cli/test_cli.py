@@ -42,10 +42,10 @@ class TestPipelineScrapeCLI:
         mock_orchestrator.run_scraping_pipeline.return_value = {
             "batch_date": "2025-08-20",
             "total_documents": 15,
-            "scrapers_run": ["redis_docs", "redis_runbooks"],
+            "scrapers_run": ["redis_docs", "redis_kb"],
             "scraper_results": {
                 "redis_docs": {"documents_scraped": 10},
-                "redis_runbooks": {"documents_scraped": 5},
+                "redis_kb": {"documents_scraped": 5},
             },
         }
 
@@ -81,17 +81,17 @@ class TestPipelineScrapeCLI:
         mock_orchestrator.run_scraping_pipeline.return_value = {
             "batch_date": "2025-08-20",
             "total_documents": 5,
-            "scrapers_run": ["redis_docs", "redis_runbooks"],
+            "scrapers_run": ["redis_docs", "redis_kb"],
             "scraper_results": {
                 "redis_docs": {"documents_scraped": 5},
-                "redis_runbooks": {"error": "Failed to connect"},
+                "redis_kb": {"error": "Failed to connect"},
             },
         }
 
         result = cli_runner.invoke(pipeline, ["scrape", "--artifacts-path", temp_artifacts_path])
 
         assert result.exit_code == 0
-        assert "redis_runbooks: Failed to connect" in result.output
+        assert "redis_kb: Failed to connect" in result.output
 
     def test_scrape_command_exception(self, cli_runner, temp_artifacts_path, mock_orchestrator):
         """Test scrape command with exception."""
@@ -214,7 +214,7 @@ class TestPipelineFullCLI:
                 "total_documents": 15,
                 "scraper_results": {
                     "redis_docs": {"documents_scraped": 10},
-                    "redis_runbooks": {"documents_scraped": 5},
+                    "redis_kb": {"documents_scraped": 5},
                 },
             },
             "ingestion": {"documents_processed": 15, "chunks_indexed": 45, "skipped": False},
@@ -255,7 +255,7 @@ class TestPipelineStatusCLI:
             "available_batches": ["2025-08-18", "2025-08-19", "2025-08-20"],
             "scrapers": {
                 "redis_docs": {"source": "https://redis.io/docs"},
-                "redis_runbooks": {"source": "internal_runbooks"},
+                "redis_kb": {"source": "https://redis.io/kb"},
             },
             "ingestion": {"batches_ingested": 2},
         }
@@ -378,51 +378,3 @@ class TestPipelineCleanupCLI:
 
         assert result.exit_code == 0
         assert "Permission denied" in result.output
-
-
-class TestPipelineRunbooksCLI:
-    """Test pipeline runbooks command."""
-
-    def test_runbooks_list_urls(self, cli_runner, temp_artifacts_path):
-        """Test runbooks command with list-urls flag."""
-        result = cli_runner.invoke(
-            pipeline, ["runbooks", "--list-urls", "--artifacts-path", temp_artifacts_path]
-        )
-
-        assert result.exit_code == 0
-        assert "Currently configured runbook URLs" in result.output
-        # Just verify it doesn't crash and shows the header
-
-    def test_runbooks_test_url_failure(self, cli_runner, temp_artifacts_path):
-        """Test runbooks command with test-url that fails."""
-        result = cli_runner.invoke(
-            pipeline,
-            [
-                "runbooks",
-                "--test-url",
-                "https://nonexistent-url-for-testing.invalid",
-                "--artifacts-path",
-                temp_artifacts_path,
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert "Testing URL extraction" in result.output
-        assert "Failed:" in result.output
-
-    def test_runbooks_add_url_failure(self, cli_runner, temp_artifacts_path):
-        """Test runbooks command with URL addition that fails."""
-        result = cli_runner.invoke(
-            pipeline,
-            [
-                "runbooks",
-                "--url",
-                "https://nonexistent-url-for-testing.invalid",
-                "--artifacts-path",
-                temp_artifacts_path,
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert "Adding URL and generating runbook" in result.output
-        assert "Failed to generate runbook" in result.output

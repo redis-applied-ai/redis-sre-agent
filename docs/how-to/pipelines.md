@@ -86,10 +86,8 @@ Scrapers collect documents from various sources and save them as **artifacts** (
 
 - `redis_docs`: Scrape Redis documentation from redis.io (slow, downloads from web)
 - `redis_docs_local`: Scrape Redis documentation from local clone (fast, recommended)
-- `redis_runbooks`: Scrape Redis runbooks from redis.io
 - `redis_kb`: Scrape Redis Knowledge Base articles from redis.io/kb with product labels
 - `redis_cloud_api`: Scrape Redis Cloud API documentation from OpenAPI/Swagger spec
-- `runbook_generator`: Generate runbooks from web sources using GPT-5
 - User-added documents in `source_documents/` (via `prepare_sources`)
 
 ### Phase 2: Ingestion → Redis Vector Index
@@ -177,7 +175,7 @@ uv run redis-sre-agent pipeline full --scrapers redis_docs_local --latest-only
 
 ## Working with User-Added Documents
 
-The `source_documents/` directory contains LLM-generated runbooks for common Redis problems. You can modify, remove, or add to these documents.
+The `source_documents/` directory contains operator-authored documents for common Redis problems. You can modify, remove, or add to these documents.
 
 ### Directory Structure
 
@@ -290,10 +288,8 @@ uv run redis-sre-agent pipeline scrape \
 **Available scrapers**:
 - `redis_docs`: Scrape from redis.io (slow, web download)
 - `redis_docs_local`: Scrape from local clone (fast, recommended - use `./scripts/setup_redis_docs_local.sh`)
-- `redis_runbooks`: Scrape runbooks from redis.io
 - `redis_kb`: Scrape Knowledge Base articles from redis.io/kb (includes product labels: Cloud, Enterprise, OSS)
 - `redis_cloud_api`: Scrape Redis Cloud API docs from OpenAPI/Swagger spec (REST API reference)
-- `runbook_generator`: Generate runbooks from web sources using GPT-5
 
 **Output**: Artifacts saved to `./artifacts/YYYY-MM-DD/`
 
@@ -471,27 +467,6 @@ uv run redis-sre-agent pipeline ingest --batch-date 2025-01-16
 
 Deduplication ensures the same document isn't indexed twice.
 
-### Runbook Generation
-
-The `runbook_generator` scraper uses GPT-5 to generate standardized runbooks from web sources:
-
-```bash
-# List configured URLs
-uv run redis-sre-agent pipeline runbooks --list-urls
-
-# Add a new URL and generate runbook
-uv run redis-sre-agent pipeline runbooks \
-    --url "https://redis.io/docs/latest/operate/rs/databases/memory-performance/"
-
-# Test URL extraction (without generating runbook)
-uv run redis-sre-agent pipeline runbooks \
-    --test-url "https://redis.io/docs/latest/operate/rs/databases/memory-performance/"
-```
-
-Generated runbooks are saved to `./artifacts/YYYY-MM-DD/runbooks/`.
-
----
-
 ## Troubleshooting
 
 ### "No artifacts found for batch YYYY-MM-DD"
@@ -562,8 +537,8 @@ Use `./scripts/setup_redis_docs_local.sh` to clone Redis docs locally. This is m
 Don't ingest everything at once. Start with a small batch and verify retrieval quality:
 
 ```bash
-# Ingest just runbooks first
-uv run redis-sre-agent pipeline scrape --scrapers runbook_generator
+# Ingest local Redis docs first
+uv run redis-sre-agent pipeline scrape --scrapers redis_docs_local --latest-only
 uv run redis-sre-agent pipeline ingest
 
 # Test retrieval via API or CLI

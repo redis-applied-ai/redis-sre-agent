@@ -61,14 +61,6 @@ def _build_pipeline_task_message(operation: str, kwargs: Dict[str, Any]) -> str:
         )
     if operation == "prepare_sources":
         return f"Prepare source documents from {kwargs.get('source_dir', 'source_documents')}"
-    if operation == "runbooks":
-        if kwargs.get("url"):
-            return f"Generate pipeline runbooks for {kwargs['url']}"
-        if kwargs.get("test_url"):
-            return f"Test pipeline runbook extraction for {kwargs['test_url']}"
-        if kwargs.get("list_urls"):
-            return "List configured pipeline runbook URLs"
-        return "Generate pipeline runbooks"
     return f"Run pipeline {operation}"
 
 
@@ -103,9 +95,6 @@ async def run_pipeline_operation_helper(
     source_dir: str = "source_documents",
     prepare_only: bool = False,
     keep_days: int = 30,
-    url: Optional[str] = None,
-    test_url: Optional[str] = None,
-    list_urls: bool = False,
     progress_emitter: Any = None,
 ) -> Dict[str, Any]:
     """Execute a pipeline operation and return a structured result."""
@@ -173,77 +162,6 @@ async def run_pipeline_operation_helper(
             {"operation": operation},
         )
         return {"operation": operation, **result}
-
-    if operation == "runbooks":
-        active_modes = sum(bool(value) for value in [url, test_url, list_urls])
-        if active_modes > 1:
-            raise ValueError("Only one of url, test_url, or list_urls may be provided")
-
-        orchestrator = PipelineOrchestrator(artifacts_path, scrapers=["runbook_generator"])
-        generator = orchestrator.scrapers["runbook_generator"]
-
-        if list_urls:
-            configured_urls = generator.get_configured_urls()
-            await _emit_progress(
-                progress_emitter,
-                f"Completed pipeline {operation}",
-                "pipeline_complete",
-                {"operation": operation},
-            )
-            return {
-                "operation": operation,
-                "mode": "list_urls",
-                "configured_urls": configured_urls,
-            }
-
-        if test_url:
-            extraction_result = await generator.test_url_extraction(test_url)
-            await _emit_progress(
-                progress_emitter,
-                f"Completed pipeline {operation}",
-                "pipeline_complete",
-                {"operation": operation},
-            )
-            return {
-                "operation": operation,
-                "mode": "test_url",
-                "url": test_url,
-                "result": extraction_result,
-            }
-
-        if url:
-            added = await generator.add_runbook_url(url)
-            single_url_config = dict(generator.config)
-            single_url_config["runbook_urls"] = [url]
-            single_url_orchestrator = PipelineOrchestrator(
-                artifacts_path,
-                {"runbook_generator": single_url_config},
-                scrapers=["runbook_generator"],
-            )
-            single_generator = single_url_orchestrator.scrapers["runbook_generator"]
-            result = await single_generator.run_scraping_job()
-            await _emit_progress(
-                progress_emitter,
-                f"Completed pipeline {operation}",
-                "pipeline_complete",
-                {"operation": operation},
-            )
-            return {
-                "operation": operation,
-                "mode": "single_url",
-                "url": url,
-                "url_added": added,
-                **result,
-            }
-
-        result = await generator.run_scraping_job()
-        await _emit_progress(
-            progress_emitter,
-            f"Completed pipeline {operation}",
-            "pipeline_complete",
-            {"operation": operation},
-        )
-        return {"operation": operation, "mode": "configured_urls", **result}
 
     if operation == "prepare_sources":
         source_path = Path(source_dir)
