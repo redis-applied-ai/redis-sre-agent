@@ -5,12 +5,17 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 import redis_sre_agent.core.llm_request_guard as guard_module
+import redis_sre_agent.core.llm_token_usage as token_usage_module
 from redis_sre_agent.core.llm_request_guard import (
     PIIRemediationBlockedError,
     PIIRemediationError,
     guard_langchain_input,
     guard_openai_chat_messages,
     guarded_ainvoke,
+)
+from redis_sre_agent.core.llm_token_usage import (
+    LLMTokenLimitExceededError,
+    llm_token_usage_scope,
 )
 from redis_sre_agent.core.pii_remediation import (
     PIIFinding,
@@ -246,6 +251,34 @@ async def test_guarded_ainvoke_supports_openai_style_dict_messages(monkeypatch, 
     assert result == "ok"
     sent_payload = llm.ainvoke.await_args.args[0]
     assert sent_payload[0]["content"] == "reach [PII:EMAIL:1]"
+
+
+@pytest.mark.asyncio
+async def test_guarded_ainvoke_enforces_single_turn_token_limit(monkeypatch, guard_settings):
+    guard_settings.pii_remediation_mode = "off"
+    monkeypatch.setattr(
+        token_usage_module,
+        "settings",
+        SimpleNamespace(llm_single_turn_token_limit=15),
+    )
+    llm = SimpleNamespace(
+        ainvoke=AsyncMock(
+            side_effect=[
+                SimpleNamespace(content="ok", usage_metadata={"total_tokens": 10}),
+                SimpleNamespace(content="stop", usage_metadata={"total_tokens": 6}),
+            ]
+        )
+    )
+
+    with llm_token_usage_scope():
+        await guarded_ainvoke(llm, [HumanMessage(content="first")], request_kind="unit.first")
+
+        with pytest.raises(LLMTokenLimitExceededError, match="unit.second.*used 16"):
+            await guarded_ainvoke(
+                llm,
+                [HumanMessage(content="second")],
+                request_kind="unit.second",
+            )
 
 
 @pytest.mark.asyncio

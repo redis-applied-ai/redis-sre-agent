@@ -750,6 +750,22 @@ class TestYamlConfigLoading:
         finally:
             os.unlink(config_path)
 
+    def test_llm_single_turn_token_limit_loads_from_env(self):
+        """Test loading the optional single-turn token cap from env."""
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "LLM_SINGLE_TURN_TOKEN_LIMIT": "12345",
+            },
+            clear=True,
+        ):
+            from redis_sre_agent.core.config import Settings
+
+            settings = Settings(_env_file=None)
+
+        assert settings.llm_single_turn_token_limit == 12345
+
     def test_yaml_with_list_settings(self):
         """Test loading list settings from YAML.
 

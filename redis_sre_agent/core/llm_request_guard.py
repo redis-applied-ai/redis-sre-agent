@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.llm_token_usage import record_llm_token_usage
 from redis_sre_agent.core.pii_remediation import (
     PIIFinding,
     PIIRemediationDecision,
@@ -570,7 +571,9 @@ async def guarded_ainvoke(
         request_kind=request_kind,
         metadata=metadata,
     )
-    return await llm.ainvoke(guarded_payload)
+    response = await llm.ainvoke(guarded_payload)
+    record_llm_token_usage(response, request_kind=request_kind)
+    return response
 
 
 async def guarded_chat_completions_create(
@@ -589,4 +592,10 @@ async def guarded_chat_completions_create(
         request_kind=request_kind,
         metadata=metadata,
     )
-    return await client.chat.completions.create(model=model, messages=guarded_messages, **kwargs)
+    response = await client.chat.completions.create(
+        model=model,
+        messages=guarded_messages,
+        **kwargs,
+    )
+    record_llm_token_usage(response, request_kind=request_kind)
+    return response

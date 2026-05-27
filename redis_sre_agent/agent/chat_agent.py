@@ -733,7 +733,11 @@ class ChatAgent:
             ),
         ]
         try:
-            repaired = await self.llm.ainvoke(repair_messages)
+            repaired = await guarded_ainvoke(
+                self.llm,
+                repair_messages,
+                request_kind="chat_agent.skill_contract_repair",
+            )
         except Exception as exc:
             logger.warning(
                 "Skill contract repair failed; returning original response: %s",
@@ -903,7 +907,11 @@ class ChatAgent:
         ]
 
         try:
-            synthesized = await self.llm.ainvoke(synthesis_messages)
+            synthesized = await guarded_ainvoke(
+                self.llm,
+                synthesis_messages,
+                request_kind="chat_agent.iteration_limit_synthesis",
+            )
         except Exception as exc:
             logger.warning(
                 "Chat agent max-iteration synthesis failed: %s",
