@@ -139,162 +139,6 @@ class TestRunPipelineOperationHelper:
         mock_orchestrator.cleanup_old_batches.assert_awaited_once_with(14)
 
     @pytest.mark.asyncio
-    async def test_run_runbooks_list_urls(self):
-        """Runbooks list mode should return configured URLs directly."""
-        mock_generator = MagicMock()
-        mock_generator.get_configured_urls.return_value = ["https://example.com/runbook"]
-        mock_orchestrator = MagicMock(scrapers={"runbook_generator": mock_generator})
-
-        with patch(
-            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
-            return_value=mock_orchestrator,
-        ) as mock_cls:
-            result = await run_pipeline_operation_helper(
-                operation="runbooks",
-                artifacts_path="/tmp/artifacts",
-                list_urls=True,
-            )
-
-        assert result == {
-            "operation": "runbooks",
-            "mode": "list_urls",
-            "configured_urls": ["https://example.com/runbook"],
-        }
-        mock_cls.assert_called_once_with("/tmp/artifacts", scrapers=["runbook_generator"])
-
-    @pytest.mark.asyncio
-    async def test_run_runbooks_test_url(self):
-        """Runbooks test mode should proxy URL extraction results."""
-        mock_generator = MagicMock()
-        mock_generator.test_url_extraction = AsyncMock(
-            return_value={"url": "https://example.com", "success": True}
-        )
-        mock_orchestrator = MagicMock(scrapers={"runbook_generator": mock_generator})
-
-        with patch(
-            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
-            return_value=mock_orchestrator,
-        ):
-            result = await run_pipeline_operation_helper(
-                operation="runbooks",
-                artifacts_path="/tmp/artifacts",
-                test_url="https://example.com",
-            )
-
-        assert result == {
-            "operation": "runbooks",
-            "mode": "test_url",
-            "url": "https://example.com",
-            "result": {"url": "https://example.com", "success": True},
-        }
-        mock_generator.test_url_extraction.assert_awaited_once_with("https://example.com")
-
-    @pytest.mark.asyncio
-    async def test_run_runbooks_list_urls_does_not_emit_completion_on_failure(self):
-        """List mode should not report completion if URL enumeration raises."""
-        emitter = AsyncMock()
-        mock_generator = MagicMock()
-        mock_generator.get_configured_urls.side_effect = RuntimeError("boom")
-        mock_orchestrator = MagicMock(scrapers={"runbook_generator": mock_generator})
-
-        with patch(
-            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
-            return_value=mock_orchestrator,
-        ):
-            with pytest.raises(RuntimeError, match="boom"):
-                await run_pipeline_operation_helper(
-                    operation="runbooks",
-                    artifacts_path="/tmp/artifacts",
-                    list_urls=True,
-                    progress_emitter=emitter,
-                )
-
-        progress_events = [call.args[1] for call in emitter.emit.await_args_list]
-        assert "pipeline_complete" not in progress_events
-
-    @pytest.mark.asyncio
-    async def test_run_runbooks_test_url_does_not_emit_completion_on_failure(self):
-        """Test mode should not report completion if extraction fails."""
-        emitter = AsyncMock()
-        mock_generator = MagicMock()
-        mock_generator.test_url_extraction = AsyncMock(side_effect=RuntimeError("boom"))
-        mock_orchestrator = MagicMock(scrapers={"runbook_generator": mock_generator})
-
-        with patch(
-            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
-            return_value=mock_orchestrator,
-        ):
-            with pytest.raises(RuntimeError, match="boom"):
-                await run_pipeline_operation_helper(
-                    operation="runbooks",
-                    artifacts_path="/tmp/artifacts",
-                    test_url="https://example.com",
-                    progress_emitter=emitter,
-                )
-
-        progress_events = [call.args[1] for call in emitter.emit.await_args_list]
-        assert "pipeline_complete" not in progress_events
-
-    @pytest.mark.asyncio
-    async def test_run_runbooks_single_url(self):
-        """Runbooks single-url mode should add the URL and run a dedicated job."""
-        primary_generator = MagicMock()
-        primary_generator.add_runbook_url = AsyncMock(return_value=True)
-        primary_generator.config = {"runbook_urls": ["https://default.example"]}
-        primary_orchestrator = MagicMock(scrapers={"runbook_generator": primary_generator})
-
-        single_generator = MagicMock()
-        single_generator.run_scraping_job = AsyncMock(
-            return_value={"documents_scraped": 2, "documents_saved": 2}
-        )
-        single_orchestrator = MagicMock(scrapers={"runbook_generator": single_generator})
-
-        with patch(
-            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
-            side_effect=[primary_orchestrator, single_orchestrator],
-        ) as mock_cls:
-            result = await run_pipeline_operation_helper(
-                operation="runbooks",
-                artifacts_path="/tmp/artifacts",
-                url="https://example.com/runbook",
-            )
-
-        assert result == {
-            "operation": "runbooks",
-            "mode": "single_url",
-            "url": "https://example.com/runbook",
-            "url_added": True,
-            "documents_scraped": 2,
-            "documents_saved": 2,
-        }
-        primary_generator.add_runbook_url.assert_awaited_once_with("https://example.com/runbook")
-        assert mock_cls.call_count == 2
-        single_generator.run_scraping_job.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_run_runbooks_default_generation(self):
-        """Runbooks default mode should process configured URLs."""
-        mock_generator = MagicMock()
-        mock_generator.run_scraping_job = AsyncMock(return_value={"documents_scraped": 3})
-        mock_orchestrator = MagicMock(scrapers={"runbook_generator": mock_generator})
-
-        with patch(
-            "redis_sre_agent.core.pipeline_execution_helpers.PipelineOrchestrator",
-            return_value=mock_orchestrator,
-        ):
-            result = await run_pipeline_operation_helper(
-                operation="runbooks",
-                artifacts_path="/tmp/artifacts",
-            )
-
-        assert result == {
-            "operation": "runbooks",
-            "mode": "configured_urls",
-            "documents_scraped": 3,
-        }
-        mock_generator.run_scraping_job.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_run_prepare_sources_prepare_only(self, tmp_path):
         """Prepare-sources mode should prepare artifacts without ingesting them."""
         source_dir = tmp_path / "source_documents"
@@ -395,16 +239,6 @@ class TestRunPipelineOperationHelper:
                 operation="prepare_sources",
                 source_dir=str(source_dir),
                 batch_date="03-25-2026",
-            )
-
-    @pytest.mark.asyncio
-    async def test_run_runbooks_rejects_multiple_modes(self):
-        """Runbooks helper should reject mutually-exclusive modes."""
-        with pytest.raises(ValueError, match="Only one of"):
-            await run_pipeline_operation_helper(
-                operation="runbooks",
-                url="https://example.com",
-                test_url="https://example.com/test",
             )
 
     @pytest.mark.asyncio
@@ -594,19 +428,6 @@ class TestPipelineExecutionHelperUtilities:
             _build_pipeline_task_message("prepare_sources", {})
             == "Prepare source documents from source_documents"
         )
-        assert (
-            _build_pipeline_task_message("runbooks", {"url": "https://example.com"})
-            == "Generate pipeline runbooks for https://example.com"
-        )
-        assert (
-            _build_pipeline_task_message("runbooks", {"test_url": "https://example.com/test"})
-            == "Test pipeline runbook extraction for https://example.com/test"
-        )
-        assert (
-            _build_pipeline_task_message("runbooks", {"list_urls": True})
-            == "List configured pipeline runbook URLs"
-        )
-        assert _build_pipeline_task_message("runbooks", {}) == "Generate pipeline runbooks"
         assert _build_pipeline_task_message("scrape", {}) == "Run pipeline scrape"
 
     @pytest.mark.asyncio

@@ -106,14 +106,6 @@ uv run redis-sre-agent pipeline full
 uv run redis-sre-agent pipeline status
 uv run redis-sre-agent pipeline show-batch --batch <name>
 ```
-#### Runbooks
-```bash
-# Generate standardized runbooks for a topic
-uv run redis-sre-agent runbook generate --topic "Redis memory troubleshooting"
-# Evaluate runbooks you generated or imported
-uv run redis-sre-agent runbook evaluate
-```
-
 ### 5) Search what the agent knows (and verify context)
 Use this to confirm the agent’s view of your knowledge base.
 ```bash

@@ -1160,9 +1160,6 @@ async def process_pipeline_operation(
     source_dir: str = "source_documents",
     prepare_only: bool = False,
     keep_days: int = 30,
-    url: Optional[str] = None,
-    test_url: Optional[str] = None,
-    list_urls: bool = False,
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
     """Run a task-backed pipeline operation and persist its result."""
@@ -1187,9 +1184,6 @@ async def process_pipeline_operation(
             source_dir=source_dir,
             prepare_only=prepare_only,
             keep_days=keep_days,
-            url=url,
-            test_url=test_url,
-            list_urls=list_urls,
             progress_emitter=emitter,
         )
         await task_manager.set_task_result(task_id, result)
@@ -1198,64 +1192,6 @@ async def process_pipeline_operation(
     except Exception as e:
         logger.error(
             "Pipeline operation %s failed for task %s (attempt %s): %s",
-            operation,
-            task_id,
-            retry.attempt,
-            e,
-        )
-        await task_manager.set_task_error(task_id, str(e))
-        raise
-
-
-@sre_task
-async def process_runbook_operation(
-    operation: str,
-    task_id: str,
-    thread_id: str,
-    topic: Optional[str] = None,
-    scenario_description: Optional[str] = None,
-    severity: str = "warning",
-    category: str = "operational_runbook",
-    output_file: Optional[str] = None,
-    requirements: Optional[List[str]] = None,
-    max_iterations: int = 2,
-    auto_save: bool = True,
-    ingest: bool = False,
-    input_dir: str = "source_documents/runbooks",
-    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
-) -> Dict[str, Any]:
-    """Run a task-backed runbook operation and persist its result."""
-    from redis_sre_agent.core.runbook_execution_helpers import run_runbook_operation_helper
-
-    logger.info("Processing runbook operation %s for task %s", operation, task_id)
-
-    redis_client = get_redis_client()
-    task_manager = TaskManager(redis_client=redis_client)
-
-    await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
-
-    try:
-        emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
-        result = await run_runbook_operation_helper(
-            operation=operation,
-            topic=topic,
-            scenario_description=scenario_description,
-            severity=severity,
-            category=category,
-            output_file=output_file,
-            requirements=requirements,
-            max_iterations=max_iterations,
-            auto_save=auto_save,
-            ingest=ingest,
-            input_dir=input_dir,
-            progress_emitter=emitter,
-        )
-        await task_manager.set_task_result(task_id, result)
-        await task_manager.update_task_status(task_id, TaskStatus.DONE)
-        return result
-    except Exception as e:
-        logger.error(
-            "Runbook operation %s failed for task %s (attempt %s): %s",
             operation,
             task_id,
             retry.attempt,

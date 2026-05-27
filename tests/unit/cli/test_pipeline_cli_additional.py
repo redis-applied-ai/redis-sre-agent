@@ -135,7 +135,7 @@ def test_status_exception_and_show_batch_not_ingested(
     assert "Ingestion: ⏳ Not ingested yet" in show.output
 
 
-def test_cleanup_and_runbooks_additional_branches(cli_runner, temp_artifacts_path):
+def test_cleanup_additional_branches(cli_runner, temp_artifacts_path):
     with patch("redis_sre_agent.cli.pipeline.PipelineOrchestrator") as orchestrator_class:
         cleanup_orchestrator = AsyncMock()
         cleanup_orchestrator.cleanup_old_batches.side_effect = Exception("cleanup boom")
@@ -148,85 +148,6 @@ def test_cleanup_and_runbooks_additional_branches(cli_runner, temp_artifacts_pat
         )
         assert result.exit_code != 0
         assert "Cleanup failed: cleanup boom" in result.output
-
-    with patch("redis_sre_agent.pipelines.orchestrator.PipelineOrchestrator") as orchestrator_class:
-        doc = MagicMock(title="Generated", category="shared", severity="high", content="x" * 10)
-
-        class FakeGenerator:
-            def __init__(self, storage=None, config=None):
-                self.storage = storage
-                self.config = config or {"existing": True}
-
-            def get_configured_urls(self):
-                return ["https://example.com"]
-
-            async def test_url_extraction(self, url):
-                return {
-                    "success": True,
-                    "content_length": 123,
-                    "source_type": "html",
-                    "content_preview": "preview text",
-                }
-
-            async def add_runbook_url(self, url):
-                return False
-
-            async def scrape(self):
-                return [doc]
-
-            async def run_scraping_job(self):
-                return {
-                    "documents_scraped": 2,
-                    "documents_saved": 2,
-                    "batch_date": "2025-08-20",
-                    "categories": {"shared": 2},
-                }
-
-        generator = FakeGenerator()
-        orchestrator = MagicMock(scrapers={"runbook_generator": generator})
-        orchestrator_class.return_value = orchestrator
-
-        with patch("redis_sre_agent.pipelines.scraper.base.ArtifactStorage") as storage_class:
-            storage = MagicMock()
-            storage.save_document.return_value = "/tmp/generated.json"
-            storage_class.return_value = storage
-
-            success = cli_runner.invoke(
-                pipeline,
-                [
-                    "runbooks",
-                    "--test-url",
-                    "https://example.com",
-                    "--artifacts-path",
-                    temp_artifacts_path,
-                ],
-            )
-            assert success.exit_code == 0
-            assert "Content length: 123 chars" in success.output
-
-            add = cli_runner.invoke(
-                pipeline,
-                [
-                    "runbooks",
-                    "--url",
-                    "https://example.com",
-                    "--artifacts-path",
-                    temp_artifacts_path,
-                ],
-            )
-            assert add.exit_code == 0
-            assert "URL already in configuration" in add.output
-            assert "Generated runbook: Generated" in add.output
-            assert "Saved to: /tmp/generated.json" in add.output
-
-        default = cli_runner.invoke(pipeline, ["runbooks", "--artifacts-path", temp_artifacts_path])
-        assert default.exit_code == 0
-        assert "Documents generated: 2" in default.output
-
-        generator.run_scraping_job = AsyncMock(side_effect=Exception("runbooks boom"))
-        failed = cli_runner.invoke(pipeline, ["runbooks", "--artifacts-path", temp_artifacts_path])
-        assert failed.exit_code != 0
-        assert "Runbook generation failed: runbooks boom" in failed.output
 
 
 def test_prepare_sources_command_branches(cli_runner, temp_artifacts_path, tmp_path):
