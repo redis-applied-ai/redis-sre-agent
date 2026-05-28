@@ -1,0 +1,123 @@
+id: prompt/deep-triage-over-limit-targets
+name: Deep triage over limit targets
+description: Evaluate whether a deep-triage request that names too many Redis targets asks the user to narrow the target set instead of running a partial fan-out.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.router.route_to_appropriate_agent
+    - redis_sre_agent.core.docket_tasks.process_agent_turn
+    - redis_sre_agent.targets.redis_catalog.RedisCatalogDiscoveryBackend
+  synthetic:
+    is_synthetic: true
+    method: hand-authored deep-triage fan-out limit case
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/deep-triage-over-limit-targets/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: full_turn
+  agent: redis_triage
+  route_via_router: true
+  query: >
+    Do a deep triage on prod cache 0, prod cache 1, prod cache 2, prod cache 3,
+    prod cache 4, prod cache 5, prod cache 6, prod cache 7, prod cache 8, and
+    prod cache 9.
+  max_tool_steps: 4
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+  target_catalog:
+    - handle: tgt_prod_cache_0
+      kind: instance
+      display_name: prod cache 0
+      resource_id: redis-prod-cache-0
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 0]}
+    - handle: tgt_prod_cache_1
+      kind: instance
+      display_name: prod cache 1
+      resource_id: redis-prod-cache-1
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 1]}
+    - handle: tgt_prod_cache_2
+      kind: instance
+      display_name: prod cache 2
+      resource_id: redis-prod-cache-2
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 2]}
+    - handle: tgt_prod_cache_3
+      kind: instance
+      display_name: prod cache 3
+      resource_id: redis-prod-cache-3
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 3]}
+    - handle: tgt_prod_cache_4
+      kind: instance
+      display_name: prod cache 4
+      resource_id: redis-prod-cache-4
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 4]}
+    - handle: tgt_prod_cache_5
+      kind: instance
+      display_name: prod cache 5
+      resource_id: redis-prod-cache-5
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 5]}
+    - handle: tgt_prod_cache_6
+      kind: instance
+      display_name: prod cache 6
+      resource_id: redis-prod-cache-6
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 6]}
+    - handle: tgt_prod_cache_7
+      kind: instance
+      display_name: prod cache 7
+      resource_id: redis-prod-cache-7
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 7]}
+    - handle: tgt_prod_cache_8
+      kind: instance
+      display_name: prod cache 8
+      resource_id: redis-prod-cache-8
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 8]}
+    - handle: tgt_prod_cache_9
+      kind: instance
+      display_name: prod cache 9
+      resource_id: redis-prod-cache-9
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 9]}
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../_shared/startup/live-system-boundary.md
+    - ../../_shared/startup/policies/target-discovery-before-live-access.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+
+tools: {}
+
+expectations:
+  required_tool_calls: []
+  forbidden_tool_calls:
+    - provider_family: redis_command
+      operation: info
+  required_findings:
+    - too many Redis targets
+    - 5 or fewer targets
+    - narrow the request
+  forbidden_claims:
+    - ran deep triage on the first 5 targets
+    - completed fan-out for 5 targets
+  required_sources: []
+  expected_routing_decision: triage

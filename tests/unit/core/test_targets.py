@@ -26,6 +26,10 @@ from redis_sre_agent.core.targets import (
     sync_target_catalog,
 )
 from redis_sre_agent.core.threads import Thread, ThreadMetadata
+from redis_sre_agent.targets.contracts import (
+    DISCOVERY_STATUS_TOO_MANY_MATCHES,
+    MULTI_TARGET_SELECTION_LIMIT,
+)
 from redis_sre_agent.targets.services import TargetBindingService
 
 
@@ -360,6 +364,79 @@ async def test_resolve_target_query_allow_multiple_uses_exact_mentions_inside_co
         "redis-prod-checkout-cache",
         "redis-stage-checkout-cache",
     ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_allow_multiple_honors_max_results_for_exact_mentions():
+    targets = [
+        TargetCatalogDoc(
+            target_id=f"instance:redis-prod-cache-{index}",
+            target_kind="instance",
+            resource_id=f"redis-prod-cache-{index}",
+            display_name=f"cache-{index}-prod",
+            name=f"cache-{index}-prod",
+            environment="production",
+            usage="cache",
+            target_type="oss_single",
+            capabilities=["redis", "diagnostics"],
+            search_text=f"cache {index} prod production cache",
+            search_aliases=[f"cache {index} prod"],
+        )
+        for index in range(5)
+    ]
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=targets),
+    ):
+        resolved = await resolve_target_query(
+            query="deep triage cache-0-prod cache-1-prod cache-2-prod cache-3-prod cache-4-prod",
+            allow_multiple=True,
+            max_results=5,
+        )
+
+    assert resolved.status == "resolved"
+    assert resolved.clarification_required is False
+    assert [match.resource_id for match in resolved.selected_matches] == [
+        f"redis-prod-cache-{index}" for index in range(5)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_allow_multiple_rejects_over_limit_exact_mentions():
+    targets = [
+        TargetCatalogDoc(
+            target_id=f"instance:redis-prod-cache-{index}",
+            target_kind="instance",
+            resource_id=f"redis-prod-cache-{index}",
+            display_name=f"cache-{index}-prod",
+            name=f"cache-{index}-prod",
+            environment="production",
+            usage="cache",
+            target_type="oss_single",
+            capabilities=["redis", "diagnostics"],
+            search_text=f"cache {index} prod production cache",
+            search_aliases=[f"cache {index} prod"],
+        )
+        for index in range(10)
+    ]
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=targets),
+    ):
+        resolved = await resolve_target_query(
+            query="deep triage " + " ".join(f"cache-{index}-prod" for index in range(10)),
+            allow_multiple=True,
+            max_results=10,
+        )
+
+    assert resolved.status == DISCOVERY_STATUS_TOO_MANY_MATCHES
+    assert resolved.clarification_required is True
+    assert resolved.selected_matches == []
+    assert resolved.match_count == 10
+    assert resolved.max_selectable == MULTI_TARGET_SELECTION_LIMIT
+    assert "narrow" in (resolved.message or "")
 
 
 @pytest.mark.asyncio

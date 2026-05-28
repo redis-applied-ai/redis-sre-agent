@@ -1,0 +1,12 @@
+scenario_id: prompt/target-discovery-over-limit-comparison
+review_status: reviewed
+reviewed_by: sre-evals
+expectation_basis: human_authored
+source_pack: prompt-core
+source_pack_version: "2026-04-14"
+baseline_policy:
+  mode: deterministic
+  update_allowed: false
+notes:
+  - The intended path is target discovery followed by a narrowing request, not partial attachment.
+  - The answer should not run live diagnostics for any subset of the ten targets.

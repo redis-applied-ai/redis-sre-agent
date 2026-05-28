@@ -6,6 +6,7 @@ import pytest
 
 from redis_sre_agent.core.targets import BoundTargetScope, ResolvedTargetMatch, TargetBinding
 from redis_sre_agent.targets.contracts import (
+    DISCOVERY_STATUS_TOO_MANY_MATCHES,
     DiscoveryCandidate,
     DiscoveryRequest,
     DiscoveryResponse,
@@ -222,6 +223,51 @@ async def test_resolve_redis_targets_does_not_attach_when_confirmation_is_requir
     assert payload["status"] == "clarification_required"
     assert payload["attached_target_handles"] == []
     assert payload["toolset_generation"] == 6
+
+
+@pytest.mark.asyncio
+async def test_resolve_redis_targets_does_not_attach_over_limit_target_sets():
+    provider = TargetDiscoveryToolProvider()
+    manager = MagicMock()
+    manager.thread_id = "thread-1"
+    manager.task_id = "task-1"
+    manager.user_id = "user-1"
+    manager.get_toolset_generation.return_value = 6
+    provider._manager = manager
+
+    resolution = DiscoveryResponse(
+        status=DISCOVERY_STATUS_TOO_MANY_MATCHES,
+        clarification_required=True,
+        matches=[],
+        selected_matches=[],
+        max_selectable=5,
+        match_count=10,
+        message="Matched 10 Redis targets; ask the user to narrow the target set.",
+    )
+
+    with (
+        patch(
+            "redis_sre_agent.tools.target_discovery.provider.resolve_target_query",
+            new=AsyncMock(return_value=resolution),
+        ) as mock_resolve,
+        patch(
+            "redis_sre_agent.tools.target_discovery.provider.bind_target_matches",
+            new=AsyncMock(),
+        ) as mock_bind,
+    ):
+        payload = await provider.resolve_redis_targets(
+            query="compare ten caches",
+            allow_multiple=True,
+            max_results=10,
+            attach_tools=True,
+        )
+
+    mock_resolve.assert_awaited_once()
+    mock_bind.assert_not_awaited()
+    assert payload["status"] == DISCOVERY_STATUS_TOO_MANY_MATCHES
+    assert payload["attached_target_handles"] == []
+    assert payload["max_selectable"] == 5
+    assert payload["match_count"] == 10
 
 
 @pytest.mark.asyncio

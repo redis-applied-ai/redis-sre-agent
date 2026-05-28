@@ -2024,7 +2024,8 @@ async def test_run_full_turn_scenario_supports_discovery_first_target_attachment
     resolution = result.turn_result["resolution"]
     assert result.turn_context["turn_scope"]["scope_kind"] == "zero_scope"
     assert resolution["status"] == "resolved"
-    assert resolution["attached_target_handles"]
+    assert resolution["attached_target_handles"] == ["tgt_cluster_payments_east"]
+    assert list(handle_store.records) == ["tgt_cluster_payments_east"]
     assert resolution["toolset_generation"] >= 2
     assert any(name.startswith("re_admin_") for name in result.turn_result["tool_names"])
     assert result.turn_result["databases"]["databases"] == [
