@@ -6,15 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from redis_sre_agent.agent.chat_agent import ChatAgent
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.agent.router import AgentType
+from redis_sre_agent.core import llm_token_usage as llm_token_usage_module
 from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 from redis_sre_agent.core.approvals import ApprovalRecord
 from redis_sre_agent.core.config import MCPServerConfig
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.targets import TargetCatalogDoc
 from redis_sre_agent.core.tasks import TaskMetadata, TaskState, TaskStatus, TaskUpdate
 from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
@@ -695,6 +698,95 @@ class _MemoryApprovalManager:
         return None
 
 
+class _TokenUsageEvalLLM:
+    def __init__(self, token_totals: list[int]) -> None:
+        self._token_totals = iter(token_totals)
+        self.payloads: list[object] = []
+
+    async def ainvoke(self, payload):
+        self.payloads.append(payload)
+        try:
+            total_tokens = next(self._token_totals)
+        except StopIteration as exc:
+            raise AssertionError("Unexpected extra eval LLM call") from exc
+        return SimpleNamespace(
+            content=f"used {total_tokens} tokens",
+            usage_metadata={"total_tokens": total_tokens},
+        )
+
+
+class _TokenUsageEvalChatAgent:
+    def __init__(self, token_totals: list[int]) -> None:
+        self.llm = _TokenUsageEvalLLM(token_totals)
+
+    async def process_query(
+        self,
+        query,
+        session_id,
+        user_id,
+        max_iterations=10,
+        context=None,
+        progress_emitter=None,
+        conversation_history=None,
+    ):
+        await guarded_ainvoke(
+            self.llm,
+            [HumanMessage(content=f"first eval call: {query}")],
+            request_kind="eval.first",
+        )
+        await guarded_ainvoke(
+            self.llm,
+            [HumanMessage(content=f"second eval call: {query}")],
+            request_kind="eval.second",
+        )
+        return AgentResponse(response="token eval complete")
+
+
+def _build_token_usage_eval_scenario() -> EvalScenario:
+    return EvalScenario.model_validate(
+        {
+            "id": "single-turn-token-limit",
+            "name": "Single turn token limit",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-05-28",
+                "golden": {
+                    "expectation_basis": "human_authored",
+                },
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "Investigate cache memory pressure.",
+                "route_via_router": False,
+                "agent": "chat",
+            },
+        }
+    )
+
+
+def _install_token_usage_eval_runtime(monkeypatch, agent, *, token_limit: int) -> None:
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr(
+        llm_token_usage_module,
+        "settings",
+        SimpleNamespace(llm_single_turn_token_limit=token_limit),
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+        AsyncMock(return_value=AgentType.REDIS_CHAT),
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.core.docket_tasks.get_chat_agent",
+        lambda redis_instance=None, redis_cluster=None: agent,
+    )
+
+
 @pytest.mark.asyncio
 async def test_build_full_turn_context_compiles_bound_targets_and_agent_override():
     scenario = _build_scenario(route_via_router=False, agent="redis_triage")
@@ -1132,6 +1224,64 @@ async def test_run_full_turn_scenario_applies_runtime_overrides_to_real_provider
     assert seen["history_length"] == 0
     assert seen["toolset_generation"] == 1
     assert "mcp_metrics_eval_query_metrics" in seen["tool_names"]
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_eval_allows_cumulative_llm_tokens_at_limit(
+    monkeypatch,
+):
+    scenario = _build_token_usage_eval_scenario()
+    agent = _TokenUsageEvalChatAgent([6, 9])
+    _install_token_usage_eval_runtime(monkeypatch, agent, token_limit=15)
+
+    with patch("opentelemetry.trace.get_tracer") as mock_tracer:
+        mock_span = MagicMock()
+        mock_span.end = MagicMock()
+        mock_span.set_attribute = MagicMock()
+        mock_tracer.return_value.start_span.return_value = mock_span
+
+        result = await run_full_turn_scenario(
+            scenario,
+            user_id="user-123",
+            session_id="session-123",
+            redis_client=object(),
+        )
+
+    assert result.thread_id == "thread-1"
+    assert result.task_id == "task-1"
+    assert result.task_status == "done"
+    assert result.turn_result["response"] == "token eval complete"
+    assert len(agent.llm.payloads) == 2
+    assert _MemoryTaskManager.tasks["task-1"].result["response"] == "token eval complete"
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_eval_fails_when_cumulative_llm_tokens_exceed_limit(
+    monkeypatch,
+):
+    scenario = _build_token_usage_eval_scenario()
+    agent = _TokenUsageEvalChatAgent([10, 6])
+    _install_token_usage_eval_runtime(monkeypatch, agent, token_limit=15)
+
+    with patch("opentelemetry.trace.get_tracer") as mock_tracer:
+        mock_span = MagicMock()
+        mock_span.end = MagicMock()
+        mock_span.set_attribute = MagicMock()
+        mock_span.record_exception = MagicMock()
+        mock_tracer.return_value.start_span.return_value = mock_span
+
+        with pytest.raises(LLMTokenLimitExceededError, match="eval.second.*used 16"):
+            await run_full_turn_scenario(
+                scenario,
+                user_id="user-123",
+                session_id="session-123",
+                redis_client=object(),
+            )
+
+    task = _MemoryTaskManager.tasks["task-1"]
+    assert task.status == TaskStatus.FAILED
+    assert "used 16 total tokens; limit is 15" in task.error_message
+    assert len(agent.llm.payloads) == 2
 
 
 @pytest.mark.asyncio
