@@ -8,7 +8,6 @@ This agent uses the same ToolManager system as the main agent, but only loads
 knowledge-related tools (no instance-specific tools like Redis CLI or Prometheus).
 """
 
-import json
 import logging
 from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
@@ -36,6 +35,11 @@ from .helpers import (
 )
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
+from .terminal_synthesis import (
+    TerminalSynthesisConfig,
+    describe_captured_state,
+    synthesize_terminal_response,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -112,6 +116,8 @@ class KnowledgeOnlyAgent:
 
     TERMINAL_SYNTHESIS_CONTEXT_LIMIT = 12000
     TERMINAL_SYNTHESIS_ITEM_LIMIT = 2000
+    TERMINAL_SYNTHESIS_MESSAGE_ITEM_LIMIT = 1200
+    TERMINAL_SYNTHESIS_MESSAGE_LIMIT = 8
 
     def __init__(
         self,
@@ -684,75 +690,11 @@ class KnowledgeOnlyAgent:
         messages: List[BaseMessage],
         tool_envelopes: List[Dict[str, Any]],
     ) -> str:
-        gathered: List[str] = []
-        if messages:
-            gathered.append(f"{len(messages)} conversation message(s)")
-        if tool_envelopes:
-            gathered.append(f"{len(tool_envelopes)} tool result envelope(s)")
-        gathered_text = ", ".join(gathered) if gathered else "no usable intermediate state"
+        gathered_text = describe_captured_state(messages=messages, tool_envelopes=tool_envelopes)
         return (
             "I gathered relevant evidence, but the workflow ended before I produced a final "
             f"natural-language summary. I had gathered {gathered_text}. Please retry with a "
             "narrower question or allow one more tool step."
-        )
-
-    @classmethod
-    def _truncate_terminal_synthesis_text(cls, value: Any, limit: int | None = None) -> str:
-        text = coerce_response_text(value)
-        if not text:
-            text = str(value)
-        effective_limit = limit or cls.TERMINAL_SYNTHESIS_ITEM_LIMIT
-        if len(text) <= effective_limit:
-            return text
-        return f"{text[:effective_limit]}... [truncated {len(text) - effective_limit} chars]"
-
-    @classmethod
-    def _format_terminal_synthesis_messages(cls, messages: List[BaseMessage]) -> str:
-        if not messages:
-            return "No conversation messages were captured."
-
-        formatted: List[str] = []
-        tail = messages[-8:]
-        omitted_count = len(messages) - len(tail)
-        if omitted_count > 0:
-            formatted.append(f"... [{omitted_count} earlier conversation message(s) omitted]")
-
-        for message in tail:
-            role = getattr(message, "type", message.__class__.__name__)
-            content = coerce_response_text(getattr(message, "content", ""))
-            if not content and isinstance(message, AIMessage) and message.tool_calls:
-                content = json.dumps(message.tool_calls, default=str, sort_keys=True)
-            formatted.append(f"{role}: {cls._truncate_terminal_synthesis_text(content, 1200)}")
-
-        return "\n\n".join(formatted)
-
-    @classmethod
-    def _format_terminal_synthesis_tool_evidence(cls, tool_envelopes: List[Dict[str, Any]]) -> str:
-        if not tool_envelopes:
-            return "No structured tool evidence was captured."
-
-        selected = tool_envelopes[-8:]
-        lines: List[str] = []
-        omitted_count = len(tool_envelopes) - len(selected)
-        if omitted_count > 0:
-            lines.append(f"... [{omitted_count} earlier tool result envelope(s) omitted]")
-
-        for envelope in selected:
-            tool_key = envelope.get("tool_key") or envelope.get("name") or "unknown_tool"
-            summary = envelope.get("summary")
-            if summary:
-                payload = str(summary)
-            else:
-                payload = json.dumps(envelope.get("data", {}), default=str, sort_keys=True)
-            lines.append(
-                f"{tool_key}:\n"
-                f"{cls._truncate_terminal_synthesis_text(payload, cls.TERMINAL_SYNTHESIS_ITEM_LIMIT)}"
-            )
-
-        evidence = "\n\n".join(lines)
-        return cls._truncate_terminal_synthesis_text(
-            evidence,
-            cls.TERMINAL_SYNTHESIS_CONTEXT_LIMIT,
         )
 
     async def _synthesize_terminal_response(
@@ -763,53 +705,37 @@ class KnowledgeOnlyAgent:
         tool_envelopes: List[Dict[str, Any]],
     ) -> str:
         """Produce a final answer when the graph stops after tool evidence."""
-
-        synthesis_messages: List[BaseMessage] = [
-            SystemMessage(
-                content=(
+        return await synthesize_terminal_response(
+            self.llm,
+            config=TerminalSynthesisConfig(
+                request_kind="knowledge_agent.terminal_synthesis",
+                system_prompt=(
                     "The knowledge-only workflow stopped before emitting terminal assistant "
                     "text. Write the best possible final answer from the gathered conversation "
                     "and knowledge evidence. Do not call tools. Do not claim live Redis access. "
                     "Cite source names when the evidence includes them. If the evidence is "
                     "incomplete, say what was gathered and what remains uncertain."
-                )
+                ),
+                messages_heading="Conversation tail",
+                evidence_heading="Structured knowledge evidence",
+                no_messages_text="No conversation messages were captured.",
+                no_evidence_text="No structured tool evidence was captured.",
+                failure_log_message="Knowledge agent terminal synthesis failed: %s",
+                empty_log_message="Knowledge agent terminal synthesis returned no text",
+                context_limit=self.TERMINAL_SYNTHESIS_CONTEXT_LIMIT,
+                item_limit=self.TERMINAL_SYNTHESIS_ITEM_LIMIT,
+                message_item_limit=self.TERMINAL_SYNTHESIS_MESSAGE_ITEM_LIMIT,
+                message_tail_limit=self.TERMINAL_SYNTHESIS_MESSAGE_LIMIT,
             ),
-            HumanMessage(
-                content=(
-                    f"Original user request:\n{query}\n\n"
-                    "Conversation tail:\n"
-                    f"{self._format_terminal_synthesis_messages(messages)}\n\n"
-                    "Structured knowledge evidence:\n"
-                    f"{self._format_terminal_synthesis_tool_evidence(tool_envelopes)}"
-                )
-            ),
-        ]
-
-        try:
-            synthesized = await guarded_ainvoke(
-                self.llm,
-                synthesis_messages,
-                request_kind="knowledge_agent.terminal_synthesis",
-            )
-        except Exception as exc:
-            logger.warning(
-                "Knowledge agent terminal synthesis failed: %s",
-                exc,
-                exc_info=True,
-            )
-            return self._terminal_synthesis_failure_response(
-                messages=messages,
-                tool_envelopes=tool_envelopes,
-            )
-
-        response_text = coerce_response_text(getattr(synthesized, "content", ""))
-        if response_text:
-            return response_text
-
-        logger.warning("Knowledge agent terminal synthesis returned no text")
-        return self._terminal_synthesis_failure_response(
             messages=messages,
             tool_envelopes=tool_envelopes,
+            guarded_invoke=guarded_ainvoke,
+            failure_response_factory=lambda: self._terminal_synthesis_failure_response(
+                messages=messages,
+                tool_envelopes=tool_envelopes,
+            ),
+            logger=logger,
+            human_prelude=f"Original user request:\n{query}",
         )
 
 

@@ -1356,19 +1356,21 @@ async def process_chat_turn(
 
     # Mark task as in progress
     await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
-    llm_token_scope = start_llm_token_usage_scope()
-
-    # Convert string category names to ToolCapability enums
-    mcp_categories: Optional[List[ToolCapability]] = None
-    if exclude_mcp_categories:
-        mcp_categories = []
-        for cat_name in exclude_mcp_categories:
-            try:
-                mcp_categories.append(ToolCapability(cat_name.lower()))
-            except ValueError:
-                logger.warning(f"Unknown MCP category to exclude: {cat_name}")
+    llm_token_scope = None
 
     try:
+        llm_token_scope = start_llm_token_usage_scope()
+
+        # Convert string category names to ToolCapability enums
+        mcp_categories: Optional[List[ToolCapability]] = None
+        if exclude_mcp_categories:
+            mcp_categories = []
+            for cat_name in exclude_mcp_categories:
+                try:
+                    mcp_categories.append(ToolCapability(cat_name.lower()))
+                except ValueError:
+                    logger.warning(f"Unknown MCP category to exclude: {cat_name}")
+
         # Create task emitter for notifications
         emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
 
@@ -1503,7 +1505,8 @@ async def process_chat_turn(
         await task_manager.set_task_error(task_id, str(e))
         raise
     finally:
-        reset_llm_token_usage_scope(llm_token_scope)
+        if llm_token_scope is not None:
+            reset_llm_token_usage_scope(llm_token_scope)
 
 
 @sre_task
