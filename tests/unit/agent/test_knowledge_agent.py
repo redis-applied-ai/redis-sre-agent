@@ -206,10 +206,18 @@ class TestKnowledgeAgent:
     @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
     @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
     @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
-    async def test_process_query_recovers_from_blank_terminal_ai_message(
-        self, mock_create_llm, mock_tool_manager_cls, mock_build_startup_context
+    @patch("redis_sre_agent.agent.knowledge_agent.guarded_ainvoke")
+    async def test_process_query_synthesizes_from_blank_terminal_ai_message(
+        self,
+        mock_guarded_ainvoke,
+        mock_create_llm,
+        mock_tool_manager_cls,
+        mock_build_startup_context,
     ):
         mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+        mock_guarded_ainvoke.return_value = AIMessage(
+            content="Use the runbook evidence before changing configuration."
+        )
 
         mock_llm = MagicMock()
         mock_llm.bind_tools.return_value = mock_llm
@@ -250,7 +258,12 @@ class TestKnowledgeAgent:
                         )
                     ],
                     "knowledge_search_results": [],
-                    "signals_envelopes": [],
+                    "signals_envelopes": [
+                        {
+                            "tool_key": "knowledge_search",
+                            "summary": "Runbook says to collect memory pressure evidence first.",
+                        }
+                    ],
                 }
 
         class _FakeWorkflow:
@@ -273,7 +286,11 @@ class TestKnowledgeAgent:
                 query="who runs AOP?", session_id="s1", user_id="u1"
             )
 
-        assert response.response.startswith("I gathered relevant evidence")
+        assert response.response == "Use the runbook evidence before changing configuration."
+        synthesis_messages = mock_guarded_ainvoke.await_args.args[1]
+        assert "Runbook says to collect memory pressure evidence first." in str(
+            synthesis_messages[-1].content
+        )
         prepared_memory.persist_response_fail_open.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -445,6 +462,13 @@ class TestKnowledgeSystemPrompt:
             "NOT have access" in KNOWLEDGE_SYSTEM_PROMPT
             or "do not have access" in KNOWLEDGE_SYSTEM_PROMPT.lower()
         )
+
+    def test_system_prompt_requires_support_ticket_search_for_prior_cases(self):
+        """Test that the system prompt requires ticket search for prior cases."""
+        from redis_sre_agent.agent.knowledge_agent import KNOWLEDGE_SYSTEM_PROMPT
+
+        assert "prior case" in KNOWLEDGE_SYSTEM_PROMPT
+        assert "must search support tickets before answering" in KNOWLEDGE_SYSTEM_PROMPT
 
 
 class TestKnowledgeAgentMethods:
