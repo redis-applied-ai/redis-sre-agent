@@ -2313,6 +2313,7 @@ async def _process_agent_turn_impl(
         )
 
         # Persist the new user message early so UI transcript reflects it during processing
+        user_message_appended_to_thread = False
         try:
             await thread_manager.append_messages(
                 thread_id,
@@ -2324,6 +2325,7 @@ async def _process_agent_turn_impl(
                     }
                 ],
             )
+            user_message_appended_to_thread = True
         except Exception as e:
             logger.warning(f"Failed to persist user message early for thread {thread_id}: {e}")
 
@@ -2350,7 +2352,7 @@ async def _process_agent_turn_impl(
                 task_id=task_id,
                 user_message=message,
                 bindings=fanout_bindings,
-                append_user_message=False,
+                append_user_message=not user_message_appended_to_thread,
             )
             try:
                 if _root_span is not None:

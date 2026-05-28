@@ -2286,6 +2286,104 @@ class TestProcessAgentTurn:
         mock_task_manager.update_task_status.assert_any_await("provided-task-123", TaskStatus.DONE)
 
     @pytest.mark.asyncio
+    async def test_bound_over_limit_deep_triage_recovers_user_append_failure(self):
+        bindings = [
+            TargetBinding(
+                target_handle=f"tgt_{index}",
+                target_kind="instance",
+                resource_id=f"redis-cache-{index}",
+                display_name=f"cache-{index}",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            )
+            for index in range(6)
+        ]
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.context = {
+            "attached_target_handles": [binding.target_handle for binding in bindings],
+            "active_target_handle": bindings[0].target_handle,
+            "target_bindings": [binding.model_dump(mode="json") for binding in bindings],
+            "target_toolset_generation": 7,
+        }
+        mock_thread.messages = []
+        mock_thread.metadata.user_id = "test-user"
+        mock_thread.metadata.session_id = "session-123"
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock(
+            side_effect=[RuntimeError("early append failed"), None]
+        )
+        mock_thread_manager.update_thread = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+
+        async def _return_scope(**kwargs):
+            return kwargs["turn_scope"]
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks._ensure_handle_backed_turn_scope",
+                new=_return_scope,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_sre_agent") as mock_get_sre_agent,
+            patch(
+                "redis_sre_agent.core.docket_tasks.run_agent_with_progress",
+                new=AsyncMock(),
+            ) as mock_run_agent,
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            result = await process_agent_turn(
+                thread_id="thread-123",
+                message="Deep triage all attached caches",
+                task_id="provided-task-123",
+            )
+
+        mock_get_sre_agent.assert_called_once()
+        mock_run_agent.assert_not_awaited()
+        assert result["metadata"]["target_resolution_status"] == DISCOVERY_STATUS_TOO_MANY_MATCHES
+        assert result["metadata"]["match_count"] == 6
+        append_calls = mock_thread_manager.append_messages.await_args_list
+        assert len(append_calls) == 2
+        assert [message["role"] for message in append_calls[0].args[1]] == ["user"]
+        assert [message["role"] for message in append_calls[1].args[1]] == [
+            "user",
+            "assistant",
+        ]
+        assert append_calls[1].args[1][0]["content"] == "Deep triage all attached caches"
+        mock_task_manager.update_task_status.assert_any_await("provided-task-123", TaskStatus.DONE)
+
+    @pytest.mark.asyncio
     async def test_process_agent_turn_chat_path_does_not_bind_single_target_for_multi_scope(self):
         mock_redis = AsyncMock()
         mock_thread = MagicMock()
