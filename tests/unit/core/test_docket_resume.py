@@ -13,6 +13,7 @@ from redis_sre_agent.core.approvals import (
     PendingApprovalSummary,
 )
 from redis_sre_agent.core.docket_tasks import resume_task_after_approval
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.tasks import TaskMetadata, TaskState, TaskStatus
 
 
@@ -201,6 +202,87 @@ async def test_resume_task_after_approval_accepts_pretransitioned_in_progress_st
 
     assert result["response"]["response"] == "Applied the change."
     mock_chat_agent.resume_query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resume_task_after_approval_marks_task_failed_when_token_limit_exceeded():
+    approval_record = _build_approval()
+    pending = PendingApprovalSummary.from_record(approval_record)
+    task_state = _build_task_state(status=TaskStatus.AWAITING_APPROVAL, pending=pending)
+    thread = _build_thread()
+    resume_state = GraphResumeState(
+        task_id="task-1",
+        thread_id="thread-1",
+        graph_thread_id="task-1",
+        graph_type="chat",
+        graph_version="v1",
+        checkpoint_ns="agent_turn",
+        checkpoint_id="ckpt-1",
+        waiting_reason="approval_required",
+        pending_approval_id="approval-1",
+        pending_interrupt_id="interrupt-1",
+    )
+    decided_record = approval_record.model_copy(
+        update={
+            "status": ApprovalStatus.APPROVED,
+            "decision": ApprovalDecision(decision=ApprovalDecisionType.APPROVED),
+        }
+    )
+    token_error = LLMTokenLimitExceededError(
+        "LLM token usage limit exceeded for eval.second: used 16 total tokens; limit is 15"
+    )
+
+    mock_task_manager = AsyncMock()
+    mock_task_manager.get_task_state = AsyncMock(return_value=task_state)
+    mock_task_manager.set_pending_approval = AsyncMock()
+    mock_task_manager.set_resume_supported = AsyncMock()
+    mock_task_manager.update_task_status = AsyncMock()
+    mock_task_manager.add_task_update = AsyncMock()
+    mock_task_manager.set_task_error = AsyncMock()
+
+    mock_thread_manager = AsyncMock()
+    mock_thread_manager.get_thread = AsyncMock(return_value=thread)
+    mock_thread_manager.append_messages = AsyncMock()
+
+    mock_approval_manager = AsyncMock()
+    mock_approval_manager.get_resume_state = AsyncMock(return_value=resume_state)
+    mock_approval_manager.get_approval = AsyncMock(return_value=approval_record)
+    mock_approval_manager.record_decision = AsyncMock(return_value=decided_record)
+    mock_approval_manager.save_resume_state = AsyncMock()
+    mock_approval_manager.delete_resume_state = AsyncMock()
+
+    mock_chat_agent = AsyncMock()
+    mock_chat_agent.resume_query = AsyncMock(side_effect=token_error)
+
+    with (
+        patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+        patch("redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager),
+        patch(
+            "redis_sre_agent.core.docket_tasks.ApprovalManager",
+            return_value=mock_approval_manager,
+        ),
+        patch("redis_sre_agent.core.docket_tasks.get_instance_by_id", new=AsyncMock()),
+        patch("redis_sre_agent.core.docket_tasks.get_cluster_by_id", new=AsyncMock()),
+        patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_chat_agent),
+        pytest.raises(LLMTokenLimitExceededError, match="used 16 total tokens"),
+    ):
+        await resume_task_after_approval(
+            task_id="task-1",
+            approval_id="approval-1",
+            decision="approved",
+        )
+
+    mock_task_manager.set_task_error.assert_awaited_once()
+    task_id, error_message = mock_task_manager.set_task_error.await_args.args
+    assert task_id == "task-1"
+    assert "Approval resume failed" in error_message
+    assert "used 16 total tokens; limit is 15" in error_message
+    error_update = mock_task_manager.add_task_update.await_args_list[-1].args
+    assert error_update[0] == "task-1"
+    assert error_update[2] == "error"
+    assert "used 16 total tokens; limit is 15" in error_update[1]
+    mock_thread_manager.append_messages.assert_awaited_once()
+    mock_approval_manager.delete_resume_state.assert_not_awaited()
 
 
 @pytest.mark.asyncio

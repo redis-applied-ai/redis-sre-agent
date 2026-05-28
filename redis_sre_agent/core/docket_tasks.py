@@ -2199,6 +2199,23 @@ async def resume_task_after_approval(
     thread_id = task_state.thread_id
     normalized_decision = decision_model.decision
 
+    async def _record_resume_failure(error: Exception) -> None:
+        error_message = f"Approval resume failed: {str(error)}"
+        logger.error("Approval resume failed for task %s: %s", task_id, error)
+        await task_manager.set_task_error(task_id, error_message)
+        await task_manager.add_task_update(task_id, f"Error: {error_message}", "error")
+        await thread_manager.append_messages(
+            thread_id,
+            [
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"I encountered an error while resuming your approved request: {str(error)}"
+                    ),
+                }
+            ],
+        )
+
     if approval_record.decision is None:
         approval_record = (
             await approval_manager.record_decision(
@@ -2313,6 +2330,9 @@ async def resume_task_after_approval(
                 pending_approval=exc.pending_approval,
             )
             return result
+        except Exception as exc:
+            await _record_resume_failure(exc)
+            raise
 
         current_task_state = await task_manager.get_task_state(task_id)
         if current_task_state and current_task_state.status == TaskStatus.AWAITING_APPROVAL:
@@ -2413,6 +2433,9 @@ async def resume_task_after_approval(
             pending_approval=exc.pending_approval,
         )
         return result
+    except Exception as exc:
+        await _record_resume_failure(exc)
+        raise
     agent_response = {
         "response": agent_response_obj.response,
         "search_results": agent_response_obj.search_results,
