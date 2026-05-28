@@ -10,6 +10,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     _dedupe_docs,
     _doc_matches_requested_version,
     _exact_match_sort_key,
+    _hybrid_text_query,
     _quoted_text_phrase_query,
     _RawTextQuery,
     get_all_document_fragments,
@@ -82,6 +83,42 @@ class TestKnowledgeHelpers:
         assert str(knowledge_helpers._tag_equals_expression("name", "foo|bar/baz[prod]")) == (
             r"@name:{foo\|bar\/baz\[prod\]}"
         )
+
+    @pytest.mark.parametrize(
+        ("value", "expected_fragment"),
+        [
+            ("prod cache/{tenant}:v1?", r"prod\ cache\/\{tenant\}\:v1\?"),
+            ("*literal*|I/O", r"\*literal\*\|I\/O"),
+            ("name{one},two", r"name\{one\}\,two"),
+        ],
+    )
+    def test_tag_equals_expression_escapes_symbol_heavy_user_values(self, value, expected_fragment):
+        """Exact TAG filters should escape user-supplied RediSearch metacharacters."""
+        assert str(knowledge_helpers._tag_equals_expression("name", value)) == (
+            f"@name:{{{expected_fragment}}}"
+        )
+
+    @pytest.mark.parametrize(
+        ("query", "expected_fragment"),
+        [
+            ("I/O", r"i\/o"),
+            ("foo|bar/baz[prod]", r"foo\|bar\/baz\[prod\]"),
+            ("prod cache/{tenant}:v1?", r"prod | cache\/\{tenant\}\:v1\?"),
+        ],
+    )
+    def test_hybrid_text_query_escapes_symbol_heavy_tokens(self, query, expected_fragment):
+        """The RRF text fallback should not pass user query metacharacters through raw."""
+        text_query = _hybrid_text_query(query)
+
+        assert expected_fragment in text_query
+
+    def test_quoted_text_phrase_query_escapes_quotes_and_backslashes(self):
+        """Literal phrase search should escape quote delimiters and backslashes."""
+        query = _quoted_text_phrase_query('DB "memory" full \\ path')
+
+        assert r'@title:("db \"memory\" full \\ path")' in query
+        assert r'@summary:("db \"memory\" full \\ path")' in query
+        assert r'@content:("db \"memory\" full \\ path")' in query
 
     def test_hybrid_unsupported_error_detector_avoids_generic_ft_hybrid_mentions(self):
         """Only explicit capability/command failures should trip the fallback detector."""
@@ -430,6 +467,39 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results_count"] == 2
         assert result["results"][0]["id"] == "doc-phrase"
         assert result["results"][1]["id"] == "doc-semantic"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_symbol_heavy_query_escapes_exact_filters(self):
+        """Symbol-heavy user queries should be escaped anywhere they enter TAG filters."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[])
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(
+                query="foo|bar/baz[prod]",
+                category="ops/team[one]",
+                version="7.2/latest?",
+                limit=10,
+            )
+
+        exact_name_query = str(mock_index.query.await_args_list[0].args[0])
+        assert r"@name:{foo\|bar\/baz\[prod\]}" in exact_name_query
+        assert r"@version:{7\.2\/latest\?}" in exact_name_query
+        assert r"@category:{ops\/team\[one\]}" in exact_name_query
+        assert result["results_count"] == 0
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_quoted_phrase_runs_literal_text_query(self):

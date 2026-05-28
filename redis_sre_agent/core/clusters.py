@@ -15,10 +15,11 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator, model_validator
 from redisvl.query import CountQuery, FilterQuery
-from redisvl.query.filter import FilterExpression, Tag
+from redisvl.query.filter import Tag
 
 from .encryption import encrypt_secret, get_secret_value
 from .redis import SRE_CLUSTERS_INDEX, get_clusters_index, get_redis_client
+from .redisearch import tag_contains_expression
 
 logger = logging.getLogger(__name__)
 
@@ -239,8 +240,8 @@ async def query_clusters(
             user_filter = Tag("user_id") == user_id
             filter_expr = user_filter if filter_expr is None else (filter_expr & user_filter)
 
-        if search:
-            name_filter = FilterExpression(f"@name:{{*{search}*}}")
+        if search and search.strip():
+            name_filter = tag_contains_expression("name", search.strip())
             filter_expr = name_filter if filter_expr is None else (filter_expr & name_filter)
 
         count_expr = filter_expr if filter_expr is not None else "*"

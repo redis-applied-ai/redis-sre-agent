@@ -109,6 +109,34 @@ class TestClusterStorage:
         assert result.clusters[0].id == "cluster-1"
 
     @pytest.mark.asyncio
+    async def test_query_clusters_escapes_symbol_heavy_search_filter(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(side_effect=[1, []])
+
+        with (
+            patch(
+                "redis_sre_agent.core.clusters._ensure_clusters_index_exists",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "redis_sre_agent.core.clusters.get_clusters_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+        ):
+            result = await query_clusters(
+                environment="production",
+                search="foo|bar/baz[prod]",
+            )
+
+        count_query = str(mock_index.query.await_args_list[0].args[0])
+        result_query = str(mock_index.query.await_args_list[1].args[0])
+        assert r"@name:{*foo\|bar\/baz\[prod\]*}" in count_query
+        assert r"@name:{*foo\|bar\/baz\[prod\]*}" in result_query
+        assert result.total == 1
+        assert result.clusters == []
+
+    @pytest.mark.asyncio
     async def test_upsert_cluster_index_doc_encrypts_admin_password(self):
         mock_client = AsyncMock()
         cluster = _enterprise_cluster("cluster-enc")
