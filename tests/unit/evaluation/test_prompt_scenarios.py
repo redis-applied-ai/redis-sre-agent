@@ -133,6 +133,18 @@ def _normalize_assertion_payload(payload: dict) -> dict:
             "prompt-core",
         ),
         (
+            "target-discovery-over-limit-comparison",
+            "redis_chat",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
+            "deep-triage-over-limit-targets",
+            "redis_triage",
+            KnowledgeMode.FULL,
+            "prompt-core",
+        ),
+        (
             "target-discovery-known-targets-then-connect",
             "redis_chat",
             KnowledgeMode.FULL,
@@ -165,6 +177,8 @@ def test_prompt_scenarios_load_from_authoritative_fixture_layout(
             "target-discovery-ambiguous-cache",
             "target-discovery-known-targets-inventory",
             "target-discovery-multi-target-comparison",
+            "target-discovery-over-limit-comparison",
+            "deep-triage-over-limit-targets",
             "target-discovery-known-targets-then-connect",
         }
         else ExecutionLane.AGENT_ONLY
@@ -360,6 +374,12 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
     target_multi = load_eval_scenario(
         scenario_manifest_path("prompt", "target-discovery-multi-target-comparison")
     )
+    target_over_limit = load_eval_scenario(
+        scenario_manifest_path("prompt", "target-discovery-over-limit-comparison")
+    )
+    deep_triage_over_limit = load_eval_scenario(
+        scenario_manifest_path("prompt", "deep-triage-over-limit-targets")
+    )
     target_inventory_connect = load_eval_scenario(
         scenario_manifest_path("prompt", "target-discovery-known-targets-then-connect")
     )
@@ -398,6 +418,22 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
     assert (
         target_multi.expectations.required_tool_calls[2].target_handle == "tgt_session_cache_prod"
     )
+    assert target_multi.expectations.required_tool_calls[3].target_handle == "tgt_cart_cache_prod"
+    assert target_over_limit.expectations.required_tool_calls[0].operation == (
+        "resolve_redis_targets"
+    )
+    assert target_over_limit.expectations.forbidden_tool_calls[0].operation == "info"
+    assert target_over_limit.expectations.required_findings == [
+        "too many Redis targets",
+        "5 or fewer targets",
+        "narrow the request",
+    ]
+    assert deep_triage_over_limit.expectations.expected_routing_decision == "triage"
+    assert deep_triage_over_limit.expectations.required_tool_calls == []
+    assert deep_triage_over_limit.expectations.forbidden_claims == [
+        "ran deep triage on the first 5 targets",
+        "completed fan-out for 5 targets",
+    ]
     assert (
         target_inventory_connect.expectations.required_tool_calls[0].operation
         == "list_known_redis_targets"
@@ -416,6 +452,8 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         "target-discovery-ambiguous-cache": "prompt-core",
         "target-discovery-known-targets-inventory": "prompt-core",
         "target-discovery-multi-target-comparison": "prompt-core",
+        "target-discovery-over-limit-comparison": "prompt-core",
+        "deep-triage-over-limit-targets": "prompt-core",
         "target-discovery-known-targets-then-connect": "prompt-core",
         "sev1-escalation-policy": "prompt-policy-curated",
         "memory-user-preference-honored": "prompt-core",

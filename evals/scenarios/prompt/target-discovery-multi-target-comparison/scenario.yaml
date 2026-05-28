@@ -22,10 +22,10 @@ execution:
   agent: redis_chat
   route_via_router: false
   query: >
-    Compare the prod checkout cache and prod session cache for memory pressure
-    right now. Resolve both targets from the natural-language names if needed,
-    inspect live Redis state for each one, and tell me which cache is closer to
-    maxmemory.
+    Compare the prod checkout cache, prod session cache, and prod cart cache
+    for memory pressure right now. Resolve all three targets from the
+    natural-language names if needed, inspect live Redis state for each one,
+    and tell me which cache is closest to maxmemory.
   max_tool_steps: 7
   llm_mode: replay
 
@@ -62,6 +62,20 @@ scope:
         aliases:
           - session cache
           - prod session cache
+    - handle: tgt_cart_cache_prod
+      kind: instance
+      display_name: prod cart cache
+      resource_id: redis-prod-cart-cache
+      capabilities:
+        - diagnostics
+      public_metadata:
+        environment: production
+        usage: cache
+        status: healthy
+        target_type: oss_single
+        aliases:
+          - cart cache
+          - prod cart cache
 
 knowledge:
   mode: full
@@ -94,6 +108,12 @@ tools:
                 args_contains:
                   section: memory
               result: fixtures/tools/info-session-memory.json
+        tgt_cart_cache_prod:
+          responders:
+            - when:
+                args_contains:
+                  section: memory
+              result: fixtures/tools/info-cart-memory.json
 
 expectations:
   required_tool_calls:
@@ -105,9 +125,13 @@ expectations:
     - provider_family: redis_command
       operation: info
       target_handle: tgt_session_cache_prod
+    - provider_family: redis_command
+      operation: info
+      target_handle: tgt_cart_cache_prod
   required_findings:
     - prod checkout cache
     - prod session cache
+    - prod cart cache
     - prod session cache is closer to maxmemory
   required_sources:
     - live-system-boundary

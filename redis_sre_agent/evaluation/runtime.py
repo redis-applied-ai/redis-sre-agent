@@ -32,6 +32,8 @@ from redis_sre_agent.evaluation.scenarios import EvalScenario, ExecutionLane
 from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorState, build_fixture_tool_runtime
 from redis_sre_agent.targets import TargetBindingService
 from redis_sre_agent.targets.contracts import (
+    DISCOVERY_STATUS_TOO_MANY_MATCHES,
+    MULTI_TARGET_SELECTION_LIMIT,
     DiscoveryCandidate,
     DiscoveryRequest,
     DiscoveryResponse,
@@ -325,20 +327,38 @@ class _EvalTargetCatalogDiscoveryBackend:
             )
 
         ranked.sort(key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
-        limited = ranked[: max(1, min(request.max_results, 10))]
+        response_limit = max(1, min(request.max_results, 10))
+        selection_limit = max(1, min(request.max_results, MULTI_TARGET_SELECTION_LIMIT))
+        limited = ranked[:response_limit]
         if not limited:
             return DiscoveryResponse(status="no_match")
 
         top = limited[0]
         if request.allow_multiple:
-            selected = [
-                candidate for candidate in limited if candidate.score >= max(3.0, top.score - 1.5)
-            ][: min(3, request.max_results)]
+            selectable = [
+                candidate for candidate in ranked if candidate.score >= max(3.0, top.score - 1.5)
+            ]
+            if len(selectable) > selection_limit:
+                return DiscoveryResponse(
+                    status=DISCOVERY_STATUS_TOO_MANY_MATCHES,
+                    clarification_required=True,
+                    matches=[candidate.public_match for candidate in selectable[:response_limit]],
+                    selected_matches=[],
+                    message=(
+                        f"Matched {len(selectable)} Redis targets, but at most {selection_limit} "
+                        "can be selected for one multi-target request. Ask the user to narrow the target set."
+                    ),
+                    max_selectable=selection_limit,
+                    match_count=len(selectable),
+                    truncated=len(selectable) > response_limit,
+                )
+            selected = selectable[:selection_limit]
             return DiscoveryResponse(
                 status="resolved",
                 clarification_required=False,
                 matches=[candidate.public_match for candidate in limited],
                 selected_matches=selected,
+                match_count=len(selectable),
             )
 
         clarification_required = len(limited) > 1 and limited[1].score >= top.score - 0.75

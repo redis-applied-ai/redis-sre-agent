@@ -1,0 +1,21 @@
+{
+  "required_tool_calls": [],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "info"
+    }
+  ],
+  "required_response_patterns": [],
+  "required_findings": [
+    "too many Redis targets",
+    "5 or fewer targets",
+    "narrow the request"
+  ],
+  "forbidden_claims": [
+    "ran deep triage on the first 5 targets",
+    "completed fan-out for 5 targets"
+  ],
+  "required_sources": [],
+  "expected_routing_decision": "triage"
+}

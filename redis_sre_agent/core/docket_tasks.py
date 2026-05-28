@@ -57,6 +57,10 @@ from redis_sre_agent.core.targets import (
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus
 from redis_sre_agent.core.threads import Message, ThreadManager
 from redis_sre_agent.core.turn_scope import TurnScope
+from redis_sre_agent.targets.contracts import (
+    DISCOVERY_STATUS_TOO_MANY_MATCHES,
+    MULTI_TARGET_SELECTION_LIMIT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -725,6 +729,119 @@ def _format_single_target_triage_response(*, binding: Any, response_text: str) -
     metadata = _target_binding_metadata(binding)
     target_label = metadata["display_name"] or metadata["target_handle"] or "Redis target"
     return f"## Deep triage: {target_label}\n\n{response_text}".strip()
+
+
+def _format_target_limit_response(
+    *,
+    resolution: Any = None,
+    bindings: Optional[List[Any]] = None,
+) -> str:
+    binding_list = list(bindings or [])
+    max_selectable = int(
+        getattr(resolution, "max_selectable", None) or MULTI_TARGET_SELECTION_LIMIT
+    )
+    match_count = int(
+        getattr(resolution, "match_count", None)
+        or len(getattr(resolution, "matches", []) or [])
+        or len(binding_list)
+    )
+    matches = list(getattr(resolution, "matches", None) or [])
+    labels: List[str] = []
+    for match in matches[:max_selectable]:
+        label = str(getattr(match, "display_name", "") or "").strip()
+        kind = str(getattr(match, "target_kind", "") or "").strip()
+        labels.append(f"- {label} ({kind})" if kind else f"- {label}")
+    for binding in binding_list[:max_selectable]:
+        metadata = _target_binding_metadata(binding)
+        label = metadata["display_name"] or metadata["target_handle"]
+        kind = metadata["target_kind"]
+        labels.append(f"- {label} ({kind})" if kind else f"- {label}")
+
+    lines = [
+        f"I found {match_count} Redis targets, which is more than I can deep triage in one request.",
+        f"Please narrow the request to {max_selectable} or fewer targets, then I can run one deep triage session per target and return each report as it completes.",
+    ]
+    if labels:
+        lines.extend(["", "Some matching targets:", *labels])
+    return "\n".join(lines)
+
+
+async def _complete_deep_triage_target_limit_response(
+    *,
+    task_manager: TaskManager,
+    thread_manager: ThreadManager,
+    thread_id: str,
+    task_id: str,
+    user_message: str,
+    resolution: Any = None,
+    bindings: Optional[List[Any]] = None,
+    append_user_message: bool = True,
+) -> Dict[str, Any]:
+    """Complete a deep-triage turn that matched more targets than fan-out should run."""
+    binding_list = list(bindings or [])
+    response_text = _format_target_limit_response(
+        resolution=resolution,
+        bindings=binding_list,
+    )
+    user_timestamp = datetime.now(timezone.utc).isoformat()
+    assistant_message_id = str(ULID())
+    match_count = (
+        getattr(resolution, "match_count", None)
+        or len(getattr(resolution, "matches", []) or [])
+        or len(binding_list)
+    )
+    assistant_metadata = {
+        "agent_type": "redis_triage",
+        "task_id": task_id,
+        "message_id": assistant_message_id,
+        "target_resolution_status": DISCOVERY_STATUS_TOO_MANY_MATCHES,
+        "max_selectable": getattr(resolution, "max_selectable", None)
+        or MULTI_TARGET_SELECTION_LIMIT,
+        "match_count": match_count,
+    }
+    await task_manager.add_task_update(
+        task_id,
+        "Target discovery matched too many Redis targets for one deep triage request",
+        "target_limit_exceeded",
+        metadata=assistant_metadata,
+    )
+    messages_to_append = []
+    if append_user_message:
+        messages_to_append.append(
+            {
+                "role": "user",
+                "content": user_message,
+                "metadata": {"timestamp": user_timestamp},
+            }
+        )
+    messages_to_append.append(
+        {
+            "message_id": assistant_message_id,
+            "role": "assistant",
+            "content": response_text,
+            "metadata": assistant_metadata,
+        },
+    )
+    await thread_manager.append_messages(thread_id, messages_to_append)
+    result = {
+        "response": response_text,
+        "metadata": assistant_metadata,
+        "thread_id": thread_id,
+        "task_id": task_id,
+        "message_id": assistant_message_id,
+        "target_resolution": (
+            resolution.public_dump() if hasattr(resolution, "public_dump") else None
+        ),
+        "turn_completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await task_manager.set_task_result(task_id, result)
+    await task_manager.update_task_status(task_id, TaskStatus.DONE)
+    await task_manager._publish_stream_update(
+        thread_id,
+        "turn_complete",
+        {"task_id": task_id, "message": "Task completed successfully"},
+    )
+    return result
 
 
 async def _run_single_target_triage_child(
@@ -2132,6 +2249,21 @@ async def _process_agent_turn_impl(
                     max_results=5,
                     preferred_capabilities=["diagnostics", "admin", "cloud"],
                 )
+                if resolution.status == DISCOVERY_STATUS_TOO_MANY_MATCHES:
+                    result = await _complete_deep_triage_target_limit_response(
+                        task_manager=task_manager,
+                        thread_manager=thread_manager,
+                        thread_id=thread_id,
+                        task_id=task_id,
+                        user_message=message,
+                        resolution=resolution,
+                    )
+                    try:
+                        if _root_span is not None:
+                            _root_span.end()
+                    except Exception:
+                        pass
+                    return result
                 if resolution.selected_matches:
                     bound_scope = await materialize_bound_target_scope(
                         matches=resolution.selected_matches,
@@ -2252,6 +2384,25 @@ async def _process_agent_turn_impl(
         fanout_bindings = current_scope.bindings or get_target_bindings_from_context(
             routing_context
         )
+        if (
+            agent_type == AgentType.REDIS_TRIAGE
+            and len(fanout_bindings) > MULTI_TARGET_SELECTION_LIMIT
+        ):
+            result = await _complete_deep_triage_target_limit_response(
+                task_manager=task_manager,
+                thread_manager=thread_manager,
+                thread_id=thread_id,
+                task_id=task_id,
+                user_message=message,
+                bindings=fanout_bindings,
+                append_user_message=False,
+            )
+            try:
+                if _root_span is not None:
+                    _root_span.end()
+            except Exception:
+                pass
+            return result
         if agent_type == AgentType.REDIS_TRIAGE and len(fanout_bindings) > 1:
             await task_manager.add_task_update(
                 task_id,
