@@ -2012,7 +2012,7 @@ class TestProcessAgentTurn:
         assert "cluster_id" not in kwargs["agent_context"]
 
     @pytest.mark.asyncio
-    async def test_pre_resolved_multi_target_scope_reaches_agent_without_singular_target_ids(self):
+    async def test_pre_resolved_multi_target_scope_fans_out_to_child_triage_tasks(self):
         mock_redis = AsyncMock()
         mock_thread = MagicMock()
         mock_thread.context = {}
@@ -2022,11 +2022,12 @@ class TestProcessAgentTurn:
         mock_thread_manager = AsyncMock()
         mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
         mock_thread_manager.update_thread_context = AsyncMock()
-        mock_thread_manager.append_message = AsyncMock()
-        mock_thread_manager.update_thread = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager.set_message_trace = AsyncMock()
 
         mock_task_manager = AsyncMock()
-        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.create_task = AsyncMock(side_effect=["child-task-1", "child-task-2"])
+        mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager.add_task_update = AsyncMock()
         mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
@@ -2080,14 +2081,18 @@ class TestProcessAgentTurn:
                 task_id="provided-task-123",
             ),
         ]
-        mock_run_agent = AsyncMock(
-            return_value={
-                "response": "Comparison response",
+
+        async def _run_child(*args, **kwargs):
+            context = kwargs["agent_context"]
+            handle = context["attached_target_handles"][0]
+            return {
+                "response": f"Triage response for {handle}",
                 "search_results": [],
                 "tool_envelopes": [],
                 "metadata": {"agent_type": "redis_triage"},
             }
-        )
+
+        mock_run_agent = AsyncMock(side_effect=_run_child)
 
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
@@ -2142,18 +2147,46 @@ class TestProcessAgentTurn:
             mock_span.set_attribute = MagicMock()
             mock_tracer.return_value.start_span.return_value = mock_span
 
-            await process_agent_turn(
+            result = await process_agent_turn(
                 thread_id="thread-123",
                 message="Compare checkout and session cache",
                 task_id="provided-task-123",
             )
 
-        _, kwargs = mock_run_agent.await_args
-        assert kwargs["agent_context"]["attached_target_handles"] == ["tgt_01", "tgt_02"]
-        assert kwargs["agent_context"]["active_target_handle"] == "tgt_01"
-        assert kwargs["agent_context"]["target_toolset_generation"] == 4
-        assert "instance_id" not in kwargs["agent_context"]
-        assert "cluster_id" not in kwargs["agent_context"]
+        assert result["metadata"]["fanout"] is True
+        assert result["child_task_ids"] == ["child-task-1", "child-task-2"]
+        assert mock_run_agent.await_count == 2
+        child_contexts = [call.kwargs["agent_context"] for call in mock_run_agent.await_args_list]
+        assert sorted(context["attached_target_handles"][0] for context in child_contexts) == [
+            "tgt_01",
+            "tgt_02",
+        ]
+        for context in child_contexts:
+            assert len(context["attached_target_handles"]) == 1
+            assert len(context["target_bindings"]) == 1
+            assert context["parent_task_id"] == "provided-task-123"
+            assert context["task_id"] in {"child-task-1", "child-task-2"}
+            assert "instance_id" not in context
+            assert "cluster_id" not in context
+
+        result_payloads = [
+            call.args[1] for call in mock_task_manager.set_task_result.await_args_list
+        ]
+        assert {payload["task_id"] for payload in result_payloads} == {
+            "child-task-1",
+            "child-task-2",
+            "provided-task-123",
+        }
+        child_messages = [
+            message
+            for call in mock_thread_manager.append_messages.await_args_list
+            for message in call.args[1]
+            if message["role"] == "assistant"
+        ]
+        assert sorted(message["metadata"]["task_id"] for message in child_messages) == [
+            "child-task-1",
+            "child-task-2",
+        ]
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_chat_path_does_not_bind_single_target_for_multi_scope(self):

@@ -15,7 +15,7 @@ def _select_catalog_candidates(
     allow_multiple: bool,
     max_results: int,
 ) -> tuple[List[DiscoveryCandidate], bool]:
-    selection_limit = min(3, max_results)
+    selection_limit = max(1, min(max_results, 10))
 
     if exact_ranked:
         if allow_multiple:
