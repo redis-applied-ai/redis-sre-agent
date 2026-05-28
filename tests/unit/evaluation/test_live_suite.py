@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -392,6 +392,7 @@ expectations:
         seen["session_id_prefix"] = session_id_prefix
         seen["git_sha"] = git_sha
         seen["policy_mode"] = baseline_policy.mode
+        seen["redis_client"] = _kwargs["redis_client"]
         return LiveEvalScenarioResult(
             scenario_id=scenario.id,
             execution_lane=ExecutionLane.AGENT_ONLY,
@@ -400,8 +401,16 @@ expectations:
             report_markdown=str(output_dir / scenario.id / "report.md"),
         )
 
+    @asynccontextmanager
+    async def fake_live_eval_redis_client():
+        yield "testcontainer-redis-client"
+
     monkeypatch.setattr(
         "redis_sre_agent.evaluation.live_suite._run_scenario_live", fake_run_scenario_live
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.evaluation.live_suite._live_eval_redis_client",
+        fake_live_eval_redis_client,
     )
     monkeypatch.setattr(
         "redis_sre_agent.evaluation.live_suite.live_eval_git_sha", lambda: "deadbeefcafe"
@@ -423,6 +432,7 @@ expectations:
         "session_id_prefix": "gha-live",
         "git_sha": "deadbeefcafe",
         "policy_mode": "scheduled_live",
+        "redis_client": "testcontainer-redis-client",
     }
     assert summary.overall_pass is True
     assert summary.trigger == "workflow_dispatch"
@@ -572,6 +582,103 @@ expectations:
     assert result == LiveEvalScenarioResult(
         scenario_id="prompt/no-mcp",
         execution_lane=ExecutionLane.AGENT_ONLY,
+        overall_pass=True,
+        report_json=str(tmp_path / "artifacts" / "report.json"),
+        report_markdown=str(tmp_path / "artifacts" / "report.md"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_live_passes_redis_client_to_full_turn_runtime(
+    tmp_path,
+    monkeypatch,
+):
+    scenario = live_suite_module._coerce_live_scenario(
+        EvalScenario.model_validate(
+            {
+                "id": "prompt/full-turn",
+                "name": "Full Turn",
+                "provenance": {
+                    "source_kind": "synthetic",
+                    "source_pack": "prompt-core",
+                    "source_pack_version": "2026-04-15",
+                    "golden": {
+                        "expectation_basis": "human_authored",
+                        "review_status": "reviewed",
+                    },
+                },
+                "execution": {
+                    "lane": "full_turn",
+                    "agent": "redis_chat",
+                    "query": "compare caches",
+                },
+                "knowledge": {
+                    "mode": "startup_only",
+                    "version": "latest",
+                },
+            }
+        )
+    )
+    redis_client = object()
+    seen: dict[str, object] = {}
+    judge_calls: dict[str, object] = {}
+
+    @contextmanager
+    def fake_eval_injection_scope(**_kwargs):
+        yield
+
+    async def fake_run_full_turn_scenario(*_args, **kwargs):
+        seen["redis_client"] = kwargs["redis_client"]
+        seen["allow_live_llm"] = kwargs["allow_live_llm"]
+        return SimpleNamespace(
+            turn_context={"scope": "ok"},
+            turn_result={
+                "response": "all good",
+                "metadata": {"agent_type": "redis_chat"},
+                "tool_envelopes": [],
+                "search_results": [],
+            },
+        )
+
+    monkeypatch.setattr(live_suite_module, "eval_injection_scope", fake_eval_injection_scope)
+    monkeypatch.setattr(live_suite_module, "run_full_turn_scenario", fake_run_full_turn_scenario)
+    monkeypatch.setattr(
+        live_suite_module,
+        "evaluate_eval_scenario_response",
+        lambda **kwargs: _fake_judge_result(judge_calls, **kwargs),
+    )
+    monkeypatch.setattr(
+        live_suite_module,
+        "build_eval_artifact_bundle",
+        lambda *args, **kwargs: SimpleNamespace(overall_pass=True),
+    )
+    monkeypatch.setattr(
+        live_suite_module,
+        "write_eval_artifact_bundle",
+        lambda bundle, output_dir: {
+            "report_json": output_dir / "report.json",
+            "report_markdown": output_dir / "report.md",
+        },
+    )
+
+    result = await live_suite_module._run_scenario_live(
+        scenario,
+        user_id="ci-user",
+        session_id_prefix="gha-live",
+        output_dir=tmp_path / "artifacts",
+        git_sha="deadbeef",
+        baseline_policy=EvalBaselinePolicy(mode="scheduled_live"),
+        redis_client=redis_client,
+    )
+
+    assert seen == {
+        "redis_client": redis_client,
+        "allow_live_llm": True,
+    }
+    assert judge_calls["scenario_id"] == "prompt/full-turn"
+    assert result == LiveEvalScenarioResult(
+        scenario_id="prompt/full-turn",
+        execution_lane=ExecutionLane.FULL_TURN,
         overall_pass=True,
         report_json=str(tmp_path / "artifacts" / "report.json"),
         report_markdown=str(tmp_path / "artifacts" / "report.md"),
