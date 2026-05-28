@@ -1,5 +1,6 @@
 """Unit tests for Docket task system and SRE tasks."""
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -24,6 +25,7 @@ from redis_sre_agent.core.approvals import (
 )
 from redis_sre_agent.core.docket_tasks import (
     SRE_TASK_COLLECTION,
+    _run_multi_target_deep_triage_fanout,
     _thread_messages_to_conversation_history,
     _transition_task_to_awaiting_approval,
     _transition_task_to_awaiting_approval_from_interrupt,
@@ -2124,6 +2126,73 @@ class TestProcessAgentTurn:
             "child-task-1",
             "child-task-2",
         ]
+
+    @pytest.mark.asyncio
+    async def test_multi_target_deep_triage_fanout_cancels_pending_children_on_cancellation(
+        self,
+    ):
+        bindings = [
+            TargetBinding(
+                target_handle="tgt_01",
+                target_kind="instance",
+                resource_id="redis-prod-checkout-cache",
+                display_name="checkout-cache-prod",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            ),
+            TargetBinding(
+                target_handle="tgt_02",
+                target_kind="instance",
+                resource_id="redis-stage-session-cache",
+                display_name="session-cache-stage",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            ),
+        ]
+        thread = MagicMock()
+        thread.metadata.user_id = "test-user"
+        task_manager = AsyncMock()
+        task_manager.create_task = AsyncMock(side_effect=["child-cancel", "child-slow"])
+        task_manager.add_task_update = AsyncMock()
+        thread_manager = AsyncMock()
+        slow_started = asyncio.Event()
+        slow_cancelled = asyncio.Event()
+
+        async def _run_child(*args, **kwargs):
+            if kwargs["child_task_id"] == "child-cancel":
+                await slow_started.wait()
+                raise asyncio.CancelledError()
+
+            slow_started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                slow_cancelled.set()
+                raise
+
+        with patch(
+            "redis_sre_agent.core.docket_tasks._run_single_target_triage_child",
+            new=_run_child,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await _run_multi_target_deep_triage_fanout(
+                    agent=MagicMock(),
+                    bindings=bindings,
+                    task_id="provided-task-123",
+                    thread_id="thread-123",
+                    thread=thread,
+                    task_manager=task_manager,
+                    thread_manager=thread_manager,
+                    conversation_state={"messages": []},
+                    routing_context={},
+                    original_query="Compare checkout and session cache",
+                    generation=4,
+                )
+
+        assert slow_cancelled.is_set()
+        task_manager.set_task_result.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_pre_resolved_over_limit_multi_target_deep_triage_asks_to_narrow(self):

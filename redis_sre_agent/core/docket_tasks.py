@@ -1081,28 +1081,35 @@ async def _run_multi_target_deep_triage_fanout(
     ]
 
     child_results: List[Dict[str, Any]] = []
-    for child_task in asyncio.as_completed(child_tasks):
-        child_result = await child_task
-        child_results.append(child_result)
-        target = child_result.get("target") or {}
-        target_label = target.get("display_name") or target.get("target_handle") or "target"
-        status = str(child_result.get("status") or TaskStatus.DONE.value)
-        update_type = (
-            "triage_fanout_child_failed"
-            if status == TaskStatus.FAILED.value
-            else "triage_fanout_child_complete"
-        )
-        await task_manager.add_task_update(
-            task_id,
-            f"Deep triage {status} for {target_label}",
-            update_type,
-            metadata={
-                "child_task_id": child_result.get("task_id"),
-                "message_id": child_result.get("message_id"),
-                "status": status,
-                "target": target,
-            },
-        )
+    try:
+        for child_task in asyncio.as_completed(child_tasks):
+            child_result = await child_task
+            child_results.append(child_result)
+            target = child_result.get("target") or {}
+            target_label = target.get("display_name") or target.get("target_handle") or "target"
+            status = str(child_result.get("status") or TaskStatus.DONE.value)
+            update_type = (
+                "triage_fanout_child_failed"
+                if status == TaskStatus.FAILED.value
+                else "triage_fanout_child_complete"
+            )
+            await task_manager.add_task_update(
+                task_id,
+                f"Deep triage {status} for {target_label}",
+                update_type,
+                metadata={
+                    "child_task_id": child_result.get("task_id"),
+                    "message_id": child_result.get("message_id"),
+                    "status": status,
+                    "target": target,
+                },
+            )
+    except BaseException:
+        for child_task in child_tasks:
+            if not child_task.done():
+                child_task.cancel()
+        await asyncio.gather(*child_tasks, return_exceptions=True)
+        raise
 
     failed_count = sum(
         1 for child_result in child_results if child_result.get("status") == TaskStatus.FAILED.value
