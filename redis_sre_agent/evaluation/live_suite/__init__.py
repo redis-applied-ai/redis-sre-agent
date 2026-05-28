@@ -351,11 +351,11 @@ async def _live_eval_redis_client() -> AsyncIterator[Any]:
 
     image = os.getenv(_LIVE_EVAL_REDIS_IMAGE_ENV, _LIVE_EVAL_REDIS_IMAGE_DEFAULT)
     container = RedisContainer(image=image)
-    container.start()
 
     client = None
     old_redis_url = config_module.settings.redis_url
     try:
+        container.start()
         host = container.get_container_host_ip()
         port = container.get_exposed_port(6379)
         redis_url = f"redis://{host}:{port}/0"

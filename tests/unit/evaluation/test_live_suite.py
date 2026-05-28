@@ -440,6 +440,35 @@ expectations:
 
 
 @pytest.mark.asyncio
+async def test_live_eval_redis_client_stops_container_when_start_fails(monkeypatch):
+    import redis_sre_agent.core.config as config_module
+
+    containers = []
+
+    class FailingRedisContainer:
+        def __init__(self, image):
+            self.image = image
+            self.stopped = False
+            containers.append(self)
+
+        def start(self):
+            raise RuntimeError("redis container failed to start")
+
+        def stop(self):
+            self.stopped = True
+
+    monkeypatch.setattr("testcontainers.redis.RedisContainer", FailingRedisContainer)
+    original_redis_url = config_module.settings.redis_url
+
+    with pytest.raises(RuntimeError, match="redis container failed to start"):
+        async with live_suite_module._live_eval_redis_client():
+            raise AssertionError("context should not yield when Redis start fails")
+
+    assert containers[0].stopped is True
+    assert config_module.settings.redis_url is original_redis_url
+
+
+@pytest.mark.asyncio
 async def test_run_live_eval_suite_rejects_disallowed_trigger(tmp_path):
     policy_path = tmp_path / "baseline_policy.yaml"
     policy_path.write_text(
