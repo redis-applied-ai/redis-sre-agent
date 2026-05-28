@@ -133,6 +133,7 @@ EVAL_PR_LIVE_CONFIG ?= evals/suites/pr-target-discovery-live.yaml
 EVAL_PR_LIVE_BASELINE_PROFILE ?= pull_request
 EVAL_PR_LIVE_OUTPUT_DIR ?= artifacts/pr-live-evals
 EVAL_PR_LIVE_TRIGGER ?= pull_request
+EVAL_PR_LIVE_REDIS_TESTCONTAINER ?= true
 
 test-eval-live: sync ## Run the scheduled/manual live-model eval suite
 	$(UV) run python scripts/run_live_eval_suite.py \
@@ -149,7 +150,8 @@ test-eval-pr-live: sync ## Run the LLM-backed eval suite used in PR CI
 		--baseline-profile $(EVAL_PR_LIVE_BASELINE_PROFILE) \
 		--report-dir $(EVAL_PR_LIVE_OUTPUT_DIR) \
 		--trigger $(EVAL_PR_LIVE_TRIGGER) \
-		--session-id-prefix pr-live-eval
+		--session-id-prefix pr-live-eval \
+		$(if $(filter true,$(EVAL_PR_LIVE_REDIS_TESTCONTAINER)),--redis-testcontainer,)
 
 test-integration: sync ## Run integration tests only
 	$(UV) run pytest -m integration
