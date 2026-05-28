@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 from opentelemetry import trace
 from redisvl.query import BaseQuery, FilterQuery, HybridQuery, VectorQuery, VectorRangeQuery
 from redisvl.query.filter import FilterExpression, Tag
-from redisvl.query.query import TokenEscaper
 from ulid import ULID
 
 from redis_sre_agent.core.config import Settings
@@ -25,6 +24,7 @@ from redis_sre_agent.core.redis import (
     get_support_tickets_index,
     get_vectorizer,
 )
+from redis_sre_agent.core.redisearch import escape_redisearch_query_value, tag_equals_expression
 from redis_sre_agent.core.runtime_overrides import dispatch_knowledge_backend_override
 from redis_sre_agent.skills.backend import get_skill_backend
 
@@ -71,7 +71,6 @@ _HYBRID_QUERY_UNSUPPORTED_MARKERS = (
     "not supported",
 )
 _HYBRID_MISSING_COMMAND_MARKERS = ("unknown command", "no such command")
-_TAG_EXACT_MATCH_ESCAPER = TokenEscaper(re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?\|]"))
 
 
 async def _maybe_call_knowledge_backend(
@@ -315,8 +314,7 @@ def _normalize_exact_match_value(value: str, index_type: str) -> str:
 
 def _tag_equals_expression(field_name: str, value: str) -> FilterExpression:
     """Build a canonical TAG equality expression with explicit escaping."""
-    escaped_value = _TAG_EXACT_MATCH_ESCAPER.escape(str(value or ""))
-    return FilterExpression(f"@{field_name}:{{{escaped_value}}}")
+    return tag_equals_expression(field_name, value)
 
 
 def _exact_match_filter_expression(
@@ -461,9 +459,10 @@ def _quoted_text_phrase_query(phrase: str) -> str:
 
 def _hybrid_text_query(query: str) -> str:
     """Build a best-effort token query across searchable text fields."""
-    escaper = TokenEscaper()
     tokens = [
-        escaper.escape(token.strip().strip(",").replace("“", "").replace("”", "").lower())
+        escape_redisearch_query_value(
+            token.strip().strip(",").replace("“", "").replace("”", "").lower()
+        )
         for token in str(query or "").split()
     ]
     tokens = [token for token in tokens if token]
@@ -471,7 +470,7 @@ def _hybrid_text_query(query: str) -> str:
         normalized_query, _ = _strip_outer_quotes(query)
         if not normalized_query:
             return "*"
-        tokens = [escaper.escape(normalized_query.lower())]
+        tokens = [escape_redisearch_query_value(normalized_query.lower())]
 
     token_query = " | ".join(tokens)
     return (

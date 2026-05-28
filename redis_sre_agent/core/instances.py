@@ -16,7 +16,7 @@ from typing import Annotated, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer, field_validator, model_validator
 from redisvl.query import CountQuery, FilterQuery
-from redisvl.query.filter import FilterExpression, Tag
+from redisvl.query.filter import Tag
 from ulid import ULID
 
 from .encryption import encrypt_secret, get_secret_value
@@ -26,6 +26,7 @@ from .redis import (
     get_instances_index,
     get_redis_client,  # noqa: F401  # Expose for tests that patch via this module path
 )
+from .redisearch import tag_contains_expression
 
 logger = logging.getLogger(__name__)
 
@@ -473,9 +474,8 @@ async def query_instances(
             user_filter = Tag("user_id") == user_id
             filter_expr = user_filter if filter_expr is None else (filter_expr & user_filter)
 
-        if search:
-            # Use raw FilterExpression for wildcard matching (Tag escapes wildcards)
-            name_filter = FilterExpression(f"@name:{{*{search}*}}")
+        if search and search.strip():
+            name_filter = tag_contains_expression("name", search.strip())
             filter_expr = name_filter if filter_expr is None else (filter_expr & name_filter)
 
         # Get total count with filter
