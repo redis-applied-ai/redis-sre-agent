@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from click.testing import CliRunner
 
@@ -563,6 +564,18 @@ def test_eval_live_suite_command_defaults_missing_overall_pass_to_failure(tmp_pa
 
     assert result.exit_code == 1
     assert "Overall pass: no" in result.output
+
+
+def test_live_eval_script_loads_repo_dotenv_before_requiring_credentials(tmp_path, monkeypatch):
+    import scripts.run_live_eval_suite as live_eval_script
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(live_eval_script, "_REPO_ROOT", tmp_path)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=dotenv-test-key\n", encoding="utf-8")
+
+    live_eval_script._require_live_model_credentials()
+
+    assert os.environ["OPENAI_API_KEY"] == "dotenv-test-key"
 
 
 def test_eval_list_json_includes_known_scenario():

@@ -377,6 +377,19 @@ def _build_eval_target_catalog_docs(scenario: EvalScenario) -> list[TargetCatalo
     return [_build_eval_target_catalog_doc(entry) for entry in scenario.scope.target_catalog]
 
 
+def _build_eval_target_handle_lookup(scenario: EvalScenario) -> dict[tuple[str, str], str]:
+    """Map eval target catalog subjects to stable scenario handles."""
+
+    lookup: dict[tuple[str, str], str] = {}
+    for entry in scenario.scope.target_catalog:
+        subjects = {entry.handle}
+        if entry.resource_id:
+            subjects.add(entry.resource_id)
+        for subject in subjects:
+            lookup[(entry.kind, subject)] = entry.handle
+    return lookup
+
+
 def _build_eval_target_registry(scenario: EvalScenario) -> TargetIntegrationRegistry | None:
     """Install a scenario-backed discovery backend while reusing production binders."""
 
@@ -410,11 +423,43 @@ def _target_registry_override_scope(
         return nullcontext()
 
     catalog_docs = _build_eval_target_catalog_docs(scenario)
+    target_handle_lookup = _build_eval_target_handle_lookup(scenario)
 
     async def _get_eval_target_catalog(*, user_id: str | None = None) -> list[TargetCatalogDoc]:
         if not user_id:
             return list(catalog_docs)
         return [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+
+    original_build_public_binding = TargetBindingService.build_public_binding
+
+    def _build_eval_public_binding(
+        cls,
+        candidate,
+        *,
+        thread_id: str | None,
+        task_id: str | None,
+        existing_handle: str | None = None,
+    ) -> PublicTargetBinding:
+        if existing_handle is None:
+            normalized_candidate = cls._normalize_candidate(candidate)
+            public_match = normalized_candidate.public_match
+            candidate_subjects = [
+                normalized_candidate.binding_subject,
+                public_match.resource_id,
+            ]
+            for subject in candidate_subjects:
+                if not subject:
+                    continue
+                existing_handle = target_handle_lookup.get((public_match.target_kind, subject))
+                if existing_handle:
+                    break
+
+        return original_build_public_binding(
+            candidate,
+            thread_id=thread_id,
+            task_id=task_id,
+            existing_handle=existing_handle,
+        )
 
     stack = ExitStack()
     for target in (
@@ -425,6 +470,13 @@ def _target_registry_override_scope(
         stack.enter_context(patch(target, return_value=registry))
     stack.enter_context(
         patch("redis_sre_agent.core.targets.get_target_catalog", new=_get_eval_target_catalog)
+    )
+    stack.enter_context(
+        patch.object(
+            TargetBindingService,
+            "build_public_binding",
+            classmethod(_build_eval_public_binding),
+        )
     )
     return stack
 

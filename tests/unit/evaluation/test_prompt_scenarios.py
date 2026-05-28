@@ -412,13 +412,9 @@ def test_prompt_scenarios_ship_goldens_and_policy_expectations():
         "do not have an auto-enumerable list",
         "ask me for a search term first",
     ]
-    assert (
-        target_multi.expectations.required_tool_calls[1].target_handle == "tgt_checkout_cache_prod"
-    )
-    assert (
-        target_multi.expectations.required_tool_calls[2].target_handle == "tgt_session_cache_prod"
-    )
-    assert target_multi.expectations.required_tool_calls[3].target_handle == "tgt_cart_cache_prod"
+    assert target_multi.expectations.required_tool_calls[1].target_handle is None
+    assert target_multi.expectations.required_tool_calls[2].target_handle is None
+    assert target_multi.expectations.required_tool_calls[3].target_handle is None
     assert target_over_limit.expectations.required_tool_calls[0].operation == (
         "resolve_redis_targets"
     )

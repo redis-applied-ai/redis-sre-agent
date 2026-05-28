@@ -95,6 +95,28 @@ tools:
         properties:
           section:
             type: string
+      responders:
+        - when:
+            call_count: 1
+            args_contains:
+              section: memory
+          result: fixtures/tools/info-checkout-memory.json
+        - when:
+            call_count: 2
+            args_contains:
+              section: memory
+          result: fixtures/tools/info-session-memory.json
+        - when:
+            call_count: 3
+            args_contains:
+              section: memory
+          result: fixtures/tools/info-cart-memory.json
+        - when:
+            call_count: 4
+            args_contains:
+              section: memory
+          result: fixtures/tools/info-checkout-memory.json
+      result: fixtures/tools/info-checkout-memory.json
       target_overrides:
         tgt_checkout_cache_prod:
           responders:
@@ -121,13 +143,10 @@ expectations:
       operation: resolve_redis_targets
     - provider_family: redis_command
       operation: info
-      target_handle: tgt_checkout_cache_prod
     - provider_family: redis_command
       operation: info
-      target_handle: tgt_session_cache_prod
     - provider_family: redis_command
       operation: info
-      target_handle: tgt_cart_cache_prod
   required_findings:
     - prod checkout cache
     - prod session cache
