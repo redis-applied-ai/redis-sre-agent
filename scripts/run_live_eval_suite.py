@@ -6,8 +6,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from redis_sre_agent.evaluation.live_suite import load_live_eval_suite_config, run_live_eval_suite
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -51,6 +56,8 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _require_live_model_credentials() -> None:
+    load_dotenv(dotenv_path=_REPO_ROOT / ".env")
+    load_dotenv()
     if os.getenv("OPENAI_API_KEY"):
         return
     raise SystemExit("OPENAI_API_KEY is required for live eval runs")

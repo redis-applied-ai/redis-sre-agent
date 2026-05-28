@@ -1,0 +1,26 @@
+{
+  "required_tool_calls": [
+    {
+      "provider_family": "target_discovery",
+      "operation": "resolve_redis_targets"
+    }
+  ],
+  "forbidden_tool_calls": [
+    {
+      "provider_family": "redis_command",
+      "operation": "info"
+    }
+  ],
+  "required_response_patterns": [],
+  "required_findings": [
+    "too many Redis targets",
+    "5 or fewer targets",
+    "narrow the request"
+  ],
+  "forbidden_claims": [
+    "compared all 10 targets",
+    "ran diagnostics on the first 5 targets"
+  ],
+  "required_sources": [],
+  "expected_routing_decision": "chat"
+}

@@ -251,6 +251,7 @@ class TestChatAgentSystemPrompt:
         assert "list_known_redis_targets" in CHAT_SYSTEM_PROMPT
         assert "resolve_redis_targets" in CHAT_SYSTEM_PROMPT
         assert "allow_multiple=true" in CHAT_SYSTEM_PROMPT
+        assert "too_many_matches" in CHAT_SYSTEM_PROMPT
         assert "what redis targets you know about" in prompt_lower
 
     def test_system_prompt_requires_skill_fetch_and_hostname_caution(self):

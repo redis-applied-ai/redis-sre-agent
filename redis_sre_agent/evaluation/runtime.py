@@ -32,6 +32,8 @@ from redis_sre_agent.evaluation.scenarios import EvalScenario, ExecutionLane
 from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorState, build_fixture_tool_runtime
 from redis_sre_agent.targets import TargetBindingService
 from redis_sre_agent.targets.contracts import (
+    DISCOVERY_STATUS_TOO_MANY_MATCHES,
+    MULTI_TARGET_SELECTION_LIMIT,
     DiscoveryCandidate,
     DiscoveryRequest,
     DiscoveryResponse,
@@ -325,20 +327,38 @@ class _EvalTargetCatalogDiscoveryBackend:
             )
 
         ranked.sort(key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
-        limited = ranked[: max(1, min(request.max_results, 10))]
+        response_limit = max(1, min(request.max_results, 10))
+        selection_limit = max(1, min(request.max_results, MULTI_TARGET_SELECTION_LIMIT))
+        limited = ranked[:response_limit]
         if not limited:
             return DiscoveryResponse(status="no_match")
 
         top = limited[0]
         if request.allow_multiple:
-            selected = [
-                candidate for candidate in limited if candidate.score >= max(3.0, top.score - 1.5)
-            ][: min(3, request.max_results)]
+            selectable = [
+                candidate for candidate in ranked if candidate.score >= max(3.0, top.score - 1.5)
+            ]
+            if len(selectable) > selection_limit:
+                return DiscoveryResponse(
+                    status=DISCOVERY_STATUS_TOO_MANY_MATCHES,
+                    clarification_required=True,
+                    matches=[candidate.public_match for candidate in selectable[:response_limit]],
+                    selected_matches=[],
+                    message=(
+                        f"Matched {len(selectable)} Redis targets, but at most {selection_limit} "
+                        "can be selected for one multi-target request. Ask the user to narrow the target set."
+                    ),
+                    max_selectable=selection_limit,
+                    match_count=len(selectable),
+                    truncated=len(selectable) > response_limit,
+                )
+            selected = selectable[:selection_limit]
             return DiscoveryResponse(
                 status="resolved",
                 clarification_required=False,
                 matches=[candidate.public_match for candidate in limited],
                 selected_matches=selected,
+                match_count=len(selectable),
             )
 
         clarification_required = len(limited) > 1 and limited[1].score >= top.score - 0.75
@@ -355,6 +375,19 @@ def _build_eval_target_catalog_docs(scenario: EvalScenario) -> list[TargetCatalo
     """Return scenario-backed catalog docs for eval discovery and inventory tools."""
 
     return [_build_eval_target_catalog_doc(entry) for entry in scenario.scope.target_catalog]
+
+
+def _build_eval_target_handle_lookup(scenario: EvalScenario) -> dict[tuple[str, str], str]:
+    """Map eval target catalog subjects to stable scenario handles."""
+
+    lookup: dict[tuple[str, str], str] = {}
+    for entry in scenario.scope.target_catalog:
+        subjects = {entry.handle}
+        if entry.resource_id:
+            subjects.add(entry.resource_id)
+        for subject in subjects:
+            lookup[(entry.kind, subject)] = entry.handle
+    return lookup
 
 
 def _build_eval_target_registry(scenario: EvalScenario) -> TargetIntegrationRegistry | None:
@@ -390,11 +423,43 @@ def _target_registry_override_scope(
         return nullcontext()
 
     catalog_docs = _build_eval_target_catalog_docs(scenario)
+    target_handle_lookup = _build_eval_target_handle_lookup(scenario)
 
     async def _get_eval_target_catalog(*, user_id: str | None = None) -> list[TargetCatalogDoc]:
         if not user_id:
             return list(catalog_docs)
         return [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+
+    original_build_public_binding = TargetBindingService.build_public_binding
+
+    def _build_eval_public_binding(
+        cls,
+        candidate,
+        *,
+        thread_id: str | None,
+        task_id: str | None,
+        existing_handle: str | None = None,
+    ) -> PublicTargetBinding:
+        if existing_handle is None:
+            normalized_candidate = cls._normalize_candidate(candidate)
+            public_match = normalized_candidate.public_match
+            candidate_subjects = [
+                normalized_candidate.binding_subject,
+                public_match.resource_id,
+            ]
+            for subject in candidate_subjects:
+                if not subject:
+                    continue
+                existing_handle = target_handle_lookup.get((public_match.target_kind, subject))
+                if existing_handle:
+                    break
+
+        return original_build_public_binding(
+            candidate,
+            thread_id=thread_id,
+            task_id=task_id,
+            existing_handle=existing_handle,
+        )
 
     stack = ExitStack()
     for target in (
@@ -405,6 +470,13 @@ def _target_registry_override_scope(
         stack.enter_context(patch(target, return_value=registry))
     stack.enter_context(
         patch("redis_sre_agent.core.targets.get_target_catalog", new=_get_eval_target_catalog)
+    )
+    stack.enter_context(
+        patch.object(
+            TargetBindingService,
+            "build_public_binding",
+            classmethod(_build_eval_public_binding),
+        )
     )
     return stack
 

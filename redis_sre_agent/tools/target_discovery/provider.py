@@ -104,7 +104,10 @@ class TargetDiscoveryToolProvider(ToolProvider):
                         },
                         "max_results": {
                             "type": "integer",
-                            "description": "Maximum number of candidate matches to return.",
+                            "description": (
+                                "Maximum number of candidate matches to return. Multi-target "
+                                "selection is capped at 5 targets even when more candidates are returned."
+                            ),
                             "default": 5,
                             "minimum": 1,
                             "maximum": 10,

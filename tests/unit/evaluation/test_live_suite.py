@@ -231,6 +231,29 @@ def test_normalize_tool_trace_infers_re_admin_alias_for_single_bound_target():
     }
 
 
+def test_normalize_tool_trace_infers_target_discovery_without_mocked_provider():
+    scenario = load_eval_scenario(
+        "evals/scenarios/prompt/target-discovery-over-limit-comparison/scenario.yaml"
+    )
+
+    trace = live_suite_module._normalize_tool_trace(
+        [
+            {
+                "tool_key": "target_discovery_a043f5_resolve_redis_targets",
+                "status": "success",
+                "args": {},
+                "data": {"status": "too_many_matches"},
+            }
+        ],
+        scenario=scenario,
+    )
+
+    assert trace[0]["logical"] == {
+        "provider_family": "target_discovery",
+        "operation": "resolve_redis_targets",
+    }
+
+
 def test_normalize_tool_trace_infers_mcp_server_logical_identity():
     scenario = EvalScenario.model_validate(
         {

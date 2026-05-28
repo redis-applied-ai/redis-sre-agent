@@ -349,7 +349,14 @@ def _infer_live_trace_logical_identity(
         }
 
     candidate_operations: list[tuple[int, str, str, str | None]] = []
-    for provider_family, operation_map in scenario.tools.providers.items():
+    provider_operations = {
+        provider_family: set(operation_map)
+        for provider_family, operation_map in scenario.tools.providers.items()
+    }
+    provider_operations.setdefault("target_discovery", set()).update(
+        {"list_known_redis_targets", "resolve_redis_targets"}
+    )
+    for provider_family, operations in provider_operations.items():
         raw_provider = normalize_tool_name_token(provider_family)
         normalized_provider = normalize_provider_family(raw_provider)
         provider_prefixes = {
@@ -358,7 +365,7 @@ def _infer_live_trace_logical_identity(
         }
         if not any(normalized_name.startswith(prefix) for prefix in provider_prefixes):
             continue
-        for operation in operation_map:
+        for operation in operations:
             normalized_operation = normalize_tool_name_token(operation)
             if normalized_name.endswith(f"_{normalized_operation}"):
                 candidate_operations.append(

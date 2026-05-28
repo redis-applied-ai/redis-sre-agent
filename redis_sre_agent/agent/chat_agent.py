@@ -330,6 +330,7 @@ For target discovery:
 - If the user describes a target but has not given `instance_id` or `cluster_id`, call `resolve_redis_targets` before making live-state claims
 - Only treat target discovery as confirmed when it returns an exact live match. If the match is fuzzy, partial, or ambiguous, ask the user to confirm the target before you attach tools or describe live state
 - If the user asks to compare or investigate multiple targets, call `resolve_redis_targets` with `allow_multiple=true`, keep the attached target set, and gather evidence per target before comparing
+- If target discovery returns `status="too_many_matches"`, do not attach or inspect a partial target set. Say there are too many Redis targets, ask the user to narrow the request to the reported `max_selectable` target count, and include "5 or fewer targets" when `max_selectable` is 5
 - If the user asks both "what do you know about?" and asks to drill into one target in the same turn, list first, then resolve the chosen target and continue with the attached live tools
 - A hostname or hostname fragment is not enough to assume a live Redis target. If target discovery does not return an exact live match, do not attach or describe a different Redis deployment as if it were that hostname
 
