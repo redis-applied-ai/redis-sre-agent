@@ -558,6 +558,59 @@ class TestQueryInstances:
             assert result.instances == []
 
     @pytest.mark.asyncio
+    async def test_query_instances_escapes_symbol_heavy_search_filter(self):
+        """User search text should be escaped before entering wildcard TAG filters."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(side_effect=[1, []])
+
+        with (
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await query_instances(
+                environment="production",
+                search="foo|bar/baz[prod]",
+            )
+
+        count_query = str(mock_index.query.await_args_list[0].args[0])
+        result_query = str(mock_index.query.await_args_list[1].args[0])
+        assert r"@name:{*foo\|bar\/baz\[prod\]*}" in count_query
+        assert r"@name:{*foo\|bar\/baz\[prod\]*}" in result_query
+        assert result.total == 1
+        assert result.instances == []
+
+    @pytest.mark.asyncio
+    async def test_query_instances_ignores_blank_search_filter(self):
+        """Whitespace-only search should not create an invalid wildcard TAG query."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=0)
+
+        with (
+            patch(
+                "redis_sre_agent.core.instances.get_instances_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.instances._ensure_instances_index_exists",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await query_instances(search="   ")
+
+        count_query = str(mock_index.query.await_args_list[0].args[0])
+        assert "@name:" not in count_query
+        assert result.total == 0
+        assert result.instances == []
+
+    @pytest.mark.asyncio
     async def test_query_instances_error(self):
         """Test query_instances returns empty on error."""
         with patch(
