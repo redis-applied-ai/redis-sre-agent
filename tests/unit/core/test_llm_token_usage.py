@@ -43,7 +43,7 @@ def test_extract_llm_token_usage_from_openai_usage_object():
     assert usage.total_tokens == 11
 
 
-def test_extract_llm_token_usage_preserves_explicit_zero_total():
+def test_extract_llm_token_usage_uses_components_when_total_is_zero():
     response = SimpleNamespace(
         usage_metadata={
             "input_tokens": 4,
@@ -56,6 +56,22 @@ def test_extract_llm_token_usage_preserves_explicit_zero_total():
 
     assert usage.prompt_tokens == 4
     assert usage.completion_tokens == 6
+    assert usage.total_tokens == 10
+
+
+def test_extract_llm_token_usage_preserves_zero_total_without_components():
+    response = SimpleNamespace(
+        usage_metadata={
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+    )
+
+    usage = extract_llm_token_usage(response)
+
+    assert usage.prompt_tokens == 0
+    assert usage.completion_tokens == 0
     assert usage.total_tokens == 0
 
 
@@ -80,6 +96,25 @@ def test_record_llm_token_usage_raises_when_scope_exceeds_limit():
             )
 
     assert state.total_tokens == 11
+
+
+def test_record_llm_token_usage_enforces_limit_when_zero_total_has_components():
+    with llm_token_usage_scope(limit=5) as state:
+        with pytest.raises(LLMTokenLimitExceededError, match="unit.zero.*used 6"):
+            record_llm_token_usage(
+                SimpleNamespace(
+                    usage_metadata={
+                        "input_tokens": 4,
+                        "output_tokens": 2,
+                        "total_tokens": 0,
+                    }
+                ),
+                request_kind="unit.zero",
+            )
+
+    assert state.prompt_tokens == 4
+    assert state.completion_tokens == 2
+    assert state.total_tokens == 6
 
 
 def test_token_usage_scope_resets_between_turns():

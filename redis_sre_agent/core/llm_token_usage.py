@@ -91,14 +91,17 @@ def extract_llm_token_usage(resp: Any) -> LLMTokenUsage:
     prompt = _usage_value(usage, "input_tokens", "prompt_tokens")
     completion = _usage_value(usage, "output_tokens", "completion_tokens")
     total = _usage_value(usage, "total_tokens")
+    component_total = (prompt or 0) + (completion or 0)
 
     if total is None and prompt is not None and completion is not None:
-        total = prompt + completion
+        total = component_total
+    elif total is not None and total <= 0 and component_total > 0:
+        total = component_total
 
     return LLMTokenUsage(
         prompt_tokens=prompt if prompt is not None else 0,
         completion_tokens=completion if completion is not None else 0,
-        total_tokens=total if total is not None else (prompt or 0) + (completion or 0),
+        total_tokens=total if total is not None else component_total,
     )
 
 
