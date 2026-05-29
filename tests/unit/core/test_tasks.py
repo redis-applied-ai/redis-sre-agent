@@ -44,6 +44,7 @@ from redis_sre_agent.core.docket_tasks import (
     test_task_system,
 )
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.targets import (
     MaterializedTargetScope,
     ResolvedTargetMatch,
@@ -837,6 +838,46 @@ class TestProcessKnowledgeQuery:
                 )
 
         mock_task_manager.set_task_error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_process_knowledge_query_token_limit_records_task_error(self):
+        """Token limit failures should fail the task before being re-raised."""
+        mock_redis = AsyncMock()
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=None)
+
+        token_error = LLMTokenLimitExceededError(
+            "LLM token usage limit exceeded for knowledge_agent: used 16 total tokens; limit is 15"
+        )
+        mock_agent = AsyncMock()
+        mock_agent.process_query = AsyncMock(side_effect=token_error)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
+            patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
+        ):
+            with pytest.raises(LLMTokenLimitExceededError, match="used 16 total tokens"):
+                await process_knowledge_query(
+                    query="Test",
+                    task_id="task-123",
+                    thread_id="thread-456",
+                )
+
+        mock_task_manager.set_task_error.assert_awaited_once_with("task-123", str(token_error))
+        done_calls = [
+            call
+            for call in mock_task_manager.update_task_status.await_args_list
+            if call.args == ("task-123", TaskStatus.DONE)
+        ]
+        assert done_calls == []
 
     @pytest.mark.asyncio
     async def test_process_knowledge_query_agent_response_serialization(self):

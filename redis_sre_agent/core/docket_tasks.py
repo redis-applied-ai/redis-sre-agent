@@ -45,6 +45,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     search_knowledge_base_helper,
 )
 from redis_sre_agent.core.llm_token_usage import (
+    LLMTokenLimitExceededError,
     llm_token_usage_scope,
     reset_llm_token_usage_scope,
     start_llm_token_usage_scope,
@@ -1664,6 +1665,10 @@ async def process_knowledge_query(
             thread_id=thread_id,
             error=exc,
         )
+    except LLMTokenLimitExceededError as exc:
+        logger.error("Knowledge query exceeded LLM token limit: %s", exc)
+        await task_manager.set_task_error(task_id, str(exc))
+        raise
     except Exception as e:
         logger.error(f"Knowledge query failed: {e}")
         await task_manager.set_task_error(task_id, str(e))
