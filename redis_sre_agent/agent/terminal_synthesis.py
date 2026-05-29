@@ -8,6 +8,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
+
 from .helpers import coerce_response_text
 
 GuardedInvoke = Callable[..., Awaitable[Any]]
@@ -180,6 +182,8 @@ async def synthesize_terminal_response(
             synthesis_messages,
             request_kind=config.request_kind,
         )
+    except LLMTokenLimitExceededError:
+        raise
     except Exception as exc:
         logger.warning(
             config.failure_log_message,
