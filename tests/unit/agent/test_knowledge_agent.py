@@ -17,6 +17,7 @@ from redis_sre_agent.core.knowledge_helpers import (
 from redis_sre_agent.core.knowledge_helpers import (
     search_knowledge_base_helper as search_knowledge_base,
 )
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 
 
 class TestKnowledgeAgent:
@@ -200,6 +201,70 @@ class TestKnowledgeAgent:
             )
 
         assert response.response.startswith("I apologize, but I wasn't able to process your query.")
+        prepared_memory.persist_response_fail_open.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.knowledge_agent.build_startup_knowledge_context")
+    @patch("redis_sre_agent.agent.knowledge_agent.ToolManager")
+    @patch("redis_sre_agent.agent.knowledge_agent.create_llm")
+    async def test_process_query_propagates_token_limit_error(
+        self, mock_create_llm, mock_tool_manager_cls, mock_build_startup_context
+    ):
+        mock_build_startup_context.return_value = "STARTUP_CONTEXT"
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_create_llm.return_value = mock_llm
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_manager_ctx = MagicMock()
+        mock_tool_manager_ctx.__aenter__ = AsyncMock(return_value=mock_tool_mgr)
+        mock_tool_manager_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_tool_manager_cls.return_value = mock_tool_manager_ctx
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="s1",
+            user_id="u1",
+            query="who runs AOP?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        class _FakeApp:
+            async def ainvoke(self, initial_state, config=None):
+                raise LLMTokenLimitExceededError(
+                    "LLM token usage limit exceeded for knowledge_agent: "
+                    "used 16 total tokens; limit is 15"
+                )
+
+        class _FakeWorkflow:
+            def compile(self, checkpointer=None):
+                return _FakeApp()
+
+        agent = KnowledgeOnlyAgent()
+        with (
+            patch(
+                "redis_sre_agent.agent.knowledge_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.helpers.build_adapters_for_tooldefs",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
+        ):
+            with pytest.raises(LLMTokenLimitExceededError, match="used 16 total tokens"):
+                await agent.process_query(query="who runs AOP?", session_id="s1", user_id="u1")
+
         prepared_memory.persist_response_fail_open.assert_not_awaited()
 
     @pytest.mark.asyncio

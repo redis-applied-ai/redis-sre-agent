@@ -21,6 +21,7 @@ from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.progress import (
     NullEmitter,
     ProgressEmitter,
@@ -659,6 +660,8 @@ class KnowledgeOnlyAgent:
                     await prepared_memory.persist_response_fail_open(result.response)
                 return result
 
+            except LLMTokenLimitExceededError:
+                raise
             except Exception as e:
                 logger.error(f"Knowledge agent processing failed: {e}")
                 error_response = f"I encountered an error while processing your knowledge query: {str(e)}. Please try asking a more specific question about SRE practices, troubleshooting methodologies, or system reliability concepts."
