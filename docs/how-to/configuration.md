@@ -108,6 +108,7 @@ export SRE_AGENT_CONFIG=/path/to/my-config.toml
 - `PROMETHEUS_URL` / `GRAFANA_URL`: Optional app-level URLs for integrations
 - `TOOLS_PROMETHEUS_URL` / `TOOLS_LOKI_URL`: Tool-specific endpoints
 - `API_KEY`: API auth key (if you enable auth)
+- `LLM_SINGLE_TURN_TOKEN_LIMIT`: Optional positive integer cap for total LLM tokens used during one agent turn
 - `ALLOWED_HOSTS`: CORS origins (default: `["*"]`)
 
 Example `.env` (local):
@@ -119,6 +120,18 @@ REDIS_URL=redis://localhost:7843/0
 TOOLS_PROMETHEUS_URL=http://localhost:9090
 TOOLS_LOKI_URL=http://localhost:3100
 ```
+
+### LLM token cap
+
+Set `LLM_SINGLE_TURN_TOKEN_LIMIT` when you want a hard token budget for each logical agent turn. The agent counts reported prompt and completion tokens across the LLM calls made for that turn. If the total exceeds the configured cap, the task fails with an `LLM token usage limit exceeded` error instead of continuing with more model calls.
+
+Leave the setting unset to disable turn-level token limiting. Use a positive integer when enabling it:
+
+```bash
+LLM_SINGLE_TURN_TOKEN_LIMIT=200000
+```
+
+This setting is separate from `MAX_ITERATIONS`: `MAX_ITERATIONS` limits reasoning cycles, while `LLM_SINGLE_TURN_TOKEN_LIMIT` limits the total token usage reported by the model provider during the turn.
 
 ### Tool caching
 
