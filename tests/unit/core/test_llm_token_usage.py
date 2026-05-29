@@ -4,9 +4,11 @@ import pytest
 
 import redis_sre_agent.core.llm_token_usage as token_usage_module
 from redis_sre_agent.core.llm_token_usage import (
+    LLMContextTokenBudgetExceededError,
     LLMTokenLimitExceededError,
+    enforce_llm_context_token_budget,
+    estimate_llm_context_tokens,
     extract_llm_token_usage,
-    llm_token_usage_scope,
     record_llm_token_usage,
 )
 
@@ -75,64 +77,80 @@ def test_extract_llm_token_usage_preserves_zero_total_without_components():
     assert usage.total_tokens == 0
 
 
-def test_record_llm_token_usage_accumulates_within_scope():
-    with llm_token_usage_scope(limit=15) as state:
-        record_llm_token_usage(SimpleNamespace(usage_metadata={"total_tokens": 7}))
-        record_llm_token_usage(SimpleNamespace(usage_metadata={"total_tokens": 8}))
-
-    assert state.total_tokens == 15
-
-
-def test_record_llm_token_usage_raises_when_scope_exceeds_limit():
-    with llm_token_usage_scope(limit=10) as state:
-        record_llm_token_usage(
-            SimpleNamespace(usage_metadata={"total_tokens": 6}),
-            request_kind="unit.first",
-        )
-        with pytest.raises(LLMTokenLimitExceededError, match="unit.second.*used 11"):
-            record_llm_token_usage(
-                SimpleNamespace(usage_metadata={"total_tokens": 5}),
-                request_kind="unit.second",
-            )
-
-    assert state.total_tokens == 11
-
-
-def test_record_llm_token_usage_enforces_limit_when_zero_total_has_components():
-    with llm_token_usage_scope(limit=5) as state:
-        with pytest.raises(LLMTokenLimitExceededError, match="unit.zero.*used 6"):
-            record_llm_token_usage(
-                SimpleNamespace(
-                    usage_metadata={
-                        "input_tokens": 4,
-                        "output_tokens": 2,
-                        "total_tokens": 0,
-                    }
-                ),
-                request_kind="unit.zero",
-            )
-
-    assert state.prompt_tokens == 4
-    assert state.completion_tokens == 2
-    assert state.total_tokens == 6
-
-
-def test_token_usage_scope_resets_between_turns():
-    with llm_token_usage_scope(limit=10):
-        record_llm_token_usage(SimpleNamespace(usage_metadata={"total_tokens": 9}))
-
-    with llm_token_usage_scope(limit=10) as state:
-        record_llm_token_usage(SimpleNamespace(usage_metadata={"total_tokens": 9}))
-
-    assert state.total_tokens == 9
-
-
-def test_unscoped_recording_uses_configured_limit_for_single_response(monkeypatch):
+def test_record_llm_token_usage_extracts_without_enforcing_context_budget(monkeypatch):
     monkeypatch.setattr(
         token_usage_module,
         "settings",
-        SimpleNamespace(llm_single_turn_token_limit=5),
+        SimpleNamespace(llm_context_token_budget=5),
     )
 
-    with pytest.raises(LLMTokenLimitExceededError, match="used 6"):
-        record_llm_token_usage(SimpleNamespace(usage_metadata={"total_tokens": 6}))
+    usage = record_llm_token_usage(SimpleNamespace(usage_metadata={"total_tokens": 6}))
+
+    assert usage.total_tokens == 6
+
+
+def test_estimate_llm_context_tokens_counts_message_content():
+    estimated = estimate_llm_context_tokens(
+        [{"role": "user", "content": "Summarize Redis persistence."}],
+        model="gpt-4o-mini",
+    )
+
+    assert estimated > 4
+
+
+def test_enforce_llm_context_token_budget_allows_estimate_at_budget():
+    payload = [{"role": "user", "content": "short"}]
+    estimated = estimate_llm_context_tokens(payload, model="gpt-4o-mini")
+
+    result = enforce_llm_context_token_budget(
+        payload,
+        request_kind="unit.allowed",
+        model="gpt-4o-mini",
+        token_budget=estimated,
+    )
+
+    assert result == estimated
+
+
+def test_enforce_llm_context_token_budget_raises_when_request_exceeds_budget():
+    with pytest.raises(
+        LLMContextTokenBudgetExceededError,
+        match="unit.large.*estimated .* input tokens; budget is 10",
+    ) as exc_info:
+        enforce_llm_context_token_budget(
+            [{"role": "user", "content": "token " * 100}],
+            request_kind="unit.large",
+            model="gpt-4o-mini",
+            token_budget=10,
+        )
+
+    assert isinstance(exc_info.value, LLMTokenLimitExceededError)
+
+
+def test_enforce_llm_context_token_budget_counts_bound_tool_payloads():
+    llm = SimpleNamespace(
+        model_name="gpt-4o-mini",
+        kwargs={
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "large_tool",
+                        "description": "token " * 100,
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(
+        LLMContextTokenBudgetExceededError,
+        match="unit.tools.*estimated .* input tokens; budget is 30",
+    ):
+        enforce_llm_context_token_budget(
+            [{"role": "user", "content": "short"}],
+            request_kind="unit.tools",
+            llm=llm,
+            token_budget=30,
+        )

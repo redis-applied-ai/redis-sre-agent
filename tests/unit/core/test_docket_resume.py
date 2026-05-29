@@ -229,7 +229,7 @@ async def test_resume_task_after_approval_marks_task_failed_when_token_limit_exc
         }
     )
     token_error = LLMTokenLimitExceededError(
-        "LLM token usage limit exceeded for eval.second: used 16 total tokens; limit is 15"
+        "LLM context token budget exceeded for eval.second: estimated 16 input tokens; budget is 15"
     )
 
     mock_task_manager = AsyncMock()
@@ -264,7 +264,7 @@ async def test_resume_task_after_approval_marks_task_failed_when_token_limit_exc
         patch("redis_sre_agent.core.docket_tasks.get_instance_by_id", new=AsyncMock()),
         patch("redis_sre_agent.core.docket_tasks.get_cluster_by_id", new=AsyncMock()),
         patch("redis_sre_agent.agent.chat_agent.ChatAgent", return_value=mock_chat_agent),
-        pytest.raises(LLMTokenLimitExceededError, match="used 16 total tokens"),
+        pytest.raises(LLMTokenLimitExceededError, match="estimated 16 input tokens"),
     ):
         await resume_task_after_approval(
             task_id="task-1",
@@ -276,11 +276,11 @@ async def test_resume_task_after_approval_marks_task_failed_when_token_limit_exc
     task_id, error_message = mock_task_manager.set_task_error.await_args.args
     assert task_id == "task-1"
     assert "Approval resume failed" in error_message
-    assert "used 16 total tokens; limit is 15" in error_message
+    assert "estimated 16 input tokens; budget is 15" in error_message
     error_update = mock_task_manager.add_task_update.await_args_list[-1].args
     assert error_update[0] == "task-1"
     assert error_update[2] == "error"
-    assert "used 16 total tokens; limit is 15" in error_update[1]
+    assert "estimated 16 input tokens; budget is 15" in error_update[1]
     mock_thread_manager.append_messages.assert_awaited_once()
     mock_approval_manager.delete_resume_state.assert_not_awaited()
 

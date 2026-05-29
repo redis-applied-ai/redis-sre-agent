@@ -698,26 +698,22 @@ class _MemoryApprovalManager:
         return None
 
 
-class _TokenUsageEvalLLM:
-    def __init__(self, token_totals: list[int]) -> None:
-        self._token_totals = iter(token_totals)
+class _ContextBudgetEvalLLM:
+    def __init__(self) -> None:
         self.payloads: list[object] = []
 
     async def ainvoke(self, payload):
         self.payloads.append(payload)
-        try:
-            total_tokens = next(self._token_totals)
-        except StopIteration as exc:
-            raise AssertionError("Unexpected extra eval LLM call") from exc
         return SimpleNamespace(
-            content=f"used {total_tokens} tokens",
-            usage_metadata={"total_tokens": total_tokens},
+            content="context budget call complete",
+            usage_metadata={"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
         )
 
 
-class _TokenUsageEvalChatAgent:
-    def __init__(self, token_totals: list[int]) -> None:
-        self.llm = _TokenUsageEvalLLM(token_totals)
+class _ContextBudgetEvalChatAgent:
+    def __init__(self, *, second_prompt: str = "second eval call") -> None:
+        self.llm = _ContextBudgetEvalLLM()
+        self.second_prompt = second_prompt
 
     async def process_query(
         self,
@@ -736,17 +732,17 @@ class _TokenUsageEvalChatAgent:
         )
         await guarded_ainvoke(
             self.llm,
-            [HumanMessage(content=f"second eval call: {query}")],
+            [HumanMessage(content=f"{self.second_prompt}: {query}")],
             request_kind="eval.second",
         )
-        return AgentResponse(response="token eval complete")
+        return AgentResponse(response="context budget eval complete")
 
 
-def _build_token_usage_eval_scenario() -> EvalScenario:
+def _build_context_budget_eval_scenario() -> EvalScenario:
     return EvalScenario.model_validate(
         {
-            "id": "single-turn-token-limit",
-            "name": "Single turn token limit",
+            "id": "llm-context-token-budget",
+            "name": "LLM context token budget",
             "provenance": {
                 "source_kind": "synthetic",
                 "source_pack": "fixture-pack",
@@ -765,7 +761,7 @@ def _build_token_usage_eval_scenario() -> EvalScenario:
     )
 
 
-def _install_token_usage_eval_runtime(monkeypatch, agent, *, token_limit: int) -> None:
+def _install_context_budget_eval_runtime(monkeypatch, agent, *, context_budget: int) -> None:
     _MemoryThreadManager.reset()
     _MemoryTaskManager.reset()
     monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
@@ -775,7 +771,7 @@ def _install_token_usage_eval_runtime(monkeypatch, agent, *, token_limit: int) -
     monkeypatch.setattr(
         llm_token_usage_module,
         "settings",
-        SimpleNamespace(llm_single_turn_token_limit=token_limit),
+        SimpleNamespace(llm_context_token_budget=context_budget),
     )
     monkeypatch.setattr(
         "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
@@ -1227,12 +1223,12 @@ async def test_run_full_turn_scenario_applies_runtime_overrides_to_real_provider
 
 
 @pytest.mark.asyncio
-async def test_run_full_turn_scenario_eval_allows_cumulative_llm_tokens_at_limit(
+async def test_run_full_turn_scenario_eval_allows_context_requests_within_budget(
     monkeypatch,
 ):
-    scenario = _build_token_usage_eval_scenario()
-    agent = _TokenUsageEvalChatAgent([6, 9])
-    _install_token_usage_eval_runtime(monkeypatch, agent, token_limit=15)
+    scenario = _build_context_budget_eval_scenario()
+    agent = _ContextBudgetEvalChatAgent()
+    _install_context_budget_eval_runtime(monkeypatch, agent, context_budget=1000)
 
     with patch("opentelemetry.trace.get_tracer") as mock_tracer:
         mock_span = MagicMock()
@@ -1250,18 +1246,18 @@ async def test_run_full_turn_scenario_eval_allows_cumulative_llm_tokens_at_limit
     assert result.thread_id == "thread-1"
     assert result.task_id == "task-1"
     assert result.task_status == "done"
-    assert result.turn_result["response"] == "token eval complete"
+    assert result.turn_result["response"] == "context budget eval complete"
     assert len(agent.llm.payloads) == 2
-    assert _MemoryTaskManager.tasks["task-1"].result["response"] == "token eval complete"
+    assert _MemoryTaskManager.tasks["task-1"].result["response"] == "context budget eval complete"
 
 
 @pytest.mark.asyncio
-async def test_run_full_turn_scenario_eval_fails_when_cumulative_llm_tokens_exceed_limit(
+async def test_run_full_turn_scenario_eval_fails_before_oversized_context_request(
     monkeypatch,
 ):
-    scenario = _build_token_usage_eval_scenario()
-    agent = _TokenUsageEvalChatAgent([10, 6])
-    _install_token_usage_eval_runtime(monkeypatch, agent, token_limit=15)
+    scenario = _build_context_budget_eval_scenario()
+    agent = _ContextBudgetEvalChatAgent(second_prompt="token " * 200)
+    _install_context_budget_eval_runtime(monkeypatch, agent, context_budget=80)
 
     with patch("opentelemetry.trace.get_tracer") as mock_tracer:
         mock_span = MagicMock()
@@ -1270,7 +1266,7 @@ async def test_run_full_turn_scenario_eval_fails_when_cumulative_llm_tokens_exce
         mock_span.record_exception = MagicMock()
         mock_tracer.return_value.start_span.return_value = mock_span
 
-        with pytest.raises(LLMTokenLimitExceededError, match="eval.second.*used 16"):
+        with pytest.raises(LLMTokenLimitExceededError, match="eval.second.*budget is 80"):
             await run_full_turn_scenario(
                 scenario,
                 user_id="user-123",
@@ -1280,8 +1276,9 @@ async def test_run_full_turn_scenario_eval_fails_when_cumulative_llm_tokens_exce
 
     task = _MemoryTaskManager.tasks["task-1"]
     assert task.status == TaskStatus.FAILED
-    assert "used 16 total tokens; limit is 15" in task.error_message
-    assert len(agent.llm.payloads) == 2
+    assert "LLM context token budget exceeded" in task.error_message
+    assert "budget is 80" in task.error_message
+    assert len(agent.llm.payloads) == 1
 
 
 @pytest.mark.asyncio

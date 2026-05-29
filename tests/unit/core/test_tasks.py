@@ -850,7 +850,8 @@ class TestProcessKnowledgeQuery:
         mock_thread_manager.get_thread = AsyncMock(return_value=None)
 
         token_error = LLMTokenLimitExceededError(
-            "LLM token usage limit exceeded for knowledge_agent: used 16 total tokens; limit is 15"
+            "LLM context token budget exceeded for knowledge_agent: "
+            "estimated 16 input tokens; budget is 15"
         )
         mock_agent = AsyncMock()
         mock_agent.process_query = AsyncMock(side_effect=token_error)
@@ -864,7 +865,7 @@ class TestProcessKnowledgeQuery:
             patch("redis_sre_agent.core.docket_tasks.get_chat_agent", return_value=mock_agent),
             patch("redis_sre_agent.core.docket_tasks.TaskEmitter"),
         ):
-            with pytest.raises(LLMTokenLimitExceededError, match="used 16 total tokens"):
+            with pytest.raises(LLMTokenLimitExceededError, match="estimated 16 input tokens"):
                 await process_knowledge_query(
                     query="Test",
                     task_id="task-123",

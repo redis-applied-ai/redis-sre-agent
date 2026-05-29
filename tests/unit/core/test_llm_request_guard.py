@@ -12,11 +12,9 @@ from redis_sre_agent.core.llm_request_guard import (
     guard_langchain_input,
     guard_openai_chat_messages,
     guarded_ainvoke,
+    guarded_chat_completions_create,
 )
-from redis_sre_agent.core.llm_token_usage import (
-    LLMTokenLimitExceededError,
-    llm_token_usage_scope,
-)
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.pii_remediation import (
     PIIFinding,
     PIIRemediationDecision,
@@ -254,31 +252,50 @@ async def test_guarded_ainvoke_supports_openai_style_dict_messages(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_guarded_ainvoke_enforces_single_turn_token_limit(monkeypatch, guard_settings):
+async def test_guarded_ainvoke_enforces_context_budget_before_request(monkeypatch, guard_settings):
     guard_settings.pii_remediation_mode = "off"
     monkeypatch.setattr(
         token_usage_module,
         "settings",
-        SimpleNamespace(llm_single_turn_token_limit=15),
+        SimpleNamespace(llm_context_token_budget=20),
     )
-    llm = SimpleNamespace(
-        ainvoke=AsyncMock(
-            side_effect=[
-                SimpleNamespace(content="ok", usage_metadata={"total_tokens": 10}),
-                SimpleNamespace(content="stop", usage_metadata={"total_tokens": 6}),
-            ]
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value="ok"), model_name="gpt-4o-mini")
+
+    with pytest.raises(LLMTokenLimitExceededError, match="unit.context.*budget is 20"):
+        await guarded_ainvoke(
+            llm,
+            [HumanMessage(content="token " * 100)],
+            request_kind="unit.context",
         )
+
+    llm.ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_guarded_chat_completions_enforces_context_budget_before_request(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_mode = "off"
+    monkeypatch.setattr(
+        token_usage_module,
+        "settings",
+        SimpleNamespace(llm_context_token_budget=20),
     )
+    create = AsyncMock(return_value=SimpleNamespace(usage={"total_tokens": 1}))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
-    with llm_token_usage_scope():
-        await guarded_ainvoke(llm, [HumanMessage(content="first")], request_kind="unit.first")
+    with pytest.raises(
+        LLMTokenLimitExceededError,
+        match="unit.chat_completions.*budget is 20",
+    ):
+        await guarded_chat_completions_create(
+            client,
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "token " * 100}],
+            request_kind="unit.chat_completions",
+        )
 
-        with pytest.raises(LLMTokenLimitExceededError, match="unit.second.*used 16"):
-            await guarded_ainvoke(
-                llm,
-                [HumanMessage(content="second")],
-                request_kind="unit.second",
-            )
+    create.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -44,12 +44,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
     search_knowledge_base_helper,
 )
-from redis_sre_agent.core.llm_token_usage import (
-    LLMTokenLimitExceededError,
-    llm_token_usage_scope,
-    reset_llm_token_usage_scope,
-    start_llm_token_usage_scope,
-)
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.progress import TaskEmitter
 from redis_sre_agent.core.qa import QAManager
 from redis_sre_agent.core.redis import (
@@ -1357,11 +1352,7 @@ async def process_chat_turn(
 
     # Mark task as in progress
     await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
-    llm_token_scope = None
-
     try:
-        llm_token_scope = start_llm_token_usage_scope()
-
         # Convert string category names to ToolCapability enums
         mcp_categories: Optional[List[ToolCapability]] = None
         if exclude_mcp_categories:
@@ -1505,9 +1496,6 @@ async def process_chat_turn(
         logger.error(f"Chat turn failed: {e}")
         await task_manager.set_task_error(task_id, str(e))
         raise
-    finally:
-        if llm_token_scope is not None:
-            reset_llm_token_usage_scope(llm_token_scope)
 
 
 @sre_task
@@ -1543,7 +1531,6 @@ async def process_knowledge_query(
 
     # Mark task as in progress
     await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
-    llm_token_scope = start_llm_token_usage_scope()
 
     try:
         # Create task emitter for notifications
@@ -1666,15 +1653,13 @@ async def process_knowledge_query(
             error=exc,
         )
     except LLMTokenLimitExceededError as exc:
-        logger.error("Knowledge query exceeded LLM token limit: %s", exc)
+        logger.error("Knowledge query exceeded LLM context token budget: %s", exc)
         await task_manager.set_task_error(task_id, str(exc))
         raise
     except Exception as e:
         logger.error(f"Knowledge query failed: {e}")
         await task_manager.set_task_error(task_id, str(e))
         raise
-    finally:
-        reset_llm_token_usage_scope(llm_token_scope)
 
 
 @sre_task
@@ -1946,7 +1931,6 @@ async def _process_agent_turn_impl(
         },
     )
     _root_ctx_token = _attach(_set_span_in_context(_root_span))
-    llm_token_scope = start_llm_token_usage_scope()
 
     try:
         logger.info(f"Processing agent turn for thread {thread_id}")
@@ -2731,8 +2715,6 @@ async def _process_agent_turn_impl(
             pass
 
         raise
-    finally:
-        reset_llm_token_usage_scope(llm_token_scope)
 
 
 @sre_task
@@ -2884,14 +2866,13 @@ async def resume_task_after_approval(
             exclude_mcp_categories=mcp_categories or None,
         )
         try:
-            with llm_token_usage_scope():
-                response = await chat_agent.resume_query(
-                    session_id=thread.metadata.session_id or thread_id,
-                    user_id=thread.metadata.user_id,
-                    context=resume_context,
-                    progress_emitter=progress_emitter,
-                    resume_payload=resume_payload,
-                )
+            response = await chat_agent.resume_query(
+                session_id=thread.metadata.session_id or thread_id,
+                user_id=thread.metadata.user_id,
+                context=resume_context,
+                progress_emitter=progress_emitter,
+                resume_payload=resume_payload,
+            )
         except GraphInterrupt as exc:
             result = await _transition_task_to_awaiting_approval_from_interrupt(
                 task_manager=task_manager,
@@ -2989,14 +2970,13 @@ async def resume_task_after_approval(
         redis_cluster=target_cluster,
     )
     try:
-        with llm_token_usage_scope():
-            agent_response_obj = await agent.resume_query(
-                session_id=thread.metadata.session_id or thread_id,
-                user_id=thread.metadata.user_id,
-                context=resume_context,
-                progress_emitter=progress_emitter,
-                resume_payload=resume_payload,
-            )
+        agent_response_obj = await agent.resume_query(
+            session_id=thread.metadata.session_id or thread_id,
+            user_id=thread.metadata.user_id,
+            context=resume_context,
+            progress_emitter=progress_emitter,
+            resume_payload=resume_payload,
+        )
     except GraphInterrupt as exc:
         result = await _transition_task_to_awaiting_approval_from_interrupt(
             task_manager=task_manager,

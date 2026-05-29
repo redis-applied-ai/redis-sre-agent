@@ -108,7 +108,7 @@ export SRE_AGENT_CONFIG=/path/to/my-config.toml
 - `PROMETHEUS_URL` / `GRAFANA_URL`: Optional app-level URLs for integrations
 - `TOOLS_PROMETHEUS_URL` / `TOOLS_LOKI_URL`: Tool-specific endpoints
 - `API_KEY`: API auth key (if you enable auth)
-- `LLM_SINGLE_TURN_TOKEN_LIMIT`: Optional positive integer cap for total LLM tokens used during one agent turn
+- `LLM_CONTEXT_TOKEN_BUDGET`: Optional positive integer cap for estimated input/context tokens sent in one LLM request
 - `ALLOWED_HOSTS`: CORS origins (default: `["*"]`)
 
 Example `.env` (local):
@@ -121,17 +121,17 @@ TOOLS_PROMETHEUS_URL=http://localhost:9090
 TOOLS_LOKI_URL=http://localhost:3100
 ```
 
-### LLM token cap
+### LLM context token budget
 
-Set `LLM_SINGLE_TURN_TOKEN_LIMIT` when you want a hard token budget for each logical agent turn. The agent counts reported prompt and completion tokens across the LLM calls made for that turn. If the total exceeds the configured cap, the task fails with an `LLM token usage limit exceeded` error instead of continuing with more model calls.
+Set `LLM_CONTEXT_TOKEN_BUDGET` when you want to prevent an oversized outbound LLM request before it reaches the model provider. The agent estimates the input/context tokens for each guarded LLM request, including conversation messages and bound tool payloads when visible to the guard. If the estimate exceeds the configured budget, the task fails before the LLM call with an `LLM context token budget exceeded` error.
 
-Leave the setting unset to disable turn-level token limiting. Use a positive integer when enabling it:
+Leave the setting unset to disable context budget enforcement. Use a positive integer when enabling it:
 
 ```bash
-LLM_SINGLE_TURN_TOKEN_LIMIT=200000
+LLM_CONTEXT_TOKEN_BUDGET=120000
 ```
 
-This setting is separate from `MAX_ITERATIONS`: `MAX_ITERATIONS` limits reasoning cycles, while `LLM_SINGLE_TURN_TOKEN_LIMIT` limits the total token usage reported by the model provider during the turn.
+Choose a value below the context window of the model you deploy, leaving room for the model's answer. For example, with a 128k-token model, a value around `120000` gives the request guard space for completion tokens and provider-specific overhead. This setting is separate from `MAX_ITERATIONS`: `MAX_ITERATIONS` limits reasoning cycles, while `LLM_CONTEXT_TOKEN_BUDGET` limits the size of each outbound request.
 
 ### Tool caching
 

@@ -242,8 +242,8 @@ class TestKnowledgeAgent:
         class _FakeApp:
             async def ainvoke(self, initial_state, config=None):
                 raise LLMTokenLimitExceededError(
-                    "LLM token usage limit exceeded for knowledge_agent: "
-                    "used 16 total tokens; limit is 15"
+                    "LLM context token budget exceeded for knowledge_agent: "
+                    "estimated 16 input tokens; budget is 15"
                 )
 
         class _FakeWorkflow:
@@ -262,7 +262,7 @@ class TestKnowledgeAgent:
             ),
             patch.object(agent, "_build_workflow", return_value=_FakeWorkflow()),
         ):
-            with pytest.raises(LLMTokenLimitExceededError, match="used 16 total tokens"):
+            with pytest.raises(LLMTokenLimitExceededError, match="estimated 16 input tokens"):
                 await agent.process_query(query="who runs AOP?", session_id="s1", user_id="u1")
 
         prepared_memory.persist_response_fail_open.assert_not_awaited()

@@ -34,13 +34,13 @@ def _terminal_synthesis_config() -> TerminalSynthesisConfig:
 async def test_synthesize_terminal_response_propagates_token_limit_error():
     guarded_invoke = AsyncMock(
         side_effect=LLMTokenLimitExceededError(
-            "LLM token usage limit exceeded for unit.terminal_synthesis: "
-            "used 16 total tokens; limit is 15"
+            "LLM context token budget exceeded for unit.terminal_synthesis: "
+            "estimated 16 input tokens; budget is 15"
         )
     )
     failure_response_factory = MagicMock(return_value="fallback")
 
-    with pytest.raises(LLMTokenLimitExceededError, match="used 16 total tokens"):
+    with pytest.raises(LLMTokenLimitExceededError, match="estimated 16 input tokens"):
         await synthesize_terminal_response(
             MagicMock(),
             config=_terminal_synthesis_config(),
