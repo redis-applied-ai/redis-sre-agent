@@ -116,6 +116,10 @@ tools:
             args_contains:
               section: memory
           result: fixtures/tools/info-checkout-memory.json
+        - when:
+            args_contains:
+              section: server
+          result: fixtures/tools/info-checkout-server.json
       result: fixtures/tools/info-checkout-memory.json
       target_overrides:
         tgt_checkout_cache_prod:
@@ -124,18 +128,30 @@ tools:
                 args_contains:
                   section: memory
               result: fixtures/tools/info-checkout-memory.json
+            - when:
+                args_contains:
+                  section: server
+              result: fixtures/tools/info-checkout-server.json
         tgt_session_cache_prod:
           responders:
             - when:
                 args_contains:
                   section: memory
               result: fixtures/tools/info-session-memory.json
+            - when:
+                args_contains:
+                  section: server
+              result: fixtures/tools/info-session-server.json
         tgt_cart_cache_prod:
           responders:
             - when:
                 args_contains:
                   section: memory
               result: fixtures/tools/info-cart-memory.json
+            - when:
+                args_contains:
+                  section: server
+              result: fixtures/tools/info-cart-server.json
 
 expectations:
   required_tool_calls:

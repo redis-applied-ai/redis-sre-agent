@@ -44,6 +44,7 @@ from redis_sre_agent.core.knowledge_helpers import (
     ingest_sre_document_helper,
     search_knowledge_base_helper,
 )
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.progress import TaskEmitter
 from redis_sre_agent.core.qa import QAManager
 from redis_sre_agent.core.redis import (
@@ -1076,28 +1077,35 @@ async def _run_multi_target_deep_triage_fanout(
     ]
 
     child_results: List[Dict[str, Any]] = []
-    for child_task in asyncio.as_completed(child_tasks):
-        child_result = await child_task
-        child_results.append(child_result)
-        target = child_result.get("target") or {}
-        target_label = target.get("display_name") or target.get("target_handle") or "target"
-        status = str(child_result.get("status") or TaskStatus.DONE.value)
-        update_type = (
-            "triage_fanout_child_failed"
-            if status == TaskStatus.FAILED.value
-            else "triage_fanout_child_complete"
-        )
-        await task_manager.add_task_update(
-            task_id,
-            f"Deep triage {status} for {target_label}",
-            update_type,
-            metadata={
-                "child_task_id": child_result.get("task_id"),
-                "message_id": child_result.get("message_id"),
-                "status": status,
-                "target": target,
-            },
-        )
+    try:
+        for child_task in asyncio.as_completed(child_tasks):
+            child_result = await child_task
+            child_results.append(child_result)
+            target = child_result.get("target") or {}
+            target_label = target.get("display_name") or target.get("target_handle") or "target"
+            status = str(child_result.get("status") or TaskStatus.DONE.value)
+            update_type = (
+                "triage_fanout_child_failed"
+                if status == TaskStatus.FAILED.value
+                else "triage_fanout_child_complete"
+            )
+            await task_manager.add_task_update(
+                task_id,
+                f"Deep triage {status} for {target_label}",
+                update_type,
+                metadata={
+                    "child_task_id": child_result.get("task_id"),
+                    "message_id": child_result.get("message_id"),
+                    "status": status,
+                    "target": target,
+                },
+            )
+    except BaseException:
+        for child_task in child_tasks:
+            if not child_task.done():
+                child_task.cancel()
+        await asyncio.gather(*child_tasks, return_exceptions=True)
+        raise
 
     failed_count = sum(
         1 for child_result in child_results if child_result.get("status") == TaskStatus.FAILED.value
@@ -1344,18 +1352,17 @@ async def process_chat_turn(
 
     # Mark task as in progress
     await task_manager.update_task_status(task_id, TaskStatus.IN_PROGRESS)
-
-    # Convert string category names to ToolCapability enums
-    mcp_categories: Optional[List[ToolCapability]] = None
-    if exclude_mcp_categories:
-        mcp_categories = []
-        for cat_name in exclude_mcp_categories:
-            try:
-                mcp_categories.append(ToolCapability(cat_name.lower()))
-            except ValueError:
-                logger.warning(f"Unknown MCP category to exclude: {cat_name}")
-
     try:
+        # Convert string category names to ToolCapability enums
+        mcp_categories: Optional[List[ToolCapability]] = None
+        if exclude_mcp_categories:
+            mcp_categories = []
+            for cat_name in exclude_mcp_categories:
+                try:
+                    mcp_categories.append(ToolCapability(cat_name.lower()))
+                except ValueError:
+                    logger.warning(f"Unknown MCP category to exclude: {cat_name}")
+
         # Create task emitter for notifications
         emitter = TaskEmitter(task_manager=task_manager, task_id=task_id)
 
@@ -1645,6 +1652,10 @@ async def process_knowledge_query(
             thread_id=thread_id,
             error=exc,
         )
+    except LLMTokenLimitExceededError as exc:
+        logger.error("Knowledge query exceeded LLM context token budget: %s", exc)
+        await task_manager.set_task_error(task_id, str(exc))
+        raise
     except Exception as e:
         logger.error(f"Knowledge query failed: {e}")
         await task_manager.set_task_error(task_id, str(e))
@@ -2294,6 +2305,7 @@ async def _process_agent_turn_impl(
         )
 
         # Persist the new user message early so UI transcript reflects it during processing
+        user_message_appended_to_thread = False
         try:
             await thread_manager.append_messages(
                 thread_id,
@@ -2305,6 +2317,7 @@ async def _process_agent_turn_impl(
                     }
                 ],
             )
+            user_message_appended_to_thread = True
         except Exception as e:
             logger.warning(f"Failed to persist user message early for thread {thread_id}: {e}")
 
@@ -2331,7 +2344,7 @@ async def _process_agent_turn_impl(
                 task_id=task_id,
                 user_message=message,
                 bindings=fanout_bindings,
-                append_user_message=False,
+                append_user_message=not user_message_appended_to_thread,
             )
             try:
                 if _root_span is not None:
@@ -2757,6 +2770,23 @@ async def resume_task_after_approval(
     thread_id = task_state.thread_id
     normalized_decision = decision_model.decision
 
+    async def _record_resume_failure(error: Exception) -> None:
+        error_message = f"Approval resume failed: {str(error)}"
+        logger.error("Approval resume failed for task %s: %s", task_id, error)
+        await task_manager.set_task_error(task_id, error_message)
+        await task_manager.add_task_update(task_id, f"Error: {error_message}", "error")
+        await thread_manager.append_messages(
+            thread_id,
+            [
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"I encountered an error while resuming your approved request: {str(error)}"
+                    ),
+                }
+            ],
+        )
+
     if approval_record.decision is None:
         approval_record = (
             await approval_manager.record_decision(
@@ -2870,6 +2900,9 @@ async def resume_task_after_approval(
                 pending_approval=exc.pending_approval,
             )
             return result
+        except Exception as exc:
+            await _record_resume_failure(exc)
+            raise
 
         current_task_state = await task_manager.get_task_state(task_id)
         if current_task_state and current_task_state.status == TaskStatus.AWAITING_APPROVAL:
@@ -2969,6 +3002,9 @@ async def resume_task_after_approval(
             pending_approval=exc.pending_approval,
         )
         return result
+    except Exception as exc:
+        await _record_resume_failure(exc)
+        raise
     agent_response = {
         "response": agent_response_obj.response,
         "search_results": agent_response_obj.search_results,

@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional
 from opentelemetry import trace
 from prometheus_client import Counter, Histogram
 
+from redis_sre_agent.core.llm_token_usage import extract_llm_token_usage
+
 # Prometheus metrics
 LLM_TOKENS_PROMPT = Counter(
     "sre_agent_llm_tokens_prompt_total",
@@ -63,42 +65,11 @@ def _extract_usage_from_response(resp: Any) -> Dict[str, Optional[int]]:
 
     Returns dict with keys: prompt_tokens, completion_tokens, total_tokens (may be None).
     """
-    prompt = completion = total = None
-
-    # LangChain AIMessage often exposes usage via .usage_metadata
-    try:
-        usage_md = resp.usage_metadata  # type: ignore[attr-defined]
-        if isinstance(usage_md, dict):
-            prompt = usage_md.get("input_tokens") or usage_md.get("prompt_tokens")
-            completion = usage_md.get("output_tokens") or usage_md.get("completion_tokens")
-            total = usage_md.get("total_tokens")
-    except AttributeError:
-        pass  # Response may not have .usage_metadata attribute
-
-    # Some wrappers place the raw OpenAI usage in response_metadata
-    if prompt is None or completion is None:
-        try:
-            resp_md = resp.response_metadata  # type: ignore[attr-defined]
-            if isinstance(resp_md, dict):
-                # OpenAI python client
-                usage = resp_md.get("usage") or resp_md.get("token_usage")
-                if isinstance(usage, dict):
-                    prompt = prompt or usage.get("prompt_tokens") or usage.get("input_tokens")
-                    completion = (
-                        completion or usage.get("completion_tokens") or usage.get("output_tokens")
-                    )
-                    total = total or usage.get("total_tokens")
-        except AttributeError:
-            pass  # Response may not have .response_metadata attribute
-
-    # Many providers only give total
-    if total is None and prompt is not None and completion is not None:
-        total = int(prompt) + int(completion)
-
+    usage = extract_llm_token_usage(resp)
     return {
-        "prompt_tokens": prompt if prompt is not None else 0,
-        "completion_tokens": completion if completion is not None else 0,
-        "total_tokens": total if total is not None else ((prompt or 0) + (completion or 0)),
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
     }
 
 

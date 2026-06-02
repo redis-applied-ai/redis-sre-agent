@@ -11,6 +11,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from redis_sre_agent.core.config import settings
+from redis_sre_agent.core.llm_token_usage import (
+    enforce_llm_context_token_budget,
+    record_llm_token_usage,
+)
 from redis_sre_agent.core.pii_remediation import (
     PIIFinding,
     PIIRemediationDecision,
@@ -570,7 +574,14 @@ async def guarded_ainvoke(
         request_kind=request_kind,
         metadata=metadata,
     )
-    return await llm.ainvoke(guarded_payload)
+    enforce_llm_context_token_budget(
+        guarded_payload,
+        request_kind=request_kind,
+        llm=llm,
+    )
+    response = await llm.ainvoke(guarded_payload)
+    record_llm_token_usage(response, request_kind=request_kind)
+    return response
 
 
 async def guarded_chat_completions_create(
@@ -589,4 +600,28 @@ async def guarded_chat_completions_create(
         request_kind=request_kind,
         metadata=metadata,
     )
-    return await client.chat.completions.create(model=model, messages=guarded_messages, **kwargs)
+    token_payload = {
+        key: kwargs[key]
+        for key in (
+            "tools",
+            "tool_choice",
+            "functions",
+            "function_call",
+            "response_format",
+            "parallel_tool_calls",
+        )
+        if key in kwargs
+    }
+    enforce_llm_context_token_budget(
+        guarded_messages,
+        request_kind=request_kind,
+        model=model,
+        extra_payload=token_payload or None,
+    )
+    response = await client.chat.completions.create(
+        model=model,
+        messages=guarded_messages,
+        **kwargs,
+    )
+    record_llm_token_usage(response, request_kind=request_kind)
+    return response

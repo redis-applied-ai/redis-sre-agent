@@ -60,6 +60,11 @@ from .helpers import build_result_envelope, coerce_response_text, extract_last_a
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 from .prompts import REDIS_COMMAND_SEMANTICS_GUARDRAILS
+from .terminal_synthesis import (
+    TerminalSynthesisConfig,
+    describe_captured_state,
+    synthesize_terminal_response,
+)
 from .tool_execution import execute_tool_calls_with_gate
 
 logger = logging.getLogger(__name__)
@@ -406,6 +411,7 @@ class ChatAgent:
     ENVELOPE_SUMMARY_THRESHOLD = 500
     ITERATION_LIMIT_SYNTHESIS_MESSAGE_LIMIT = 14
     ITERATION_LIMIT_SYNTHESIS_CONTEXT_LIMIT = 16000
+    ITERATION_LIMIT_SYNTHESIS_ITEM_LIMIT = 2000
     SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT = 1
 
     def _can_attempt_skill_contract_repair(self, state: Dict[str, Any]) -> bool:
@@ -734,7 +740,11 @@ class ChatAgent:
             ),
         ]
         try:
-            repaired = await self.llm.ainvoke(repair_messages)
+            repaired = await guarded_ainvoke(
+                self.llm,
+                repair_messages,
+                request_kind="chat_agent.skill_contract_repair",
+            )
         except Exception as exc:
             logger.warning(
                 "Skill contract repair failed; returning original response: %s",
@@ -772,87 +782,6 @@ class ChatAgent:
         return iteration_count >= max_iterations
 
     @staticmethod
-    def _truncate_iteration_limit_text(text: str, max_chars: int) -> str:
-        if len(text) <= max_chars:
-            return text
-        omitted = len(text) - max_chars
-        return f"{text[:max_chars].rstrip()}\n... [truncated {omitted} chars]"
-
-    def _format_iteration_limit_messages(self, messages: List[BaseMessage]) -> str:
-        visible_messages = [
-            message for message in messages if not isinstance(message, SystemMessage)
-        ]
-        if not visible_messages:
-            return "No non-system conversation messages were captured."
-
-        selected_messages = visible_messages[-self.ITERATION_LIMIT_SYNTHESIS_MESSAGE_LIMIT :]
-        omitted_count = len(visible_messages) - len(selected_messages)
-        lines: List[str] = []
-        if omitted_count > 0:
-            lines.append(f"... [{omitted_count} earlier conversation messages omitted]")
-
-        for message in selected_messages:
-            role = getattr(message, "type", None) or message.__class__.__name__
-            header = str(role)
-
-            tool_calls = getattr(message, "tool_calls", None) or []
-            tool_names: List[str] = []
-            for tool_call in tool_calls:
-                if isinstance(tool_call, dict):
-                    name = tool_call.get("name")
-                else:
-                    name = getattr(tool_call, "name", None)
-                if name:
-                    tool_names.append(str(name))
-            if tool_names:
-                header = f"{header} requested tools: {', '.join(tool_names)}"
-
-            tool_name = getattr(message, "name", None)
-            if isinstance(message, ToolMessage) and tool_name:
-                header = f"{header} ({tool_name})"
-
-            content = coerce_response_text(getattr(message, "content", None))
-            if not content:
-                content = "(no text content)"
-            content = self._truncate_iteration_limit_text(content, 2000)
-            lines.append(f"{header}:\n{content}")
-
-        transcript = "\n\n".join(lines)
-        return self._truncate_iteration_limit_text(
-            transcript,
-            self.ITERATION_LIMIT_SYNTHESIS_CONTEXT_LIMIT,
-        )
-
-    def _format_iteration_limit_tool_evidence(
-        self,
-        tool_envelopes: List[Dict[str, Any]],
-    ) -> str:
-        if not tool_envelopes:
-            return "No structured tool result envelopes were captured."
-
-        lines: List[str] = []
-        selected_envelopes = tool_envelopes[-8:]
-        omitted_count = len(tool_envelopes) - len(selected_envelopes)
-        if omitted_count > 0:
-            lines.append(f"... [{omitted_count} earlier tool result envelopes omitted]")
-
-        for envelope in selected_envelopes:
-            tool_key = envelope.get("tool_key") or envelope.get("name") or "unknown_tool"
-            summary = envelope.get("summary")
-            if summary:
-                payload = str(summary)
-            else:
-                payload = json.dumps(envelope.get("data", {}), default=str, sort_keys=True)
-            payload = self._truncate_iteration_limit_text(payload, 2000)
-            lines.append(f"{tool_key}:\n{payload}")
-
-        evidence = "\n\n".join(lines)
-        return self._truncate_iteration_limit_text(
-            evidence,
-            self.ITERATION_LIMIT_SYNTHESIS_CONTEXT_LIMIT,
-        )
-
-    @staticmethod
     def _iteration_limit_failure_response(
         *,
         iteration_count: int,
@@ -860,12 +789,7 @@ class ChatAgent:
         messages: List[BaseMessage],
         tool_envelopes: List[Dict[str, Any]],
     ) -> str:
-        gathered: List[str] = []
-        if messages:
-            gathered.append(f"{len(messages)} conversation message(s)")
-        if tool_envelopes:
-            gathered.append(f"{len(tool_envelopes)} tool result envelope(s)")
-        gathered_text = ", ".join(gathered) if gathered else "no usable intermediate state"
+        gathered_text = describe_captured_state(messages=messages, tool_envelopes=tool_envelopes)
         return (
             f"I reached the chat iteration limit ({iteration_count}/{max_iterations}) "
             "before producing a final answer. I was trying to answer the current request "
@@ -882,52 +806,45 @@ class ChatAgent:
         max_iterations: int,
     ) -> str:
         """Produce a terminal answer after the graph loop exhausts its turn budget."""
-        synthesis_messages: List[BaseMessage] = [
-            SystemMessage(
-                content=(
+        return await synthesize_terminal_response(
+            self.llm,
+            config=TerminalSynthesisConfig(
+                request_kind="chat_agent.iteration_limit_synthesis",
+                system_prompt=(
                     "The chat workflow stopped because it reached its iteration budget "
                     "before emitting terminal assistant text. Write the best possible final "
                     "answer from the gathered conversation and tool evidence. Do not call "
                     "tools. Do not claim evidence that is not present. If the evidence is "
                     "incomplete, say what was gathered and what remains uncertain."
-                )
+                ),
+                messages_heading="Conversation tail",
+                evidence_heading="Structured tool evidence",
+                no_messages_text="No non-system conversation messages were captured.",
+                no_evidence_text="No structured tool result envelopes were captured.",
+                failure_log_message="Chat agent max-iteration synthesis failed: %s",
+                empty_log_message="Chat agent max-iteration synthesis returned no text",
+                context_limit=self.ITERATION_LIMIT_SYNTHESIS_CONTEXT_LIMIT,
+                item_limit=self.ITERATION_LIMIT_SYNTHESIS_ITEM_LIMIT,
+                message_item_limit=self.ITERATION_LIMIT_SYNTHESIS_ITEM_LIMIT,
+                message_tail_limit=self.ITERATION_LIMIT_SYNTHESIS_MESSAGE_LIMIT,
+                include_system_messages=False,
+                detailed_message_headers=True,
+                empty_message_text="(no text content)",
+                message_omitted_unit="conversation messages",
+                evidence_omitted_unit="tool result envelopes",
             ),
-            HumanMessage(
-                content=(
-                    f"Iteration budget: {iteration_count}/{max_iterations}\n\n"
-                    "Conversation tail:\n"
-                    f"{self._format_iteration_limit_messages(messages)}\n\n"
-                    "Structured tool evidence:\n"
-                    f"{self._format_iteration_limit_tool_evidence(tool_envelopes)}"
-                )
-            ),
-        ]
-
-        try:
-            synthesized = await self.llm.ainvoke(synthesis_messages)
-        except Exception as exc:
-            logger.warning(
-                "Chat agent max-iteration synthesis failed: %s",
-                _format_exception_message(exc),
-                exc_info=True,
-            )
-            return self._iteration_limit_failure_response(
+            messages=messages,
+            tool_envelopes=tool_envelopes,
+            guarded_invoke=guarded_ainvoke,
+            failure_response_factory=lambda: self._iteration_limit_failure_response(
                 iteration_count=iteration_count,
                 max_iterations=max_iterations,
                 messages=messages,
                 tool_envelopes=tool_envelopes,
-            )
-
-        response_text = coerce_response_text(getattr(synthesized, "content", ""))
-        if response_text:
-            return response_text
-
-        logger.warning("Chat agent max-iteration synthesis returned no text")
-        return self._iteration_limit_failure_response(
-            iteration_count=iteration_count,
-            max_iterations=max_iterations,
-            messages=messages,
-            tool_envelopes=tool_envelopes,
+            ),
+            logger=logger,
+            human_prelude=f"Iteration budget: {iteration_count}/{max_iterations}",
+            format_exception=_format_exception_message,
         )
 
     def _build_workflow(

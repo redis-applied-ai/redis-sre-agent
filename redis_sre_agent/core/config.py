@@ -474,6 +474,14 @@ class Settings(BaseSettings):
 
     # LLM Request Timeout (seconds)
     llm_timeout: float = Field(default=180.0, description="HTTP timeout for LLM requests (seconds)")
+    llm_context_token_budget: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional cap for estimated input/context tokens sent in one LLM request. "
+            "Unset disables context token budget enforcement."
+        ),
+    )
 
     # Custom LLM Factory
     llm_factory: Optional[str] = Field(

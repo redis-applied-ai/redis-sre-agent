@@ -6,15 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from redis_sre_agent.agent.chat_agent import ChatAgent
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.agent.router import AgentType
+from redis_sre_agent.core import llm_token_usage as llm_token_usage_module
 from redis_sre_agent.core.agent_memory import PreparedAgentTurnMemory, TurnMemoryContext
 from redis_sre_agent.core.approvals import ApprovalRecord
 from redis_sre_agent.core.config import MCPServerConfig
 from redis_sre_agent.core.instances import RedisInstance
+from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.targets import TargetCatalogDoc
 from redis_sre_agent.core.tasks import TaskMetadata, TaskState, TaskStatus, TaskUpdate
 from redis_sre_agent.core.threads import Message, Thread, ThreadMetadata
@@ -695,6 +698,91 @@ class _MemoryApprovalManager:
         return None
 
 
+class _ContextBudgetEvalLLM:
+    def __init__(self) -> None:
+        self.payloads: list[object] = []
+
+    async def ainvoke(self, payload):
+        self.payloads.append(payload)
+        return SimpleNamespace(
+            content="context budget call complete",
+            usage_metadata={"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+        )
+
+
+class _ContextBudgetEvalChatAgent:
+    def __init__(self, *, second_prompt: str = "second eval call") -> None:
+        self.llm = _ContextBudgetEvalLLM()
+        self.second_prompt = second_prompt
+
+    async def process_query(
+        self,
+        query,
+        session_id,
+        user_id,
+        max_iterations=10,
+        context=None,
+        progress_emitter=None,
+        conversation_history=None,
+    ):
+        await guarded_ainvoke(
+            self.llm,
+            [HumanMessage(content=f"first eval call: {query}")],
+            request_kind="eval.first",
+        )
+        await guarded_ainvoke(
+            self.llm,
+            [HumanMessage(content=f"{self.second_prompt}: {query}")],
+            request_kind="eval.second",
+        )
+        return AgentResponse(response="context budget eval complete")
+
+
+def _build_context_budget_eval_scenario() -> EvalScenario:
+    return EvalScenario.model_validate(
+        {
+            "id": "llm-context-token-budget",
+            "name": "LLM context token budget",
+            "provenance": {
+                "source_kind": "synthetic",
+                "source_pack": "fixture-pack",
+                "source_pack_version": "2026-05-28",
+                "golden": {
+                    "expectation_basis": "human_authored",
+                },
+            },
+            "execution": {
+                "lane": "full_turn",
+                "query": "Investigate cache memory pressure.",
+                "route_via_router": False,
+                "agent": "chat",
+            },
+        }
+    )
+
+
+def _install_context_budget_eval_runtime(monkeypatch, agent, *, context_budget: int) -> None:
+    _MemoryThreadManager.reset()
+    _MemoryTaskManager.reset()
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.evaluation.runtime.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.ThreadManager", _MemoryThreadManager)
+    monkeypatch.setattr("redis_sre_agent.core.docket_tasks.TaskManager", _MemoryTaskManager)
+    monkeypatch.setattr(
+        llm_token_usage_module,
+        "settings",
+        SimpleNamespace(llm_context_token_budget=context_budget),
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+        AsyncMock(return_value=AgentType.REDIS_CHAT),
+    )
+    monkeypatch.setattr(
+        "redis_sre_agent.core.docket_tasks.get_chat_agent",
+        lambda redis_instance=None, redis_cluster=None: agent,
+    )
+
+
 @pytest.mark.asyncio
 async def test_build_full_turn_context_compiles_bound_targets_and_agent_override():
     scenario = _build_scenario(route_via_router=False, agent="redis_triage")
@@ -1132,6 +1220,65 @@ async def test_run_full_turn_scenario_applies_runtime_overrides_to_real_provider
     assert seen["history_length"] == 0
     assert seen["toolset_generation"] == 1
     assert "mcp_metrics_eval_query_metrics" in seen["tool_names"]
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_eval_allows_context_requests_within_budget(
+    monkeypatch,
+):
+    scenario = _build_context_budget_eval_scenario()
+    agent = _ContextBudgetEvalChatAgent()
+    _install_context_budget_eval_runtime(monkeypatch, agent, context_budget=1000)
+
+    with patch("opentelemetry.trace.get_tracer") as mock_tracer:
+        mock_span = MagicMock()
+        mock_span.end = MagicMock()
+        mock_span.set_attribute = MagicMock()
+        mock_tracer.return_value.start_span.return_value = mock_span
+
+        result = await run_full_turn_scenario(
+            scenario,
+            user_id="user-123",
+            session_id="session-123",
+            redis_client=object(),
+        )
+
+    assert result.thread_id == "thread-1"
+    assert result.task_id == "task-1"
+    assert result.task_status == "done"
+    assert result.turn_result["response"] == "context budget eval complete"
+    assert len(agent.llm.payloads) == 2
+    assert _MemoryTaskManager.tasks["task-1"].result["response"] == "context budget eval complete"
+
+
+@pytest.mark.asyncio
+async def test_run_full_turn_scenario_eval_fails_before_oversized_context_request(
+    monkeypatch,
+):
+    scenario = _build_context_budget_eval_scenario()
+    agent = _ContextBudgetEvalChatAgent(second_prompt="token " * 200)
+    _install_context_budget_eval_runtime(monkeypatch, agent, context_budget=80)
+
+    with patch("opentelemetry.trace.get_tracer") as mock_tracer:
+        mock_span = MagicMock()
+        mock_span.end = MagicMock()
+        mock_span.set_attribute = MagicMock()
+        mock_span.record_exception = MagicMock()
+        mock_tracer.return_value.start_span.return_value = mock_span
+
+        with pytest.raises(LLMTokenLimitExceededError, match="eval.second.*budget is 80"):
+            await run_full_turn_scenario(
+                scenario,
+                user_id="user-123",
+                session_id="session-123",
+                redis_client=object(),
+            )
+
+    task = _MemoryTaskManager.tasks["task-1"]
+    assert task.status == TaskStatus.FAILED
+    assert "LLM context token budget exceeded" in task.error_message
+    assert "budget is 80" in task.error_message
+    assert len(agent.llm.payloads) == 1
 
 
 @pytest.mark.asyncio

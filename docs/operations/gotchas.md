@@ -177,11 +177,31 @@ The triage agent uses parallel research tracks, which means:
 
 Monitor LLM token usage via Prometheus metrics at `/api/v1/metrics`.
 
+### LLM context token budget
+Set `LLM_CONTEXT_TOKEN_BUDGET` to stop an oversized LLM request before it is sent to the provider. This is useful for deployments that need to avoid model context-window errors when a request includes long conversation history, large retrieved context, or large tool schemas.
+
+The budget applies to each individual guarded LLM request, not to the sum of an entire agent turn. Leave it unset to disable enforcement. When it is enabled and exceeded, the task records an `LLM context token budget exceeded` error and the LLM call is not made.
+
+Choose a value below the context window of the model you deploy, leaving room for the model's answer and provider-specific overhead. For example, with a 128k-token model, a budget around `120000` leaves headroom. If valid investigations hit the budget, split broad requests into smaller turns, narrow the target set, reduce retrieved context, or raise the budget for a larger-context model.
+
 ### Tool timeouts
 Default tool timeout is 60 seconds (`TOOL_TIMEOUT=60`). If Prometheus/Loki queries are slow:
 - Increase timeout in `.env`
 - Check network latency to observability systems
 - Review Prometheus/Loki query performance
+
+### LLM context token budget exceeded
+This error means a single outbound LLM request was estimated to contain more input/context tokens than `LLM_CONTEXT_TOKEN_BUDGET` allows. Common causes:
+- A broad prompt that asks for several investigations at once
+- Multi-target triage or comparison across too many Redis targets
+- Large retrieved context, tool payloads, or conversation history included in the request
+
+To resolve it:
+- Ask a narrower question
+- Continue the thread with fewer targets
+- Split the investigation into multiple turns
+- Reduce retrieved context or tool payload size
+- Raise `LLM_CONTEXT_TOKEN_BUDGET`, or unset it to disable context budget enforcement
 
 ### Max iterations limit
 The agent has a max iterations limit (`MAX_ITERATIONS=25`) to prevent runaway loops. If you see "max iterations reached":

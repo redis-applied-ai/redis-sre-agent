@@ -89,6 +89,15 @@ uv run redis-sre-agent query -t <thread_id> \
   "Keep only the production caches and summarize which one needs attention first"
 ```
 
+For deep triage, the agent can fan out to one triage run per selected target, up to five targets in one request. If target discovery matches more than five Redis targets, the agent asks you to narrow the request instead of triaging a partial set.
+
+Continue the same thread with the smaller set:
+
+```bash
+uv run redis-sre-agent query -t <thread_id> \
+  "Use only checkout-prod, session-prod, and cart-prod"
+```
+
 These discovery-first flows depend on your configured target catalog and bindings. If discovery is
 not configured, use explicit `-r <instance_id>` or `-c <cluster_id>` flags instead.
 

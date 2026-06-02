@@ -21,6 +21,7 @@ from redis_sre_agent.core.agent_memory import prepare_agent_turn_memory
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.llm_helpers import create_llm
 from redis_sre_agent.core.llm_request_guard import guarded_ainvoke
+from redis_sre_agent.core.llm_token_usage import LLMTokenLimitExceededError
 from redis_sre_agent.core.progress import (
     NullEmitter,
     ProgressEmitter,
@@ -35,6 +36,11 @@ from .helpers import (
 )
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
+from .terminal_synthesis import (
+    TerminalSynthesisConfig,
+    describe_captured_state,
+    synthesize_terminal_response,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -56,7 +62,7 @@ KNOWLEDGE_SYSTEM_PROMPT = """You are a specialized SRE (Site Reliability Enginee
 2. **Educational**: Explain concepts clearly and provide context for your recommendations
 3. **Practical**: Focus on actionable advice and real-world applications
 4. **Comprehensive**: Use multiple knowledge base searches if needed to provide complete answers
-5. **Historical Context**: Search support tickets when prior incidents may be relevant. Use ticket tools rather than general knowledge search for support cases/history because general knowledge search excludes support tickets.
+5. **Historical Context**: If the user asks for a prior case, prior incident, historical example, support ticket, or case history, you must search support tickets before answering. Use ticket tools rather than general knowledge search for support cases/history because general knowledge search excludes support tickets. Do not say that no prior case was found unless support-ticket search returned no relevant case.
 
 ## Important Guidelines:
 - You do NOT have access to specific Redis instances or live system data
@@ -108,6 +114,11 @@ class KnowledgeOnlyAgent:
     This agent uses ToolManager to load only knowledge-related tools (no instance-specific tools).
     It's designed for general Q&A when no Redis instance is specified.
     """
+
+    TERMINAL_SYNTHESIS_CONTEXT_LIMIT = 12000
+    TERMINAL_SYNTHESIS_ITEM_LIMIT = 2000
+    TERMINAL_SYNTHESIS_MESSAGE_ITEM_LIMIT = 1200
+    TERMINAL_SYNTHESIS_MESSAGE_LIMIT = 8
 
     def __init__(
         self,
@@ -627,6 +638,12 @@ class KnowledgeOnlyAgent:
                 messages = final_state.get("messages", [])
 
                 response = self._extract_final_response(messages)
+                if not response and messages:
+                    response = await self._synthesize_terminal_response(
+                        query=query,
+                        messages=messages,
+                        tool_envelopes=tool_envelopes,
+                    )
                 if not response:
                     response = "I apologize, but I wasn't able to process your query. Please try asking a more specific question about SRE practices or troubleshooting."
 
@@ -643,6 +660,8 @@ class KnowledgeOnlyAgent:
                     await prepared_memory.persist_response_fail_open(result.response)
                 return result
 
+            except LLMTokenLimitExceededError:
+                raise
             except Exception as e:
                 logger.error(f"Knowledge agent processing failed: {e}")
                 error_response = f"I encountered an error while processing your knowledge query: {str(e)}. Please try asking a more specific question about SRE practices, troubleshooting methodologies, or system reliability concepts."
@@ -665,10 +684,61 @@ class KnowledgeOnlyAgent:
         if candidate:
             return candidate
 
+        return ""
+
+    @classmethod
+    def _terminal_synthesis_failure_response(
+        cls,
+        *,
+        messages: List[BaseMessage],
+        tool_envelopes: List[Dict[str, Any]],
+    ) -> str:
+        gathered_text = describe_captured_state(messages=messages, tool_envelopes=tool_envelopes)
         return (
             "I gathered relevant evidence, but the workflow ended before I produced a final "
-            "natural-language summary. Please retry with a narrower question or allow one more "
-            "tool step."
+            f"natural-language summary. I had gathered {gathered_text}. Please retry with a "
+            "narrower question or allow one more tool step."
+        )
+
+    async def _synthesize_terminal_response(
+        self,
+        *,
+        query: str,
+        messages: List[BaseMessage],
+        tool_envelopes: List[Dict[str, Any]],
+    ) -> str:
+        """Produce a final answer when the graph stops after tool evidence."""
+        return await synthesize_terminal_response(
+            self.llm,
+            config=TerminalSynthesisConfig(
+                request_kind="knowledge_agent.terminal_synthesis",
+                system_prompt=(
+                    "The knowledge-only workflow stopped before emitting terminal assistant "
+                    "text. Write the best possible final answer from the gathered conversation "
+                    "and knowledge evidence. Do not call tools. Do not claim live Redis access. "
+                    "Cite source names when the evidence includes them. If the evidence is "
+                    "incomplete, say what was gathered and what remains uncertain."
+                ),
+                messages_heading="Conversation tail",
+                evidence_heading="Structured knowledge evidence",
+                no_messages_text="No conversation messages were captured.",
+                no_evidence_text="No structured tool evidence was captured.",
+                failure_log_message="Knowledge agent terminal synthesis failed: %s",
+                empty_log_message="Knowledge agent terminal synthesis returned no text",
+                context_limit=self.TERMINAL_SYNTHESIS_CONTEXT_LIMIT,
+                item_limit=self.TERMINAL_SYNTHESIS_ITEM_LIMIT,
+                message_item_limit=self.TERMINAL_SYNTHESIS_MESSAGE_ITEM_LIMIT,
+                message_tail_limit=self.TERMINAL_SYNTHESIS_MESSAGE_LIMIT,
+            ),
+            messages=messages,
+            tool_envelopes=tool_envelopes,
+            guarded_invoke=guarded_ainvoke,
+            failure_response_factory=lambda: self._terminal_synthesis_failure_response(
+                messages=messages,
+                tool_envelopes=tool_envelopes,
+            ),
+            logger=logger,
+            human_prelude=f"Original user request:\n{query}",
         )
 
 

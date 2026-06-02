@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, AsyncIterator, Iterable, Sequence
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from redis_sre_agent.agent.models import AgentResponse
 from redis_sre_agent.evaluation.agent_only import run_agent_only_scenario
@@ -41,6 +42,9 @@ from redis_sre_agent.evaluation.tool_identity import (
     normalize_tool_name_token,
 )
 from redis_sre_agent.evaluation.tool_runtime import FixtureBehaviorState, build_fixture_tool_runtime
+
+_LIVE_EVAL_REDIS_IMAGE_ENV = "EVAL_REDIS_IMAGE"
+_LIVE_EVAL_REDIS_IMAGE_DEFAULT = "redis:8"
 
 
 class EvalLiveSuite(BaseModel):
@@ -335,6 +339,37 @@ def normalize_agent_response_payload(
     )
 
 
+@asynccontextmanager
+async def _live_eval_redis_client() -> AsyncIterator[Any]:
+    """Start an isolated Redis testcontainer for live eval orchestration state."""
+
+    from testcontainers.redis import RedisContainer
+
+    import redis_sre_agent.core.config as config_module
+    from redis_sre_agent.core.config import Settings
+    from redis_sre_agent.core.redis import create_indices, get_redis_client
+
+    image = os.getenv(_LIVE_EVAL_REDIS_IMAGE_ENV, _LIVE_EVAL_REDIS_IMAGE_DEFAULT)
+    container = RedisContainer(image=image)
+
+    client = None
+    old_redis_url = config_module.settings.redis_url
+    try:
+        container.start()
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(6379)
+        redis_url = f"redis://{host}:{port}/0"
+        config_module.settings.redis_url = SecretStr(redis_url)
+        client = get_redis_client(url=redis_url)
+        await create_indices(config=Settings(redis_url=SecretStr(redis_url)))
+        yield client
+    finally:
+        config_module.settings.redis_url = old_redis_url
+        if client is not None:
+            await client.aclose()
+        container.stop()
+
+
 def _infer_live_trace_logical_identity(
     scenario: EvalScenario,
     concrete_name: str,
@@ -498,6 +533,7 @@ async def _run_scenario_live(
     judge_criteria: Iterable[EvaluationCriteria] | None = None,
     judge_pass_threshold: float | None = None,
     model_name: str | None = None,
+    redis_client: Any = None,
 ) -> LiveEvalScenarioResult:
     session_id = f"{session_id_prefix}::{scenario.id.replace('/', '::')}"
     behavior_state = FixtureBehaviorState()
@@ -524,6 +560,7 @@ async def _run_scenario_live(
                 session_id=session_id,
                 user_id=user_id,
                 runtime_overrides=runtime_overrides,
+                redis_client=redis_client,
                 allow_live_llm=True,
             )
             startup_context_snapshot: dict[str, Any] | list[Any] | str | None = (
@@ -652,27 +689,29 @@ async def run_live_eval_suite(
 
     git_sha = _current_git_sha()
     results: list[LiveEvalScenarioResult] = []
-    for scenario_ref in suite.scenarios:
-        scenario_path = (
-            Path(scenario_ref)
-            if config_path is None
-            else _resolve_relative_path(resolved_config_path, scenario_ref)
-        )
-        scenario = _coerce_live_scenario(load_eval_scenario(scenario_path))
-        results.append(
-            await _run_scenario_live(
-                scenario,
-                user_id=user_id,
-                session_id_prefix=session_id_prefix,
-                output_dir=target_output_dir,
-                git_sha=git_sha,
-                baseline_policy=baseline_policy,
-                judge=judge,
-                judge_criteria=judge_criteria,
-                judge_pass_threshold=effective_threshold,
-                model_name=model_name,
+    async with _live_eval_redis_client() as redis_client:
+        for scenario_ref in suite.scenarios:
+            scenario_path = (
+                Path(scenario_ref)
+                if config_path is None
+                else _resolve_relative_path(resolved_config_path, scenario_ref)
             )
-        )
+            scenario = _coerce_live_scenario(load_eval_scenario(scenario_path))
+            results.append(
+                await _run_scenario_live(
+                    scenario,
+                    user_id=user_id,
+                    session_id_prefix=session_id_prefix,
+                    output_dir=target_output_dir,
+                    git_sha=git_sha,
+                    baseline_policy=baseline_policy,
+                    judge=judge,
+                    judge_criteria=judge_criteria,
+                    judge_pass_threshold=effective_threshold,
+                    model_name=model_name,
+                    redis_client=redis_client,
+                )
+            )
 
     failed_scenarios = sum(1 for result in results if not result.overall_pass)
     allowed_failed_scenarios = baseline_policy.max_failed_scenarios or 0

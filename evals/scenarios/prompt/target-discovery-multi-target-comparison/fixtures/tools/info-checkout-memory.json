@@ -1,6 +1,8 @@
 {
+  "target": "prod checkout cache",
   "section": "memory",
   "data": {
+    "target": "prod checkout cache",
     "used_memory_human": "5.1G",
     "maxmemory_human": "8.0G",
     "maxmemory_policy": "allkeys-lru",
