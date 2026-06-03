@@ -37,7 +37,7 @@ main() {
     log "Populating knowledge base with Redis documentation..."
 
     # Use the CLI to populate knowledge base
-    if docker-compose exec -T sre-agent uv run redis-sre-agent knowledge populate --scrapers redis_kb 2>/dev/null; then
+    if docker-compose exec -T sre-agent uv run redis-sre-agent knowledge populate 2>/dev/null; then
         success "Knowledge base populated successfully"
     else
         warning "Knowledge base population failed, but continuing..."
