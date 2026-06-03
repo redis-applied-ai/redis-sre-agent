@@ -104,7 +104,7 @@ async def test_build_and_restore_knowledge_pack_round_trip(
         artifacts_path=artifacts_path,
         release_tag="v9.9.9",
         repo_sha="deadbeef",
-        scrapers_run=["source_documents", "redis_docs_local", "redis_kb", "redis_cloud_api"],
+        scrapers_run=["source_documents", "redis_docs_local", "redis_cloud_api"],
         config=test_settings,
     )
 

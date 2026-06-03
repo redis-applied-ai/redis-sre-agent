@@ -10,7 +10,6 @@ from .scraper.base import ArtifactStorage
 from .scraper.redis_cloud_api import RedisCloudAPIScraper
 from .scraper.redis_docs import RedisDocsScraper
 from .scraper.redis_docs_local import RedisDocsLocalScraper
-from .scraper.redis_kb import RedisKBScraper
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,6 @@ class PipelineOrchestrator:
     SCRAPER_CLASSES = {
         "redis_docs": RedisDocsScraper,
         "redis_docs_local": RedisDocsLocalScraper,
-        "redis_kb": RedisKBScraper,
         "redis_cloud_api": RedisCloudAPIScraper,
     }
 
