@@ -36,7 +36,7 @@ def test_full_command_additional_branches(cli_runner, temp_artifacts_path, mock_
             "total_documents": 2,
             "scraper_results": {
                 "redis_docs": {"documents_scraped": 2},
-                "redis_kb": {"error": "failed"},
+                "redis_cloud_api": {"error": "failed"},
             },
         },
         "ingestion": {"documents_processed": 2, "chunks_indexed": 4},
@@ -49,13 +49,13 @@ def test_full_command_additional_branches(cli_runner, temp_artifacts_path, mock_
             "--artifacts-path",
             temp_artifacts_path,
             "--scrapers",
-            "redis_docs, redis_kb",
+            "redis_docs, redis_cloud_api",
         ],
     )
 
     assert result.exit_code == 0
-    mock_orchestrator.run_full_pipeline.assert_called_once_with(["redis_docs", "redis_kb"])
-    assert "redis_kb: failed" in result.output
+    mock_orchestrator.run_full_pipeline.assert_called_once_with(["redis_docs", "redis_cloud_api"])
+    assert "redis_cloud_api: failed" in result.output
 
     mock_orchestrator.run_full_pipeline.side_effect = Exception("full boom")
     failed = cli_runner.invoke(pipeline, ["full", "--artifacts-path", temp_artifacts_path])

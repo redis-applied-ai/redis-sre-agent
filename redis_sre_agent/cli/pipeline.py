@@ -129,7 +129,10 @@ def pipeline():
 @click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
 @click.option(
     "--scrapers",
-    help="Comma-separated list of scrapers to run (redis_docs,redis_runbooks,redis_kb,runbook_generator)",
+    help=(
+        "Comma-separated list of scrapers to run "
+        "(redis_docs,redis_docs_local,redis_runbooks,redis_cloud_api,runbook_generator)"
+    ),
 )
 @click.option(
     "--latest-only",
