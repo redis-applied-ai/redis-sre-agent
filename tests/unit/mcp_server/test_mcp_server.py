@@ -350,6 +350,29 @@ class TestDeepTriageTool:
             mock_create.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_deep_triage_forces_triage_routing_without_explicit_target(self):
+        """Deep triage tool calls should not depend on trigger words in the query."""
+        mock_result = {
+            "thread_id": "thread-123",
+            "task_id": "task-456",
+            "status": "queued",
+            "message": "Task created",
+        }
+
+        with (
+            patch("redis_sre_agent.core.redis.get_redis_client"),
+            patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
+        ):
+            mock_create.return_value = mock_result
+
+            result = await redis_sre_deep_triage(query="high memory on prod cache")
+
+            assert result["task_id"] == "task-456"
+            call_kwargs = mock_create.call_args.kwargs
+            assert call_kwargs["context"]["requested_agent_type"] == "triage"
+            assert call_kwargs["context"]["turn_scope"]["scope_kind"] == "zero_scope"
+
+    @pytest.mark.asyncio
     async def test_deep_triage_with_cluster_id(self):
         """Test deep triage accepts cluster_id and forwards context."""
         mock_result = {

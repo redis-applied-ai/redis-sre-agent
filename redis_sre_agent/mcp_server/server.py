@@ -250,6 +250,7 @@ async def redis_sre_deep_triage(
             instance_id=instance_id,
             cluster_id=cluster_id,
             user_id=user_id,
+            extra_context={"requested_agent_type": "triage"},
         )
 
         result = await create_task(
