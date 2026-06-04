@@ -57,19 +57,19 @@ const AUTOMATIC_SEARCH_DELAY_MS = 1000;
 const getSearchKey = (query: string, category: string) =>
   JSON.stringify([query.trim(), category || ""]);
 
-const buildKnowledgeChunkPath = (
+const buildKnowledgeDocumentPath = (
   documentHash: string,
   chunkIndex?: number | string | null,
   version?: string,
 ) => {
   const query = new URLSearchParams();
   const chunk = String(chunkIndex ?? "").trim();
-  if (chunk) query.set("chunk", chunk);
   if (version?.trim()) query.set("version", version.trim());
   const suffix = query.toString() ? `?${query.toString()}` : "";
+  const anchor = chunk ? `#chunk-${encodeURIComponent(chunk)}` : "";
   return `/knowledge/document-chunks/${encodeURIComponent(
     documentHash,
-  )}${suffix}`;
+  )}${suffix}${anchor}`;
 };
 
 const parseChunkSearchQuery = (query: string) => {
@@ -222,7 +222,7 @@ const Knowledge = () => {
     if (chunkReference) {
       setSearchResults([]);
       navigate(
-        buildKnowledgeChunkPath(
+        buildKnowledgeDocumentPath(
           chunkReference.documentHash,
           chunkReference.chunkIndex,
         ),
@@ -747,8 +747,8 @@ const Knowledge = () => {
                 {searchResults.map((result, index) => {
                   const title =
                     result.title || result.document_hash || "Untitled chunk";
-                  const chunkPath = result.document_hash
-                    ? buildKnowledgeChunkPath(
+                  const documentPath = result.document_hash
+                    ? buildKnowledgeDocumentPath(
                         result.document_hash,
                         result.chunk_index,
                         result.version,
@@ -764,9 +764,9 @@ const Knowledge = () => {
                         <div className="flex items-start justify-between gap-4 mb-3">
                           <div className="min-w-0">
                             <h4 className="text-redis-md font-semibold truncate">
-                              {chunkPath ? (
+                              {documentPath ? (
                                 <Link
-                                  to={chunkPath}
+                                  to={documentPath}
                                   className="text-foreground hover:text-redis-blue-03 hover:underline"
                                 >
                                   {title}
@@ -793,14 +793,12 @@ const Knowledge = () => {
                               )}
                             </div>
                           </div>
-                          {chunkPath && (
+                          {documentPath && (
                             <Link
-                              to={chunkPath}
+                              to={documentPath}
                               className="text-redis-sm text-redis-blue-03 hover:underline whitespace-nowrap"
                             >
-                              {result.chunk_index != null
-                                ? "View chunk"
-                                : "View document chunks"}
+                              Open document
                             </Link>
                           )}
                         </div>

@@ -24,6 +24,19 @@ export interface TaskUpdate {
   metadata: Record<string, any>;
 }
 
+export interface TaskToolCall {
+  id?: string;
+  name?: string;
+  tool_name?: string;
+  status?: string;
+  args?: Record<string, any>;
+  tool_args?: Record<string, any>;
+  result?: any;
+  data?: any;
+  message?: string;
+  [key: string]: any;
+}
+
 export interface PendingApprovalSummary {
   approval_id: string;
   interrupt_id: string;
@@ -81,6 +94,7 @@ export interface TaskStatusResponse {
   // Updates come from the latest task (progress updates, not conversation)
   updates: TaskUpdate[];
   result?: Record<string, any>;
+  tool_calls?: TaskToolCall[];
   error_message?: string;
   pending_approval?: PendingApprovalSummary | null;
   resume_supported: boolean;
@@ -529,6 +543,25 @@ export class SREAgentAPI {
     return new URL(urlString, "http://localhost:3000");
   }
 
+  private async getTaskDetail(
+    taskId?: string,
+  ): Promise<Record<string, any> | null> {
+    if (!taskId) return null;
+
+    try {
+      const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}`);
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async getTaskToolCalls(taskId: string): Promise<TaskToolCall[]> {
+    const taskDetail = await this.getTaskDetail(taskId);
+    return Array.isArray(taskDetail?.tool_calls) ? taskDetail.tool_calls : [];
+  }
+
   async submitTriageRequest(
     message: string,
     userId: string,
@@ -568,6 +601,7 @@ export class SREAgentAPI {
     }
 
     const data = await response.json(); // TaskCreateResponse
+
     return {
       thread_id: data.thread_id,
       status: data.status,
@@ -617,6 +651,8 @@ export class SREAgentAPI {
 
     const thread = await response.json();
 
+    const taskDetail = await this.getTaskDetail(thread.task_id);
+
     // Messages are now at top level; fall back to context.messages for old data
     const messages = Array.isArray(thread.messages)
       ? thread.messages
@@ -633,6 +669,13 @@ export class SREAgentAPI {
       status = hasResponse ? "completed" : "in_progress";
     }
 
+    const threadToolCalls = Array.isArray(thread.tool_calls)
+      ? thread.tool_calls
+      : [];
+    const taskToolCalls = Array.isArray(taskDetail?.tool_calls)
+      ? taskDetail.tool_calls
+      : [];
+
     return {
       thread_id: thread.thread_id,
       task_id: thread.task_id,
@@ -647,14 +690,16 @@ export class SREAgentAPI {
         ? thread.updates.map((u: any) => ({
             timestamp: u.timestamp,
             message: u.message,
-            type: u.update_type,
+            type: u.update_type || u.type,
             metadata: u.metadata || {},
           }))
         : [],
       result: thread.result,
+      tool_calls: threadToolCalls.length > 0 ? threadToolCalls : taskToolCalls,
       error_message: thread.error_message,
       pending_approval: thread.pending_approval || null,
       resume_supported: Boolean(thread.resume_supported),
+      feedback: thread.feedback || taskDetail?.feedback || null,
       metadata: {
         created_at: thread?.metadata?.created_at,
         updated_at: thread?.metadata?.updated_at,
@@ -717,9 +762,11 @@ export class SREAgentAPI {
           }))
         : [],
       result: task.result,
+      tool_calls: Array.isArray(task.tool_calls) ? task.tool_calls : [],
       error_message: task.error_message,
       pending_approval: task.pending_approval || null,
       resume_supported: Boolean(task.resume_supported),
+      feedback: task.feedback || null,
       metadata: {
         created_at: task.created_at,
         updated_at: task.updated_at,
@@ -1709,7 +1756,8 @@ export class SREAgentAPI {
       const errorText = await response.text();
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
-    return response.json();
+    const data = await response.json();
+    return data?.feedback || data || null;
   }
 }
 

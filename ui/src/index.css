@@ -170,8 +170,107 @@ select option {
   color: var(--foreground);
 }
 
+.tool-calls-accordion {
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+}
+
+.tool-calls-accordion summary,
+.tool-call-item summary {
+  list-style: none;
+}
+
+.tool-calls-accordion summary::-webkit-details-marker,
+.tool-call-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-calls-accordion summary::marker,
+.tool-call-item summary::marker {
+  content: "";
+}
+
+.tool-calls-accordion-summary,
+.tool-call-item-summary {
+  color: var(--foreground);
+}
+
+.tool-calls-accordion-summary:hover,
+.tool-call-item-summary:hover {
+  background-color: var(--muted);
+}
+
+.tool-calls-count,
+.tool-call-status {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+}
+
+.tool-calls-accordion-body {
+  border-top: 1px solid var(--border);
+  background-color: var(--muted);
+}
+
+.tool-call-item {
+  border: 1px solid var(--border);
+  background-color: var(--card);
+}
+
+.tool-call-detail {
+  border-top: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.tool-call-detail-label {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+}
+
+.tool-call-detail pre {
+  margin: 0;
+  max-height: 14rem;
+  overflow: auto;
+  border-radius: 0.375rem;
+  background-color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 0.6rem;
+  color: var(--foreground);
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tool-call-detail p {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.accordion-chevron {
+  color: var(--muted-foreground);
+}
+
+.accordion-chevron > span {
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+details[open] > summary .accordion-chevron > span {
+  transform: translateY(-1px) rotate(45deg);
+}
+
 /* Markdown rendering for chat and knowledge content */
 .markdown-content {
+  width: 100%;
   color: inherit;
   font-size: inherit;
   line-height: 1.6;

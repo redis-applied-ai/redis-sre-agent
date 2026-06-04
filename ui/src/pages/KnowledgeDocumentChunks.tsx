@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { Button, Card, CardContent, CardHeader } from "@radar/ui-kit";
 import MarkdownRenderer from "../components/MarkdownRenderer";
 import sreAgentApi, {
@@ -40,8 +45,25 @@ const formatMetadataValue = (value: unknown): string => {
   return String(value);
 };
 
+const getChunkAnchorId = (chunkIndex: unknown) => {
+  const value = String(chunkIndex ?? "").trim();
+  return value ? `chunk-${value}` : undefined;
+};
+
+const getChunkIndexFromHash = (hash: string) => {
+  const match = hash.match(/^#chunk-(.+)$/);
+  if (!match) return undefined;
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+};
+
 const KnowledgeDocumentChunks = () => {
   const { documentHash } = useParams();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const [documentChunks, setDocumentChunks] =
     useState<KnowledgeDocumentChunksResponse | null>(null);
@@ -50,7 +72,10 @@ const KnowledgeDocumentChunks = () => {
 
   const version = searchParams.get("version") || undefined;
   const indexType = searchParams.get("index_type") || "knowledge";
-  const targetChunkIndex = searchParams.get("chunk") || undefined;
+  const targetChunkIndex =
+    searchParams.get("chunk") ||
+    getChunkIndexFromHash(location.hash) ||
+    undefined;
 
   useEffect(() => {
     const loadDocumentChunks = async () => {
@@ -93,44 +118,37 @@ const KnowledgeDocumentChunks = () => {
     });
   }, [documentChunks]);
 
-  const targetChunk = useMemo(() => {
-    if (!targetChunkIndex) return undefined;
-    return chunks.find(
-      (chunk) => String(chunk.chunk_index ?? "") === targetChunkIndex,
-    );
-  }, [chunks, targetChunkIndex]);
+  const hasRenderableChunks = useMemo(() => {
+    return chunks.some((chunk) => Boolean(chunk.content?.trim()));
+  }, [chunks]);
 
-  const visibleChunks = useMemo(() => {
-    if (!targetChunkIndex) return chunks;
-    return targetChunk ? [targetChunk] : [];
-  }, [chunks, targetChunk, targetChunkIndex]);
+  useEffect(() => {
+    if (isLoading || !targetChunkIndex) return;
 
-  const assembledContent = useMemo(() => {
-    return visibleChunks
-      .map((chunk) => chunk.content?.trim())
-      .filter(Boolean)
-      .join("\n\n");
-  }, [visibleChunks]);
+    const targetId = getChunkAnchorId(targetChunkIndex);
+    if (!targetId) return;
+
+    window.setTimeout(() => {
+      document.getElementById(targetId)?.scrollIntoView({
+        block: "start",
+        behavior: "smooth",
+      });
+    }, 0);
+  }, [chunks.length, isLoading, targetChunkIndex]);
 
   const metadataRows = useMemo(() => {
     if (!documentChunks) return [];
-    const sample = targetChunk || chunks[0];
+    const sample = chunks[0];
     const metadata = documentChunks.metadata || {};
-    const chunkId =
-      targetChunkIndex && documentChunks.document_hash
-        ? `${documentChunks.document_hash}:${targetChunkIndex}`
-        : undefined;
     const values: Record<string, unknown> = {
       title: documentChunks.title || sample?.title,
       name: documentChunks.name,
       document_hash: documentChunks.document_hash,
-      chunk_id: chunkId,
-      chunk_index: targetChunkIndex,
       total_chunks: sample?.total_chunks ?? documentChunks.chunk_count,
       source: documentChunks.source || sample?.source,
       category: documentChunks.category || sample?.category,
       doc_type: documentChunks.doc_type || sample?.doc_type,
-      version: getChunkVersion(sample),
+      version: version || getChunkVersion(sample),
       priority: documentChunks.priority,
       pinned: documentChunks.pinned,
       source_pack: metadata.source_pack,
@@ -146,7 +164,7 @@ const KnowledgeDocumentChunks = () => {
         value: formatMetadataValue(value),
       }))
       .filter((row) => row.value);
-  }, [documentChunks, chunks, targetChunk, targetChunkIndex]);
+  }, [documentChunks, chunks, version]);
 
   if (isLoading) {
     return (
@@ -179,12 +197,6 @@ const KnowledgeDocumentChunks = () => {
     documentChunks.name ||
     chunks[0]?.title ||
     `Document chunks ${documentChunks.document_hash}`;
-  const fullChunkGroupPath = `/knowledge/document-chunks/${encodeURIComponent(
-    documentChunks.document_hash,
-  )}${version ? `?version=${encodeURIComponent(version)}` : ""}`;
-  const pageTitle = targetChunkIndex
-    ? `${title} chunk ${targetChunkIndex}`
-    : title;
 
   return (
     <div className="space-y-6">
@@ -197,7 +209,7 @@ const KnowledgeDocumentChunks = () => {
             Back to Knowledge
           </Link>
           <h1 className="text-redis-xl font-bold text-foreground mt-2 truncate">
-            {pageTitle}
+            {title}
           </h1>
           {documentChunks.summary && (
             <p className="text-redis-sm text-redis-dusk-04 mt-1">
@@ -205,18 +217,9 @@ const KnowledgeDocumentChunks = () => {
             </p>
           )}
           <p className="text-redis-sm text-redis-dusk-04 mt-2">
-            {targetChunkIndex
-              ? "This view shows one indexed knowledge chunk. It is not the original source document body."
-              : "This view assembles indexed chunks that share the same document hash. It is not the original source document body."}
+            This page assembles indexed chunks that share the same document
+            hash. It is not the original source document body.
           </p>
-          {targetChunkIndex && (
-            <Link
-              to={fullChunkGroupPath}
-              className="mt-2 inline-block text-redis-sm text-redis-blue-03 hover:underline"
-            >
-              View all chunks for this document
-            </Link>
-          )}
         </div>
       </div>
 
@@ -257,17 +260,56 @@ const KnowledgeDocumentChunks = () => {
       <Card>
         <CardHeader>
           <h2 className="text-redis-lg font-semibold text-foreground">
-            {targetChunkIndex ? "Knowledge Chunk" : "Document Chunks"}
+            Assembled Document
           </h2>
         </CardHeader>
         <CardContent>
-          {assembledContent ? (
-            <MarkdownRenderer content={assembledContent} />
-          ) : targetChunkIndex ? (
-            <p className="text-redis-sm text-redis-dusk-04">
-              Chunk {targetChunkIndex} was not found in this document chunk
-              group.
-            </p>
+          {hasRenderableChunks ? (
+            <div className="space-y-8">
+              {chunks.map((chunk) => {
+                const chunkIndex = String(chunk.chunk_index ?? "").trim();
+                const anchorId = getChunkAnchorId(chunkIndex);
+                const isTargetChunk =
+                  Boolean(targetChunkIndex) && chunkIndex === targetChunkIndex;
+
+                return (
+                  <section
+                    key={`${documentChunks.document_hash}-${chunkIndex || "unknown"}`}
+                    className={`scroll-mt-24 border-t border-redis-dusk-08 pt-6 first:border-t-0 first:pt-0 ${
+                      isTargetChunk
+                        ? "rounded-redis-sm bg-redis-dusk-09 p-3"
+                        : ""
+                    }`}
+                  >
+                    <h3
+                      id={anchorId}
+                      className="scroll-mt-24 text-redis-md font-semibold text-foreground"
+                    >
+                      {anchorId ? (
+                        <a
+                          href={`#${anchorId}`}
+                          className="hover:text-redis-blue-03 hover:underline"
+                        >
+                          Chunk {chunkIndex}
+                        </a>
+                      ) : (
+                        "Chunk"
+                      )}
+                    </h3>
+                    {chunk.content?.trim() ? (
+                      <MarkdownRenderer
+                        content={chunk.content}
+                        className="mt-3"
+                      />
+                    ) : (
+                      <p className="mt-3 text-redis-sm text-redis-dusk-04">
+                        This chunk has no renderable content.
+                      </p>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
           ) : (
             <p className="text-redis-sm text-redis-dusk-04">
               These document chunks have no renderable content.

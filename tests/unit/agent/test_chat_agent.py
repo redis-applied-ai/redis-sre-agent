@@ -2976,3 +2976,69 @@ class TestChatAgentStartupContext:
         ]
         assert tool_state["toolset_generation"] == 1
         assert tool_state["skill_contract_gaps"] is None
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.helpers.build_adapters_for_tooldefs", new_callable=AsyncMock)
+    @patch(
+        "redis_sre_agent.agent.chat_agent.execute_tool_calls_with_gate",
+        new_callable=AsyncMock,
+    )
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_tool_node_emits_tool_call_metadata(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        mock_execute_tool_calls,
+        mock_build_adapters,
+    ):
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+        mock_build_adapters.return_value = []
+        mock_execute_tool_calls.return_value = [
+            ToolMessage(content="ok", tool_call_id="call-1", name="demo")
+        ]
+
+        agent = ChatAgent()
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        mock_tool_mgr.get_toolset_generation.return_value = 1
+        mock_tool_mgr.get_status_update.return_value = "Calling demo"
+        emitter = MagicMock()
+        emitter.emit = AsyncMock()
+
+        workflow = agent._build_workflow(tool_mgr=mock_tool_mgr, emitter=emitter)
+        compiled = workflow.compile()
+        state = {
+            "messages": [
+                AIMessage(
+                    content="calling tool",
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "name": "redis_sre_123abc_demo",
+                            "args": {"metric": "used_memory"},
+                        }
+                    ],
+                )
+            ],
+            "session_id": "session-1",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "startup_system_prompt": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["tools"].ainvoke(state)
+
+        emitter.emit.assert_awaited_once_with(
+            "Calling demo",
+            "tool_call",
+            metadata={
+                "tool_name": "redis_sre_123abc_demo",
+                "tool_args": {"metric": "used_memory"},
+            },
+        )

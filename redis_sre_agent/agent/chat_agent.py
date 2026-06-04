@@ -1041,7 +1041,11 @@ class ChatAgent:
                         status_msg = self._tool_call_progress_message(
                             tool_mgr, tool_name, tool_args
                         )
-                        await emitter.emit(status_msg, "tool_call")
+                        await emitter.emit(
+                            status_msg,
+                            "tool_call",
+                            metadata={"tool_name": tool_name, "tool_args": tool_args},
+                        )
 
             with tracer.start_as_current_span("chat_tool_node"):
                 new_tool_messages = await execute_tool_calls_with_gate(

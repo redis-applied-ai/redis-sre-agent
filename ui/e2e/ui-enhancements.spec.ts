@@ -50,6 +50,8 @@ const knowledgeResult = {
 interface MockApiOptions {
   threads?: unknown[];
   threadResponses?: Record<string, unknown>;
+  taskResponses?: Record<string, unknown>;
+  feedbackResponses?: Record<string, unknown>;
   knowledgeSearchDelayMs?: number;
 }
 
@@ -79,6 +81,9 @@ async function mockApi(page: Page, options: MockApiOptions = {}) {
     },
     ...(options.threadResponses || {}),
   };
+  const taskResponses: Record<string, unknown> = options.taskResponses || {};
+  const feedbackResponses: Record<string, unknown> =
+    options.feedbackResponses || {};
   let latestTaskBody: unknown = null;
   const knowledgeSearchQueries: string[] = [];
 
@@ -120,6 +125,36 @@ async function mockApi(page: Page, options: MockApiOptions = {}) {
         return json(threadResponses[threadId]);
       }
       return json({ error: "Thread not found" }, 404);
+    }
+
+    if (
+      method === "GET" &&
+      path.startsWith("/api/v1/tasks/") &&
+      path.endsWith("/approvals")
+    ) {
+      const parts = path.split("/");
+      return json({ task_id: parts[parts.length - 2], approvals: [] });
+    }
+
+    if (
+      method === "GET" &&
+      path.startsWith("/api/v1/tasks/") &&
+      path.endsWith("/feedback")
+    ) {
+      const parts = path.split("/");
+      const taskId = parts[parts.length - 2] || "";
+      if (feedbackResponses[taskId]) {
+        return json(feedbackResponses[taskId]);
+      }
+      return json({ error: "No feedback" }, 404);
+    }
+
+    if (method === "GET" && path.startsWith("/api/v1/tasks/")) {
+      const taskId = path.split("/").pop() || "";
+      if (taskResponses[taskId]) {
+        return json(taskResponses[taskId]);
+      }
+      return json({ error: "Task not found" }, 404);
     }
 
     if (method === "GET" && path === "/api/v1/instances") {
@@ -378,6 +413,7 @@ test("chat renders Markdown in completed assistant messages", async ({
     threadResponses: {
       "thread-markdown": {
         thread_id: "thread-markdown",
+        task_id: "task-markdown",
         status: "done",
         messages: [
           {
@@ -435,6 +471,51 @@ test("chat renders Markdown in completed assistant messages", async ({
         resume_supported: false,
       },
     },
+    taskResponses: {
+      "task-markdown": {
+        task_id: "task-markdown",
+        thread_id: "thread-markdown",
+        status: "done",
+        updates: [],
+        result: null,
+        tool_calls: [
+          {
+            id: "call-1",
+            name: "redis_sre_123abc_get_metric_window",
+            args: { metric: "used_memory" },
+            result: { samples: 12 },
+          },
+          {
+            id: "call-2",
+            name: "knowledge_search",
+            args: { query: "memory pressure" },
+            result: { results_count: 1 },
+          },
+        ],
+        feedback: {
+          task_id: "task-markdown",
+          verdict: "down",
+          comment: null,
+          created_at: now,
+          updated_at: now,
+        },
+      },
+    },
+    feedbackResponses: {
+      "task-markdown": {
+        feedback: {
+          task_id: "task-markdown",
+          verdict: "down",
+          comment: null,
+          created_at: now,
+          updated_at: now,
+        },
+        task: {
+          task_id: "task-markdown",
+          status: "done",
+        },
+      },
+    },
   });
 
   await page.goto("/chat?thread=thread-markdown");
@@ -452,11 +533,29 @@ test("chat renders Markdown in completed assistant messages", async ({
   await expect(page.getByRole("table")).toBeVisible();
   await expect(
     page.getByText("Processing query with chat agent", { exact: true }),
-  ).toBeVisible();
+  ).not.toBeVisible();
   await expect(
     page.getByText("Chat agent processing your question...", { exact: true }),
-  ).toBeVisible();
+  ).not.toBeVisible();
   await expect(page.getByText("Knowledge loaded at startup")).toBeVisible();
+  const toolCallsAccordion = page.getByTestId("tool-calls-accordion");
+  await expect(toolCallsAccordion).toBeVisible();
+  await expect(toolCallsAccordion).not.toHaveAttribute("open", "");
+  await expect(toolCallsAccordion.getByTestId("tool-call-item")).toHaveCount(2);
+  await toolCallsAccordion.locator("summary").first().click();
+  await expect(toolCallsAccordion).toHaveAttribute("open", "");
+  await expect(toolCallsAccordion.getByText("get_metric_window")).toBeVisible();
+  await expect(toolCallsAccordion.getByText("knowledge_search")).toBeVisible();
+  await toolCallsAccordion
+    .getByTestId("tool-call-item")
+    .first()
+    .locator("summary")
+    .click();
+  await expect(toolCallsAccordion.getByText("used_memory")).toBeVisible();
+  await expect(page.getByTestId("feedback-down")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
   const startupAccordion = page
     .getByTestId("citation-accordion")
     .filter({ hasText: "Knowledge loaded at startup" });
@@ -472,7 +571,7 @@ test("chat renders Markdown in completed assistant messages", async ({
   await expect(startupLink).toBeVisible();
   await expect(startupLink).toHaveAttribute(
     "href",
-    /\/knowledge\/document-chunks\/doc-1\?chunk=0&version=8\.0$/,
+    /\/knowledge\/document-chunks\/doc-1\?version=8\.0#chunk-0$/,
   );
   await expect(startupAccordion.getByText("redis-docs")).not.toBeVisible();
   await expect(startupAccordion.getByText("doc-1")).not.toBeVisible();
@@ -480,23 +579,160 @@ test("chat renders Markdown in completed assistant messages", async ({
   const answerBox = await page
     .getByRole("heading", { name: "Findings" })
     .boundingBox();
-  const processingBox = await page
-    .getByText("Processing query with chat agent", { exact: true })
-    .boundingBox();
-  const chatProcessingBox = await page
-    .getByText("Chat agent processing your question...", { exact: true })
-    .boundingBox();
+  const userBox = await page.getByText("show a report").boundingBox();
   const startupBox = await page
     .getByText("Knowledge loaded at startup")
     .boundingBox();
+  const toolCallsBox = await toolCallsAccordion.boundingBox();
+  const feedbackBox = await page.getByTestId("feedback-down").boundingBox();
+  const answerMarkdown = page
+    .locator(".markdown-content.text-redis-sm")
+    .filter({ hasText: "Memory pressure is elevated" })
+    .first();
+  const answerMarkdownBox = await answerMarkdown.boundingBox();
+  const answerBubbleWidth = await answerMarkdown.evaluate(
+    (element) => element.parentElement?.getBoundingClientRect().width || 0,
+  );
 
+  expect(userBox).not.toBeNull();
   expect(answerBox).not.toBeNull();
-  expect(processingBox).not.toBeNull();
-  expect(chatProcessingBox).not.toBeNull();
   expect(startupBox).not.toBeNull();
-  expect(processingBox!.y).toBeLessThan(answerBox!.y);
-  expect(chatProcessingBox!.y).toBeLessThan(answerBox!.y);
-  expect(startupBox!.y).toBeLessThan(answerBox!.y);
+  expect(toolCallsBox).not.toBeNull();
+  expect(feedbackBox).not.toBeNull();
+  expect(answerMarkdownBox).not.toBeNull();
+  expect(userBox!.y).toBeLessThan(startupBox!.y);
+  expect(startupBox!.y).toBeLessThan(toolCallsBox!.y);
+  expect(toolCallsBox!.y).toBeLessThan(answerBox!.y);
+  expect(answerBox!.y).toBeLessThan(feedbackBox!.y);
+  expect(Math.abs(answerBubbleWidth - toolCallsBox!.width)).toBeLessThanOrEqual(
+    2,
+  );
+  expect(answerMarkdownBox!.width).toBeGreaterThan(toolCallsBox!.width - 40);
+});
+
+test("chat shows running tool calls in the standard transcript", async ({
+  page,
+}) => {
+  await mockApi(page, {
+    threads: [
+      {
+        thread_id: "thread-running",
+        subject: "Running answer",
+        created_at: now,
+        updated_at: now,
+        user_id: "sre-user-1",
+        latest_message: "Agent is working",
+        tags: [],
+        priority: 0,
+      },
+    ],
+    threadResponses: {
+      "thread-running": {
+        thread_id: "thread-running",
+        task_id: "task-running",
+        status: "in_progress",
+        messages: [
+          {
+            role: "user",
+            content: "check current ops",
+            metadata: { timestamp: now },
+          },
+          {
+            role: "assistant",
+            content: "Previous completed answer.",
+            metadata: { timestamp: now, task_id: "task-previous" },
+          },
+        ],
+        updates: [
+          {
+            timestamp: now,
+            message: "Executing tool: redis_sre_123abc_get_metric_window",
+            type: "tool_call",
+            metadata: {
+              tool_args: { metric: "instantaneous_ops_per_sec" },
+            },
+          },
+        ],
+        result: null,
+        metadata: {
+          created_at: now,
+          updated_at: now,
+          priority: 0,
+          tags: [],
+          subject: "Running answer",
+        },
+        context: {},
+        resume_supported: false,
+      },
+    },
+    taskResponses: {
+      "task-previous": {
+        task_id: "task-previous",
+        thread_id: "thread-running",
+        status: "done",
+        updates: [],
+        result: null,
+        tool_calls: [
+          {
+            id: "previous-call-1",
+            name: "redis_sre_123abc_get_memory_stats",
+            args: { scope: "previous turn" },
+            result: { samples: 3 },
+          },
+        ],
+      },
+      "task-running": {
+        task_id: "task-running",
+        thread_id: "thread-running",
+        status: "in_progress",
+        updates: [],
+        result: null,
+        tool_calls: null,
+      },
+    },
+  });
+
+  await page.goto("/chat?thread=thread-running");
+
+  await expect(
+    page
+      .getByRole("paragraph")
+      .filter({ hasText: "Previous completed answer." }),
+  ).toBeVisible();
+  await expect(page.getByText("Task is running.")).toBeVisible();
+  await expect(
+    page.getByText("Executing tool: redis_sre_123abc_get_metric_window", {
+      exact: true,
+    }),
+  ).not.toBeVisible();
+
+  const toolCallsAccordions = page.getByTestId("tool-calls-accordion");
+  await expect(toolCallsAccordions).toHaveCount(2);
+
+  const previousToolCallsAccordion = toolCallsAccordions.nth(0);
+  await expect(previousToolCallsAccordion).toBeVisible();
+  await previousToolCallsAccordion.locator("summary").first().click();
+  await expect(
+    previousToolCallsAccordion.getByText("get_memory_stats"),
+  ).toBeVisible();
+
+  const runningToolCallsAccordion = toolCallsAccordions.nth(1);
+  await expect(runningToolCallsAccordion).toBeVisible();
+  await expect(
+    runningToolCallsAccordion.getByText("1", { exact: true }),
+  ).toBeVisible();
+  await runningToolCallsAccordion.locator("summary").first().click();
+  await expect(
+    runningToolCallsAccordion.getByText("get_metric_window"),
+  ).toBeVisible();
+  await runningToolCallsAccordion
+    .getByTestId("tool-call-item")
+    .first()
+    .locator("summary")
+    .click();
+  await expect(
+    runningToolCallsAccordion.getByText("instantaneous_ops_per_sec"),
+  ).toBeVisible();
 });
 
 test("knowledge search renders fragments and opens the selected chunk", async ({
@@ -513,22 +749,20 @@ test("knowledge search renders fragments and opens the selected chunk", async ({
   await page.getByRole("link", { name: "Memory Tuning Guide" }).click();
 
   await expect(page).toHaveURL(
-    /\/knowledge\/document-chunks\/doc-1\?chunk=0&version=8\.0$/,
+    /\/knowledge\/document-chunks\/doc-1\?version=8\.0#chunk-0$/,
   );
   await expect(
-    page.getByRole("heading", { name: "Memory Tuning Guide chunk 0" }),
+    page.getByRole("heading", { name: "Memory Tuning Guide" }),
   ).toBeVisible();
   await expect(page.getByText("Document Chunks Metadata")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Knowledge Chunk", exact: true }),
+    page.getByRole("heading", { name: "Assembled Document", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chunk 0" })).toBeVisible();
   await expect(page.getByText("8.0")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Full Guide" })).toBeVisible();
   await expect(
     page.getByText("Review eviction metrics before changing production."),
-  ).not.toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "View all chunks for this document" }),
   ).toBeVisible();
 });
 
@@ -543,16 +777,15 @@ test("knowledge search chunk prefix opens a selected chunk", async ({
   await input.fill("chunk:doc-1:1");
   await input.press("Enter");
 
-  await expect(page).toHaveURL(/\/knowledge\/document-chunks\/doc-1\?chunk=1$/);
+  await expect(page).toHaveURL(/\/knowledge\/document-chunks\/doc-1#chunk-1$/);
   await expect(
-    page.getByRole("heading", { name: "Memory Tuning Guide chunk 1" }),
+    page.getByRole("heading", { name: "Memory Tuning Guide" }),
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chunk 1" })).toBeVisible();
   await expect(
     page.getByText("Review eviction metrics before changing production."),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Full Guide" }),
-  ).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "Full Guide" })).toBeVisible();
 });
 
 test("knowledge search runs after four idle characters or Enter", async ({

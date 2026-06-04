@@ -5,13 +5,17 @@ import { ConfirmDialog } from "../components/Modal";
 import MarkdownRenderer from "../components/MarkdownRenderer";
 import MemoryPanel from "../components/MemoryPanel";
 import TaskMonitor from "../components/TaskMonitor";
+import ToolCallsAccordion, {
+  normalizeToolCalls,
+} from "../components/ToolCallsAccordion";
 import sreAgentApi, {
-  ApprovalRecord,
-  FeedbackRecord,
-  FeedbackVerdict,
-  PendingApprovalSummary,
-  RedisCluster,
-  RedisInstance,
+  type ApprovalRecord,
+  type FeedbackRecord,
+  type FeedbackVerdict,
+  type PendingApprovalSummary,
+  type RedisCluster,
+  type RedisInstance,
+  type TaskToolCall,
 } from "../services/sreAgentApi";
 
 // Simple fallback components for missing UI kit components
@@ -44,6 +48,12 @@ const FeedbackButtons = ({
     initialVerdict ?? null,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isSubmitting) {
+      setVerdict(initialVerdict ?? null);
+    }
+  }, [initialVerdict, taskId]);
 
   const handleClick = useCallback(
     async (clicked: "up" | "down") => {
@@ -108,22 +118,7 @@ const FeedbackButtons = ({
   );
 };
 
-/**
- * Extract human-readable operation name from full tool name.
- * Format: {provider}_{hash}_{operation}
- * Example: re_admin_ffffa3_get_cluster_info -> get_cluster_info
- */
-const extractOperationName = (fullToolName: string): string => {
-  // Match pattern: underscore + 6 hex chars + underscore + operation
-  const match = fullToolName.match(/_([0-9a-f]{6})_(.+)$/);
-  if (match) {
-    return match[2]; // Return the operation part
-  }
-  // Fallback: return the full name
-  return fullToolName;
-};
-
-const buildKnowledgeChunkPath = (
+const buildKnowledgeDocumentPath = (
   documentHash: unknown,
   chunkIndex?: unknown,
   version?: unknown,
@@ -133,12 +128,12 @@ const buildKnowledgeChunkPath = (
 
   const query = new URLSearchParams();
   const chunk = String(chunkIndex ?? "").trim();
-  if (chunk) query.set("chunk", chunk);
   const versionText = String(version ?? "").trim();
   if (versionText) query.set("version", versionText);
 
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  return `/knowledge/document-chunks/${encodeURIComponent(docHash)}${suffix}`;
+  const anchor = chunk ? `#chunk-${encodeURIComponent(chunk)}` : "";
+  return `/knowledge/document-chunks/${encodeURIComponent(docHash)}${suffix}${anchor}`;
 };
 
 interface ChatMessage {
@@ -147,10 +142,6 @@ interface ChatMessage {
   content: string;
   timestamp: string;
   metadata?: Record<string, any>;
-  toolCall?: {
-    name: string;
-    args?: any;
-  };
 }
 
 interface CitationDisplayItem {
@@ -218,6 +209,10 @@ const Triage = () => {
   const [threadFeedback, setThreadFeedback] = useState<FeedbackRecord | null>(
     null,
   );
+  const [threadToolCalls, setThreadToolCalls] = useState<TaskToolCall[]>([]);
+  const [turnToolCallsByTaskId, setTurnToolCallsByTaskId] = useState<
+    Record<string, TaskToolCall[]>
+  >({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -229,6 +224,7 @@ const Triage = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const newConversationInputRef = useRef<HTMLTextAreaElement>(null);
+  const hydratedToolCallTaskIdsRef = useRef<Set<string>>(new Set());
 
   const isCitationMessage = (content: string) => {
     return /^\*\*(Sources for previous response|Discovered context|Startup context loaded|Knowledge loaded at startup)\*\*/.test(
@@ -273,7 +269,7 @@ const Triage = () => {
               `${documentHash || "citation"}-${chunkIndex ?? index}`,
           ),
           title,
-          to: buildKnowledgeChunkPath(
+          to: buildKnowledgeDocumentPath(
             documentHash,
             chunkIndex,
             citation.version,
@@ -301,7 +297,7 @@ const Triage = () => {
         return {
           key: `${documentHash || title}-${index}`,
           title,
-          to: buildKnowledgeChunkPath(documentHash),
+          to: buildKnowledgeDocumentPath(documentHash),
         };
       })
       .filter((item): item is CitationDisplayItem => Boolean(item));
@@ -314,6 +310,97 @@ const Triage = () => {
       /^chat agent processing your question/i,
       /^processing query\b/i,
     ].some((pattern) => pattern.test(text));
+  };
+
+  const getMessageTaskId = (message: ChatMessage) => {
+    const metadata = message.metadata || {};
+    const nestedMetadata =
+      metadata.metadata && typeof metadata.metadata === "object"
+        ? metadata.metadata
+        : {};
+    const taskId = metadata.task_id || nestedMetadata.task_id;
+    return typeof taskId === "string" && taskId ? taskId : undefined;
+  };
+
+  const rememberTurnToolCalls = (
+    taskId: string | null | undefined,
+    toolCalls: TaskToolCall[],
+  ) => {
+    setThreadToolCalls(toolCalls);
+    if (!taskId || toolCalls.length === 0) return;
+
+    hydratedToolCallTaskIdsRef.current.add(taskId);
+    setTurnToolCallsByTaskId((prev) => ({
+      ...prev,
+      [taskId]: toolCalls,
+    }));
+  };
+
+  const clearTurnToolCalls = () => {
+    hydratedToolCallTaskIdsRef.current = new Set();
+    setThreadToolCalls([]);
+    setTurnToolCallsByTaskId({});
+  };
+
+  const hydrateTranscriptToolCalls = async (
+    transcriptMessages: ChatMessage[],
+    latestTaskId: string | null | undefined,
+    latestToolCalls: TaskToolCall[],
+  ) => {
+    const taskIds = Array.from(
+      new Set(
+        transcriptMessages
+          .filter(
+            (message) =>
+              message.role === "assistant" &&
+              !isAssistantStatusContent(message.content),
+          )
+          .map(getMessageTaskId)
+          .filter((taskId): taskId is string => Boolean(taskId)),
+      ),
+    );
+    const taskIdsToFetch = taskIds.filter(
+      (taskId) =>
+        taskId !== latestTaskId &&
+        !hydratedToolCallTaskIdsRef.current.has(taskId),
+    );
+
+    if (latestTaskId && latestToolCalls.length > 0) {
+      hydratedToolCallTaskIdsRef.current.add(latestTaskId);
+    }
+
+    if (taskIdsToFetch.length === 0 && latestToolCalls.length === 0) {
+      return;
+    }
+
+    const fetchedEntries = await Promise.all(
+      taskIdsToFetch.map(async (taskId) => {
+        try {
+          const toolCalls = await sreAgentApi.getTaskToolCalls(taskId);
+          return { taskId, toolCalls };
+        } catch (err) {
+          console.error(`Failed to load tool calls for task ${taskId}:`, err);
+          return { taskId, toolCalls: [] };
+        }
+      }),
+    );
+
+    setTurnToolCallsByTaskId((prev) => {
+      const next = { ...prev };
+
+      if (latestTaskId && latestToolCalls.length > 0) {
+        next[latestTaskId] = latestToolCalls;
+      }
+
+      fetchedEntries.forEach(({ taskId, toolCalls }) => {
+        hydratedToolCallTaskIdsRef.current.add(taskId);
+        if (toolCalls.length > 0) {
+          next[taskId] = toolCalls;
+        }
+      });
+
+      return next;
+    });
   };
 
   const shouldDisplayBeforeGeneratedAnswer = (message: ChatMessage) => {
@@ -511,6 +598,10 @@ const Triage = () => {
     const poll = async () => {
       try {
         const status = await sreAgentApi.getTaskStatus(threadId);
+        rememberTurnToolCalls(
+          status.task_id,
+          normalizeToolCalls(status.tool_calls, status.updates),
+        );
 
         // Update messages from task updates
         const newMessages: ChatMessage[] = [];
@@ -612,22 +703,6 @@ const Triage = () => {
               content: update.message,
               timestamp: update.timestamp,
             });
-          } else if (updateType === "tool_call") {
-            // Show tool calls in a user-friendly way
-            const fullToolName = update.metadata?.tool_name || "Unknown Tool";
-            const toolArgs = update.metadata?.tool_args;
-            const displayName = extractOperationName(fullToolName);
-
-            newMessages.push({
-              id: `tool-${index}`,
-              role: "tool",
-              content: `Making tool call: ${displayName}`,
-              timestamp: update.timestamp,
-              toolCall: {
-                name: displayName,
-                args: toolArgs,
-              },
-            });
           }
         });
 
@@ -724,6 +799,8 @@ const Triage = () => {
     setError("");
     setShowNewConversation(true);
     setShowWebSocketMonitor(false);
+    setThreadFeedback(null);
+    clearTurnToolCalls();
     resetApprovalState();
 
     // Clear any `thread` query parameter from the URL so that the page
@@ -764,6 +841,7 @@ const Triage = () => {
 
     // Determine if thread is likely active from sidebar data to avoid initial flip
     const sidebarThread = threads.find((t) => t.id === threadId);
+    const isSameThread = activeThreadId === threadId;
     const sidebarActive = sidebarThread
       ? ["queued", "in_progress", "running"].includes(
           sidebarThread.status as any,
@@ -779,6 +857,11 @@ const Triage = () => {
     setLiveModeLocked(sidebarActive);
     setShowWebSocketMonitor(sidebarActive);
     setThreadFeedback(null);
+    if (!isSameThread) {
+      clearTurnToolCalls();
+    } else {
+      setThreadToolCalls([]);
+    }
     resetApprovalState();
 
     // On mobile only, switch to chat view
@@ -791,6 +874,11 @@ const Triage = () => {
     try {
       const status = await sreAgentApi.getTaskStatus(threadId);
       const transcript = await sreAgentApi.getTranscript(threadId);
+      const latestToolCalls = normalizeToolCalls(
+        status.tool_calls,
+        status.updates,
+      );
+      rememberTurnToolCalls(status.task_id, latestToolCalls);
 
       const newMessages: ChatMessage[] = transcript.map((m, idx) => ({
         id: `m-${idx}-${m.role}-${m.timestamp || idx}`,
@@ -801,6 +889,11 @@ const Triage = () => {
       }));
 
       setMessages(orderMessagesForDisplay(newMessages));
+      await hydrateTranscriptToolCalls(
+        newMessages,
+        status.task_id,
+        latestToolCalls,
+      );
 
       // Update message count and last message in sidebar for this thread
       setThreads((prev) =>
@@ -849,11 +942,13 @@ const Triage = () => {
       } else {
         setApprovalHistory([]);
         setThreadFeedback(null);
+        setThreadToolCalls([]);
       }
       if (!liveModeLocked) setShowWebSocketMonitor(active);
     } catch (err) {
       console.warn("Could not load thread status:", err);
       setIsThreadBusy(false);
+      setThreadToolCalls([]);
       resetApprovalState();
     }
   };
@@ -890,7 +985,69 @@ const Triage = () => {
     }
   };
 
-  const displayMessages = orderMessagesForDisplay(messages);
+  const displayMessages = orderMessagesForDisplay(messages).filter(
+    (message) =>
+      !(
+        message.role === "assistant" &&
+        isAssistantStatusContent(message.content)
+      ),
+  );
+  const displayRows = (() => {
+    const rows: Array<
+      | { kind: "message"; message: ChatMessage }
+      | { kind: "tool-calls"; id: string; toolCalls: TaskToolCall[] }
+    > = [];
+    const insertedTaskIds = new Set<string>();
+
+    displayMessages.forEach((message) => {
+      if (
+        message.role === "assistant" &&
+        !isAssistantStatusContent(message.content)
+      ) {
+        const taskId = getMessageTaskId(message);
+        const fallbackTaskId =
+          !taskId &&
+          activeTaskId &&
+          threadToolCalls.length > 0 &&
+          !insertedTaskIds.has(activeTaskId)
+            ? activeTaskId
+            : undefined;
+        const resolvedTaskId = taskId || fallbackTaskId;
+        const toolCalls = taskId
+          ? turnToolCallsByTaskId[taskId] || []
+          : fallbackTaskId
+            ? threadToolCalls
+            : [];
+        if (
+          resolvedTaskId &&
+          toolCalls.length > 0 &&
+          !insertedTaskIds.has(resolvedTaskId)
+        ) {
+          rows.push({
+            kind: "tool-calls",
+            id: `tool-calls-${resolvedTaskId}`,
+            toolCalls,
+          });
+          insertedTaskIds.add(resolvedTaskId);
+        }
+      }
+      rows.push({ kind: "message", message });
+    });
+
+    if (
+      activeTaskId &&
+      threadToolCalls.length > 0 &&
+      !insertedTaskIds.has(activeTaskId)
+    ) {
+      rows.push({
+        kind: "tool-calls",
+        id: `tool-calls-${activeTaskId}`,
+        toolCalls: threadToolCalls,
+      });
+    }
+
+    return rows;
+  })();
 
   const sendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
@@ -940,6 +1097,7 @@ const Triage = () => {
         // Update the active thread ID
         setActiveThreadId(threadId);
         setShowNewConversation(false);
+        clearTurnToolCalls();
 
         // Store the initial query for WebSocket display and show live monitor
         sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
@@ -991,6 +1149,7 @@ const Triage = () => {
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
         setLiveModeLocked(true);
+        setThreadToolCalls([]);
         resetApprovalState();
       }
 
@@ -1027,6 +1186,8 @@ const Triage = () => {
         setMessages([]);
         setError("");
         setIsPolling(false);
+        setThreadFeedback(null);
+        clearTurnToolCalls();
         resetApprovalState();
 
         // Stop polling
@@ -1352,16 +1513,38 @@ const Triage = () => {
                   return null;
                 })()}
 
-                {/* Chat Content Area: WebSocket monitor for live threads, static transcript for completed */}
+                {/* Chat Content Area */}
                 <CardContent className="flex-1 min-h-0 overflow-hidden">
-                  {showWebSocketMonitor ? (
+                  {showWebSocketMonitor && (
                     <TaskMonitor
                       threadId={activeThreadId}
+                      renderTranscript={false}
                       initialQuery={
                         sessionStorage.getItem(
                           `thread-${activeThreadId}-query`,
                         ) || undefined
                       }
+                      onSnapshot={(snapshot) => {
+                        const snapshotMessages = orderMessagesForDisplay(
+                          snapshot.messages.map((message) => ({
+                            ...message,
+                            role: message.role as ChatMessage["role"],
+                          })),
+                        );
+                        setMessages(snapshotMessages);
+                        if (snapshot.taskId) {
+                          setActiveTaskId(snapshot.taskId);
+                          rememberTurnToolCalls(
+                            snapshot.taskId,
+                            snapshot.toolCalls,
+                          );
+                        }
+                        void hydrateTranscriptToolCalls(
+                          snapshotMessages,
+                          snapshot.taskId,
+                          snapshot.toolCalls,
+                        );
+                      }}
                       onStatusChange={(status) => {
                         const active = [
                           "queued",
@@ -1407,119 +1590,128 @@ const Triage = () => {
                         setMemoryRefreshKey((k) => k + 1);
                       }}
                     />
-                  ) : (
-                    <div className="h-full min-h-0 overflow-y-auto p-4 space-y-4">
-                      {approvalBlocked && pendingApproval && (
-                        <div className="rounded-redis-md border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950">
-                          <div className="text-redis-sm font-semibold">
-                            Approval required
-                          </div>
-                          <div className="mt-1 text-redis-sm">
-                            This task is paused waiting for human approval to
-                            continue: {pendingApproval.summary}
-                          </div>
-                          <div className="mt-2 text-redis-xs text-amber-900">
-                            Requested{" "}
-                            {new Date(
-                              pendingApproval.requested_at,
-                            ).toLocaleString()}
-                            {pendingApproval.expires_at
-                              ? ` • Expires ${new Date(
-                                  pendingApproval.expires_at,
-                                ).toLocaleString()}`
-                              : ""}
-                          </div>
-                          <div className="mt-2 text-redis-xs text-amber-900">
-                            Review the pending action, optionally add a comment,
-                            then approve or reject it here to resume the task.
-                          </div>
-                          {activeTaskId && (
-                            <>
-                              {approvalHistory.length > 0 && (
-                                <div className="mt-3 rounded-redis-sm border border-amber-200 bg-white/60 p-3">
-                                  <div className="text-redis-xs font-semibold uppercase tracking-wide text-amber-900">
-                                    Approval history
-                                  </div>
-                                  <div className="mt-2 space-y-2">
-                                    {approvalHistory.map((approval) => (
-                                      <div
-                                        key={approval.approval_id}
-                                        className="text-redis-xs text-amber-950"
-                                      >
-                                        <div className="font-medium">
-                                          {approval.tool_name}
-                                        </div>
-                                        <div>
-                                          Status: {approval.status}
-                                          {approval.decision?.decision_by
-                                            ? ` • By ${approval.decision.decision_by}`
-                                            : ""}
-                                        </div>
-                                        <div>
-                                          Requested{" "}
-                                          {new Date(
-                                            approval.requested_at,
-                                          ).toLocaleString()}
-                                        </div>
-                                        {approval.decision
-                                          ?.decision_comment && (
-                                          <div>
-                                            Comment:{" "}
-                                            {approval.decision.decision_comment}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
+                  )}
+                  <div className="h-full min-h-0 overflow-y-auto p-4 space-y-4">
+                    {approvalBlocked && pendingApproval && (
+                      <div className="rounded-redis-md border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950">
+                        <div className="text-redis-sm font-semibold">
+                          Approval required
+                        </div>
+                        <div className="mt-1 text-redis-sm">
+                          This task is paused waiting for human approval to
+                          continue: {pendingApproval.summary}
+                        </div>
+                        <div className="mt-2 text-redis-xs text-amber-900">
+                          Requested{" "}
+                          {new Date(
+                            pendingApproval.requested_at,
+                          ).toLocaleString()}
+                          {pendingApproval.expires_at
+                            ? ` • Expires ${new Date(
+                                pendingApproval.expires_at,
+                              ).toLocaleString()}`
+                            : ""}
+                        </div>
+                        <div className="mt-2 text-redis-xs text-amber-900">
+                          Review the pending action, optionally add a comment,
+                          then approve or reject it here to resume the task.
+                        </div>
+                        {activeTaskId && (
+                          <>
+                            {approvalHistory.length > 0 && (
+                              <div className="mt-3 rounded-redis-sm border border-amber-200 bg-white/60 p-3">
+                                <div className="text-redis-xs font-semibold uppercase tracking-wide text-amber-900">
+                                  Approval history
                                 </div>
-                              )}
-                              <div className="mt-3 space-y-2">
-                                <label className="block text-redis-xs font-semibold uppercase tracking-wide text-amber-900">
-                                  Decision comment
-                                </label>
-                                <textarea
-                                  value={approvalComment}
-                                  onChange={(e) =>
-                                    setApprovalComment(e.target.value)
-                                  }
-                                  placeholder="Optional comment for the approval record"
-                                  className="w-full rounded-redis-sm border border-amber-300 bg-white px-3 py-2 text-redis-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400"
-                                  rows={3}
-                                  disabled={isSubmittingApproval}
-                                />
-                                <div className="flex gap-2">
-                                  <Button
-                                    variant="primary"
-                                    onClick={() =>
-                                      handleApprovalDecision("approved")
-                                    }
-                                    disabled={isSubmittingApproval}
-                                  >
-                                    {isSubmittingApproval
-                                      ? "Submitting..."
-                                      : "Approve and Resume"}
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    onClick={() =>
-                                      handleApprovalDecision("rejected")
-                                    }
-                                    disabled={isSubmittingApproval}
-                                  >
-                                    Reject
-                                  </Button>
+                                <div className="mt-2 space-y-2">
+                                  {approvalHistory.map((approval) => (
+                                    <div
+                                      key={approval.approval_id}
+                                      className="text-redis-xs text-amber-950"
+                                    >
+                                      <div className="font-medium">
+                                        {approval.tool_name}
+                                      </div>
+                                      <div>
+                                        Status: {approval.status}
+                                        {approval.decision?.decision_by
+                                          ? ` • By ${approval.decision.decision_by}`
+                                          : ""}
+                                      </div>
+                                      <div>
+                                        Requested{" "}
+                                        {new Date(
+                                          approval.requested_at,
+                                        ).toLocaleString()}
+                                      </div>
+                                      {approval.decision?.decision_comment && (
+                                        <div>
+                                          Comment:{" "}
+                                          {approval.decision.decision_comment}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
-                            </>
-                          )}
-                        </div>
-                      )}
-                      {displayMessages.length === 0 ? (
-                        <div className="text-redis-sm text-redis-dusk-04">
-                          No messages yet for this conversation.
-                        </div>
-                      ) : (
-                        displayMessages.map((msg) => (
+                            )}
+                            <div className="mt-3 space-y-2">
+                              <label className="block text-redis-xs font-semibold uppercase tracking-wide text-amber-900">
+                                Decision comment
+                              </label>
+                              <textarea
+                                value={approvalComment}
+                                onChange={(e) =>
+                                  setApprovalComment(e.target.value)
+                                }
+                                placeholder="Optional comment for the approval record"
+                                className="w-full rounded-redis-sm border border-amber-300 bg-white px-3 py-2 text-redis-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                rows={3}
+                                disabled={isSubmittingApproval}
+                              />
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="primary"
+                                  onClick={() =>
+                                    handleApprovalDecision("approved")
+                                  }
+                                  disabled={isSubmittingApproval}
+                                >
+                                  {isSubmittingApproval
+                                    ? "Submitting..."
+                                    : "Approve and Resume"}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={() =>
+                                    handleApprovalDecision("rejected")
+                                  }
+                                  disabled={isSubmittingApproval}
+                                >
+                                  Reject
+                                </Button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {displayRows.length === 0 ? (
+                      <div className="text-redis-sm text-redis-dusk-04">
+                        No messages yet for this conversation.
+                      </div>
+                    ) : (
+                      displayRows.map((row) => {
+                        if (row.kind === "tool-calls") {
+                          return (
+                            <div key={row.id} className="flex justify-start">
+                              <ToolCallsAccordion toolCalls={row.toolCalls} />
+                            </div>
+                          );
+                        }
+
+                        const msg = row.message;
+                        return (
                           <div
                             key={msg.id}
                             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
@@ -1594,7 +1786,11 @@ const Triage = () => {
                               </details>
                             ) : (
                               <div
-                                className={`max-w-[80%] rounded-redis-md px-3 py-2 break-words ${
+                                className={`${
+                                  msg.role === "assistant"
+                                    ? "w-full max-w-3xl"
+                                    : "max-w-[80%]"
+                                } rounded-redis-md px-3 py-2 break-words ${
                                   msg.role === "user"
                                     ? "bg-redis-blue-03 text-white text-redis-sm"
                                     : msg.role === "assistant"
@@ -1615,37 +1811,32 @@ const Triage = () => {
                                     {msg.content}
                                   </div>
                                 )}
-                                {msg.toolCall && (
-                                  <div className="mt-2 text-redis-xs opacity-80">
-                                    Tool: {msg.toolCall.name}
-                                  </div>
-                                )}
                               </div>
                             )}
                           </div>
-                        ))
-                      )}
-                      {!isThreadBusy &&
-                        !showWebSocketMonitor &&
-                        activeTaskId &&
-                        messages.some((m) => m.role === "assistant") && (
-                          <div className="flex justify-start pl-0">
-                            <FeedbackButtons
-                              taskId={activeTaskId}
-                              initialVerdict={threadFeedback?.verdict ?? null}
-                              onError={(msg) => setError(msg)}
-                            />
-                          </div>
-                        )}
-                      {isThreadBusy && (
-                        <div className="text-redis-xs text-redis-dusk-04">
-                          Task is running. Press Stop to cancel before sending a
-                          new message.
+                        );
+                      })
+                    )}
+                    {!isThreadBusy &&
+                      !showWebSocketMonitor &&
+                      activeTaskId &&
+                      messages.some((m) => m.role === "assistant") && (
+                        <div className="flex justify-start pl-0">
+                          <FeedbackButtons
+                            taskId={activeTaskId}
+                            initialVerdict={threadFeedback?.verdict ?? null}
+                            onError={(msg) => setError(msg)}
+                          />
                         </div>
                       )}
-                      <div ref={messagesEndRef} />
-                    </div>
-                  )}
+                    {isThreadBusy && (
+                      <div className="text-redis-xs text-redis-dusk-04">
+                        Task is running. Press Stop to cancel before sending a
+                        new message.
+                      </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
                 </CardContent>
 
                 {/* Input Area for Follow-up Messages */}

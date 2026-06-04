@@ -106,4 +106,83 @@ describe("SREAgentAPI UI enhancement calls", () => {
 
     expect(transcript[0].metadata).toEqual(citationMetadata);
   });
+
+  it("merges task trace tool calls into thread status", async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          thread_id: "thread-1",
+          task_id: "task-1",
+          status: "done",
+          messages: [],
+          updates: [],
+          result: null,
+          metadata: {
+            created_at: "2026-06-04T18:00:00Z",
+            updated_at: "2026-06-04T18:00:00Z",
+            priority: 0,
+            tags: [],
+          },
+          context: {},
+          resume_supported: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          task_id: "task-1",
+          thread_id: "thread-1",
+          status: "done",
+          tool_calls: [
+            {
+              id: "call-1",
+              name: "redis_sre_123abc_get_metric_window",
+              args: { metric: "used_memory" },
+            },
+          ],
+          feedback: null,
+        }),
+      });
+
+    const api = new SREAgentAPI("http://localhost:8080/api/v1");
+    const status = await api.getTaskStatus("thread-1");
+
+    expect(status.tool_calls).toEqual([
+      {
+        id: "call-1",
+        name: "redis_sre_123abc_get_metric_window",
+        args: { metric: "used_memory" },
+      },
+    ]);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:8080/api/v1/tasks/task-1",
+    );
+  });
+
+  it("unwraps feedback from the joined feedback view", async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        feedback: {
+          task_id: "task-1",
+          verdict: "down",
+          comment: null,
+          created_at: "2026-06-04T18:00:00Z",
+          updated_at: "2026-06-04T18:00:00Z",
+        },
+        task: {
+          task_id: "task-1",
+          status: "done",
+        },
+      }),
+    });
+
+    const api = new SREAgentAPI("http://localhost:8080/api/v1");
+    const feedback = await api.getFeedback("task-1");
+
+    expect(feedback?.verdict).toBe("down");
+    expect(feedback?.task_id).toBe("task-1");
+  });
 });
