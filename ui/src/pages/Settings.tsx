@@ -9,6 +9,7 @@ import {
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { sreAgentApi } from "../services/sreAgentApi";
+import Clusters from "./Clusters";
 import Instances from "./Instances";
 
 interface KnowledgeSettings {
@@ -358,6 +359,7 @@ const Settings = () => {
       [
         "general",
         "instances",
+        "clusters",
         "knowledge",
         "notifications",
         "security",
@@ -370,6 +372,7 @@ const Settings = () => {
   const sections = [
     { id: "general", label: "General" },
     { id: "instances", label: "Instances" },
+    { id: "clusters", label: "Clusters" },
     { id: "knowledge", label: "Knowledge" },
     { id: "notifications", label: "Notifications" },
     { id: "security", label: "Security" },
@@ -452,6 +455,8 @@ const Settings = () => {
           )}
 
           {activeSection === "instances" && <Instances />}
+
+          {activeSection === "clusters" && <Clusters />}
 
           {activeSection === "knowledge" && <KnowledgeSettingsSection />}
 

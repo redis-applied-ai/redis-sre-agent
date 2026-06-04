@@ -12,7 +12,7 @@ import {
 import {
   sreAgentApi,
   type KnowledgeStatsResponse,
-  type TaskStatusResponse,
+  type RedisCluster,
   type RedisInstance,
   type SystemHealthResponse,
 } from "../services/sreAgentApi";
@@ -36,23 +36,27 @@ const Dashboard = () => {
   // Data states
   const [conversations, setConversations] = useState<ConversationThread[]>([]);
   const [instances, setInstances] = useState<RedisInstance[]>([]);
-  const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStatsResponse | null>(
+  const [clusters, setClusters] = useState<RedisCluster[]>([]);
+  const [knowledgeStats, setKnowledgeStats] =
+    useState<KnowledgeStatsResponse | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(
     null,
   );
-  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null);
 
   const loadDashboardData = async () => {
     setError("");
 
     const threadsPromise = sreAgentApi.listThreads(undefined, 10, 0);
     const instancesPromise = sreAgentApi.listInstances();
+    const clustersPromise = sreAgentApi.listClusters({ limit: 1000 });
     const knowledgePromise = sreAgentApi.getKnowledgeStats();
     const healthPromise = sreAgentApi.getSystemHealth();
 
-    const [threadsRes, instancesRes, knowledgeRes, healthRes] =
+    const [threadsRes, instancesRes, clustersRes, knowledgeRes, healthRes] =
       await Promise.allSettled([
         threadsPromise,
         instancesPromise,
+        clustersPromise,
         knowledgePromise,
         healthPromise,
       ]);
@@ -85,6 +89,14 @@ const Dashboard = () => {
       setInstances([]);
     }
 
+    // Clusters
+    if (clustersRes.status === "fulfilled") {
+      setClusters(clustersRes.value.clusters);
+    } else {
+      console.warn("Clusters unavailable:", clustersRes.reason);
+      setClusters([]);
+    }
+
     // Knowledge
     if (knowledgeRes.status === "fulfilled") {
       setKnowledgeStats(knowledgeRes.value);
@@ -102,9 +114,13 @@ const Dashboard = () => {
     }
 
     // Surface a soft error if any failed
-    const anyFailed = [threadsRes, instancesRes, knowledgeRes, healthRes].some(
-      (r) => r.status === "rejected",
-    );
+    const anyFailed = [
+      threadsRes,
+      instancesRes,
+      clustersRes,
+      knowledgeRes,
+      healthRes,
+    ].some((r) => r.status === "rejected");
     if (anyFailed) {
       setError(
         "Some dashboard data failed to load. Functionality may be limited.",
@@ -178,6 +194,19 @@ const Dashboard = () => {
     return date.toLocaleDateString();
   };
 
+  const getClusterTypeLabel = (clusterType?: string) => {
+    switch (clusterType) {
+      case "redis_enterprise":
+        return "Redis Enterprise";
+      case "redis_cloud":
+        return "Redis Cloud";
+      case "oss_cluster":
+        return "OSS Cluster";
+      default:
+        return "Unknown";
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -200,7 +229,7 @@ const Dashboard = () => {
             SRE Dashboard
           </h1>
           <p className="text-redis-sm text-redis-dusk-04 mt-1">
-            Monitor triage tasks, knowledge base, and Redis instances.
+            Monitor chat tasks, knowledge base, Redis instances, and clusters.
           </p>
         </div>
         <div className="flex gap-2">
@@ -213,8 +242,8 @@ const Dashboard = () => {
               {isLoading ? <Loader size="sm" /> : "Refresh"}
             </Button>
           </Tooltip>
-          <Button variant="primary" onClick={() => navigate("/triage")}>
-            Start Triage
+          <Button variant="primary" onClick={() => navigate("/chat")}>
+            Start Chat
           </Button>
         </div>
       </div>
@@ -223,7 +252,7 @@ const Dashboard = () => {
       {error && <ErrorMessage message={error} title="Dashboard Error" />}
 
       {/* Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Agent Status */}
         <Card>
           <CardContent className="p-4">
@@ -290,29 +319,48 @@ const Dashboard = () => {
             </div>
           </CardContent>
         </Card>
+
+        {/* Redis Clusters */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-redis-sm text-redis-dusk-04">
+                  Redis Clusters
+                </p>
+                <p className="text-redis-2xl font-bold text-redis-dusk-01">
+                  {clusters.length}
+                </p>
+              </div>
+              <div className="text-redis-xs text-redis-dusk-04">
+                {clusters.length > 0 ? "configured" : "none"}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Recent Triage - Full Width */}
+      {/* Recent Chat - Full Width */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <h3 className="text-redis-lg font-semibold text-redis-dusk-01">
-              Recent Triage
+              Recent Chat
             </h3>
             <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate("/triage")}
+                onClick={() => navigate("/chat")}
               >
                 View All
               </Button>
               <Button
                 variant="primary"
                 size="sm"
-                onClick={() => navigate("/triage")}
+                onClick={() => navigate("/chat")}
               >
-                Triage Now
+                Chat Now
               </Button>
             </div>
           </div>
@@ -326,9 +374,9 @@ const Dashboard = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate("/triage")}
+                  onClick={() => navigate("/chat")}
                 >
-                  Start First Triage
+                  Start First Chat
                 </Button>
               </div>
             ) : (
@@ -336,7 +384,7 @@ const Dashboard = () => {
                 <div
                   key={conversation.id}
                   className="flex items-center justify-between p-3 rounded-redis-sm bg-redis-dusk-09 hover:bg-redis-dusk-08 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/triage?thread=${conversation.id}`)}
+                  onClick={() => navigate(`/chat?thread=${conversation.id}`)}
                 >
                   <div className="flex items-center gap-3">
                     <div
@@ -367,8 +415,8 @@ const Dashboard = () => {
         </CardContent>
       </Card>
 
-      {/* Bottom Section - Knowledge and Instances */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Bottom Section - Knowledge and Redis targets */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Knowledge Highlights */}
         <Card>
           <CardHeader>
@@ -533,6 +581,66 @@ const Dashboard = () => {
                       <p className="text-redis-xs text-redis-dusk-04">
                         {instance.environment} • {instance.usage}
                       </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Clusters */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <h3 className="text-redis-lg font-semibold text-redis-dusk-01">
+                Clusters
+              </h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/settings?section=clusters")}
+              >
+                View All
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {clusters.length === 0 ? (
+              <div className="text-center py-6 text-redis-dusk-04">
+                <div className="text-sm mb-3">No clusters configured</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate("/settings?section=clusters")}
+                >
+                  Add Cluster
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {clusters.slice(0, 3).map((cluster) => (
+                  <div
+                    key={cluster.id}
+                    className="p-3 rounded-redis-sm bg-redis-dusk-09"
+                  >
+                    <div className="flex items-center justify-between mb-2 gap-3">
+                      <h4 className="text-redis-sm font-medium text-redis-dusk-01 truncate">
+                        {cluster.name}
+                      </h4>
+                      <span className="text-redis-xs px-2 py-1 rounded bg-redis-dusk-06 text-white whitespace-nowrap">
+                        {getClusterTypeLabel(cluster.cluster_type)}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-redis-xs text-redis-dusk-04">
+                        {cluster.environment}
+                      </p>
+                      {cluster.description && (
+                        <p className="text-redis-xs text-redis-dusk-04 line-clamp-2">
+                          {cluster.description}
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}

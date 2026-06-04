@@ -14,7 +14,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
-    allowedHosts: ["gt43y0t0jf-andrew-brookins-1", "gt43y0t0jf-andrew-brookins-1.taila74d4.ts.net", "localhost"],
+    allowedHosts: ["gt43y0t0jf-andrew-brookins-1", "gt43y0t0jf-andrew-brookins-1.taila74d4.ts.net", "localhost", "gf2ly566kt-andrew-brookins"],
     proxy: {
       '/api': {
         target: process.env.VITE_API_URL || 'http://localhost:8080',

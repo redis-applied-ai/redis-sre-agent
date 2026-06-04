@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import ReactMarkdown from "react-markdown";
-import sreAgentApi, {
-  PendingApprovalSummary,
-} from "../services/sreAgentApi";
+import MarkdownRenderer from "./MarkdownRenderer";
+import sreAgentApi, { PendingApprovalSummary } from "../services/sreAgentApi";
 
 interface TaskUpdate {
   timestamp: string;
@@ -32,6 +30,52 @@ interface TaskMonitorProps {
     resumeSupported: boolean,
   ) => void;
 }
+
+const isAssistantStatusContent = (content: string) => {
+  const text = content.trim();
+  return [
+    /^processing query with chat agent$/i,
+    /^chat agent processing your question/i,
+    /^processing query\b/i,
+  ].some((pattern) => pattern.test(text));
+};
+
+const shouldDisplayBeforeGeneratedAnswer = (message: ChatMessage) => {
+  return (
+    message.role === "status" ||
+    (message.role === "assistant" && isAssistantStatusContent(message.content))
+  );
+};
+
+const orderMessagesForDisplay = (items: ChatMessage[]) => {
+  const generatedAnswerIndex = items.findLastIndex(
+    (message) =>
+      message.role === "assistant" &&
+      !isAssistantStatusContent(message.content),
+  );
+
+  if (generatedAnswerIndex < 0) return items;
+
+  const generatedAnswer = items[generatedAnswerIndex];
+  const beforeAnswer = items.slice(0, generatedAnswerIndex);
+  const afterAnswer = items.slice(generatedAnswerIndex + 1);
+  const lateStatusMessages = afterAnswer.filter(
+    shouldDisplayBeforeGeneratedAnswer,
+  );
+
+  if (lateStatusMessages.length === 0) return items;
+
+  const remainingAfterAnswer = afterAnswer.filter(
+    (message) => !shouldDisplayBeforeGeneratedAnswer(message),
+  );
+
+  return [
+    ...beforeAnswer,
+    ...lateStatusMessages,
+    generatedAnswer,
+    ...remainingAfterAnswer,
+  ];
+};
 
 const TaskMonitor: React.FC<TaskMonitorProps> = ({
   threadId,
@@ -159,7 +203,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       }
     }
 
-    return out;
+    return orderMessagesForDisplay(out);
   };
 
   const fetchThreadAndUpdate = async () => {
@@ -581,6 +625,8 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     }
   };
 
+  const displayMessages = orderMessagesForDisplay(messages);
+
   return (
     <div className="h-full flex flex-col">
       {/* Connection Error */}
@@ -595,7 +641,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4">
         <div className="space-y-4">
-          {messages.map((message) => (
+          {displayMessages.map((message) => (
             <div
               key={message.id}
               className={`flex ${message.role === "user" ? "justify-end" : message.role === "status" ? "justify-center" : "justify-start"}`}
@@ -610,50 +656,10 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
                 }`}
               >
                 {message.role === "assistant" ? (
-                  <div className="markdown-content text-redis-sm leading-[1.35]">
-                    <ReactMarkdown
-                      components={{
-                        // Use CSS to control spacing; avoid Tailwind margin/space-y utilities here
-                        h1: ({ children }) => <h1>{children}</h1>,
-                        h2: ({ children }) => <h2>{children}</h2>,
-                        h3: ({ children }) => <h3>{children}</h3>,
-                        p: ({ children }) => <p>{children}</p>,
-                        ul: ({ children }) => <ul>{children}</ul>,
-                        ol: ({ children }) => <ol>{children}</ol>,
-                        li: ({ children }) => <li>{children}</li>,
-                        code: ({ children, ...props }) => {
-                          const isInline =
-                            !props.className?.includes("language-");
-                          return isInline ? (
-                            <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">
-                              {children}
-                            </code>
-                          ) : (
-                            <code className="block bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap">
-                              {children}
-                            </code>
-                          );
-                        },
-                        pre: ({ children }) => (
-                          <pre className="bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap overflow-x-auto">
-                            {children}
-                          </pre>
-                        ),
-                        strong: ({ children }) => (
-                          <strong className="font-semibold text-foreground">
-                            {children}
-                          </strong>
-                        ),
-                        blockquote: ({ children }) => (
-                          <blockquote className="border-l-4 border-gray-300 pl-3 italic text-redis-sm">
-                            {children}
-                          </blockquote>
-                        ),
-                      }}
-                    >
-                      {message.content}
-                    </ReactMarkdown>
-                  </div>
+                  <MarkdownRenderer
+                    content={message.content}
+                    className="text-redis-sm"
+                  />
                 ) : message.role === "status" ? (
                   <div className="text-redis-sm">{message.content}</div>
                 ) : (

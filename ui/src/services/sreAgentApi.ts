@@ -14,6 +14,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
   content: string;
   timestamp?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface TaskUpdate {
@@ -287,6 +288,56 @@ export interface KnowledgeStatsResponse {
   storage_size_mb: number;
 }
 
+export interface KnowledgeSearchResult {
+  id?: string;
+  document_hash?: string;
+  chunk_index?: number | string | null;
+  title: string;
+  content: string;
+  source: string;
+  category: string;
+  doc_type?: string;
+  version?: string;
+  summary?: string;
+  name?: string;
+  score?: number;
+  severity?: string;
+}
+
+export interface KnowledgeDocumentChunk {
+  id?: string;
+  document_hash?: string;
+  chunk_index?: number | string | null;
+  total_chunks?: number | string | null;
+  title?: string;
+  content?: string;
+  source?: string;
+  category?: string;
+  doc_type?: string;
+  severity?: string;
+  version?: string;
+  name?: string;
+  summary?: string;
+  [key: string]: unknown;
+}
+
+export interface KnowledgeDocumentChunksResponse {
+  document_hash: string;
+  index_type?: string;
+  chunk_count?: number;
+  chunks: KnowledgeDocumentChunk[];
+  title?: string;
+  source?: string;
+  category?: string;
+  doc_type?: string;
+  name?: string;
+  summary?: string;
+  priority?: string;
+  pinned?: boolean;
+  metadata?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface SystemHealthResponse {
   status: string;
   components: {
@@ -413,7 +464,7 @@ export interface ThreadMemoryParams {
   assetClusterId?: string;
 }
 
-class SREAgentAPI {
+export class SREAgentAPI {
   private tasksBaseUrl: string;
 
   constructor(baseUrl?: string) {
@@ -618,7 +669,9 @@ class SREAgentAPI {
   }
 
   async getTaskApprovals(taskId: string): Promise<ApprovalRecord[]> {
-    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}/approvals`);
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/approvals`,
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -633,13 +686,16 @@ class SREAgentAPI {
     taskId: string,
     request: TaskResumeRequest,
   ): Promise<TaskStatusResponse> {
-    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}/resume`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/resume`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
       },
-      body: JSON.stringify(request),
-    });
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -844,6 +900,7 @@ class SREAgentAPI {
         role: msg.role,
         content: msg.content,
         timestamp: msg.metadata?.timestamp || status.metadata.updated_at,
+        metadata: msg.metadata,
       })) as ChatMessage[];
     }
 
@@ -856,6 +913,7 @@ class SREAgentAPI {
         role: msg.role,
         content: msg.content,
         timestamp: msg.timestamp || status.metadata.updated_at,
+        metadata: msg.metadata,
       })) as ChatMessage[];
     }
 
@@ -1048,7 +1106,9 @@ class SREAgentAPI {
   }
 
   // Cluster Management Methods
-  async listClusters(params?: ListClustersParams): Promise<ClusterListResponse> {
+  async listClusters(
+    params?: ListClustersParams,
+  ): Promise<ClusterListResponse> {
     const url = this.createURL(`${this.tasksBaseUrl}/clusters`);
 
     if (params) {
@@ -1349,15 +1409,10 @@ class SREAgentAPI {
     category?: string,
   ): Promise<{
     query: string;
-    results: Array<{
-      id: string;
-      title: string;
-      content: string;
-      source: string;
-      category: string;
-      score: number;
-    }>;
-    total_results: number;
+    results: KnowledgeSearchResult[];
+    total_results?: number;
+    results_count?: number;
+    formatted_output?: string;
   }> {
     const params = new URLSearchParams();
     params.append("query", query);
@@ -1372,6 +1427,38 @@ class SREAgentAPI {
     if (!response.ok) {
       throw new Error(
         `Failed to search knowledge base: ${response.statusText}`,
+      );
+    }
+    return response.json();
+  }
+
+  async getKnowledgeDocumentChunks(
+    documentHash: string,
+    params?: {
+      includeMetadata?: boolean;
+      indexType?: string;
+      version?: string;
+    },
+  ): Promise<KnowledgeDocumentChunksResponse> {
+    const query = new URLSearchParams();
+    if (params?.includeMetadata !== undefined) {
+      query.set("include_metadata", String(params.includeMetadata));
+    }
+    if (params?.indexType) {
+      query.set("index_type", params.indexType);
+    }
+    if (params?.version) {
+      query.set("version", params.version);
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const response = await fetch(
+      `${this.tasksBaseUrl}/knowledge/document-chunks/${encodeURIComponent(
+        documentHash,
+      )}${suffix}`,
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load knowledge document chunks: ${response.statusText}`,
       );
     }
     return response.json();

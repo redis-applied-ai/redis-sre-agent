@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
 import { ConfirmDialog } from "../components/Modal";
-import ReactMarkdown from "react-markdown";
+import MarkdownRenderer from "../components/MarkdownRenderer";
 import MemoryPanel from "../components/MemoryPanel";
 import TaskMonitor from "../components/TaskMonitor";
 import sreAgentApi, {
@@ -123,15 +123,40 @@ const extractOperationName = (fullToolName: string): string => {
   return fullToolName;
 };
 
+const buildKnowledgeChunkPath = (
+  documentHash: unknown,
+  chunkIndex?: unknown,
+  version?: unknown,
+) => {
+  const docHash = String(documentHash || "").trim();
+  if (!docHash) return undefined;
+
+  const query = new URLSearchParams();
+  const chunk = String(chunkIndex ?? "").trim();
+  if (chunk) query.set("chunk", chunk);
+  const versionText = String(version ?? "").trim();
+  if (versionText) query.set("version", versionText);
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return `/knowledge/document-chunks/${encodeURIComponent(docHash)}${suffix}`;
+};
+
 interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "tool" | "system";
+  role: "user" | "assistant" | "tool" | "system" | "status";
   content: string;
   timestamp: string;
+  metadata?: Record<string, any>;
   toolCall?: {
     name: string;
     args?: any;
   };
+}
+
+interface CitationDisplayItem {
+  key: string;
+  title: string;
+  to?: string;
 }
 
 interface ChatThread {
@@ -203,33 +228,132 @@ const Triage = () => {
   }, [showMemoryPanel]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const toggleCitation = (msgId: string) => {
-    setExpandedCitations((prev) => {
-      const next = new Set(prev);
-      if (next.has(msgId)) {
-        next.delete(msgId);
-      } else {
-        next.add(msgId);
-      }
-      return next;
-    });
-  };
+  const newConversationInputRef = useRef<HTMLTextAreaElement>(null);
 
   const isCitationMessage = (content: string) => {
-    return /^\*\*(Sources for previous response|Discovered context|Startup context loaded)\*\*/.test(
+    return /^\*\*(Sources for previous response|Discovered context|Startup context loaded|Knowledge loaded at startup)\*\*/.test(
       content,
     );
   };
   const citationHeading = (content: string) => {
     const match = content.match(/^\*\*([^*]+)\*\*/);
-    return match?.[1] || "Sources";
+    const heading = match?.[1] || "Sources";
+    return heading === "Startup context loaded"
+      ? "Knowledge loaded at startup"
+      : heading;
   };
   const citationBody = (content: string) =>
     content.replace(
-      /^\*\*(Sources for previous response|Discovered context|Startup context loaded)\*\*\n?/,
+      /^\*\*(Sources for previous response|Discovered context|Startup context loaded|Knowledge loaded at startup)\*\*\n?/,
       "",
     );
+
+  const getCitationItems = (message: ChatMessage): CitationDisplayItem[] => {
+    const metadata = message.metadata || {};
+    const nestedMetadata =
+      metadata.metadata && typeof metadata.metadata === "object"
+        ? metadata.metadata
+        : {};
+    const structuredCitations = Array.isArray(nestedMetadata.citations)
+      ? nestedMetadata.citations
+      : Array.isArray(metadata.citations)
+        ? metadata.citations
+        : [];
+
+    if (structuredCitations.length > 0) {
+      return structuredCitations.map((citation: Record<string, any>, index) => {
+        const title =
+          String(citation.title || citation.name || "").trim() ||
+          String(citation.document_hash || citation.id || "Untitled chunk");
+        const documentHash = citation.document_hash;
+        const chunkIndex = citation.chunk_index;
+        return {
+          key: String(
+            citation.id ||
+              `${documentHash || "citation"}-${chunkIndex ?? index}`,
+          ),
+          title,
+          to: buildKnowledgeChunkPath(
+            documentHash,
+            chunkIndex,
+            citation.version,
+          ),
+        };
+      });
+    }
+
+    return citationBody(message.content)
+      .split("\n")
+      .map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return null;
+        const quotedMatch = trimmed.match(
+          /^[•*-]\s*"([^"]+)"(?:\s*\(([^)]*)\))?(?:\s*\[hash:([^\]]+)])?/,
+        );
+        const fallbackMatch = trimmed.match(
+          /^[•*-]\s*([^\[(]+?)(?:\s*\(([^)]*)\))?(?:\s*\[hash:([^\]]+)])?$/,
+        );
+        const match = quotedMatch || fallbackMatch;
+        if (!match) return null;
+        const title = match[1]?.trim();
+        const documentHash = match[3]?.trim();
+        if (!title) return null;
+        return {
+          key: `${documentHash || title}-${index}`,
+          title,
+          to: buildKnowledgeChunkPath(documentHash),
+        };
+      })
+      .filter((item): item is CitationDisplayItem => Boolean(item));
+  };
+
+  const isAssistantStatusContent = (content: string) => {
+    const text = content.trim();
+    return [
+      /^processing query with chat agent$/i,
+      /^chat agent processing your question/i,
+      /^processing query\b/i,
+    ].some((pattern) => pattern.test(text));
+  };
+
+  const shouldDisplayBeforeGeneratedAnswer = (message: ChatMessage) => {
+    return (
+      message.role === "status" ||
+      (message.role === "system" && isCitationMessage(message.content)) ||
+      (message.role === "assistant" &&
+        isAssistantStatusContent(message.content))
+    );
+  };
+
+  const orderMessagesForDisplay = (items: ChatMessage[]) => {
+    const generatedAnswerIndex = items.findLastIndex(
+      (message) =>
+        message.role === "assistant" &&
+        !isAssistantStatusContent(message.content),
+    );
+
+    if (generatedAnswerIndex < 0) return items;
+
+    const generatedAnswer = items[generatedAnswerIndex];
+    const beforeAnswer = items.slice(0, generatedAnswerIndex);
+    const afterAnswer = items.slice(generatedAnswerIndex + 1);
+    const lateStatusMessages = afterAnswer.filter(
+      shouldDisplayBeforeGeneratedAnswer,
+    );
+
+    if (lateStatusMessages.length === 0) return items;
+
+    const remainingAfterAnswer = afterAnswer.filter(
+      (message) => !shouldDisplayBeforeGeneratedAnswer(message),
+    );
+
+    return [
+      ...beforeAnswer,
+      ...lateStatusMessages,
+      generatedAnswer,
+      ...remainingAfterAnswer,
+    ];
+  };
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
@@ -247,6 +371,12 @@ const Triage = () => {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const focusNewConversationInput = () => {
+    window.setTimeout(() => {
+      newConversationInputRef.current?.focus();
+    }, 0);
   };
 
   useEffect(() => {
@@ -520,12 +650,12 @@ const Triage = () => {
           newMessages.push({
             id: `error-${status.thread_id}`,
             role: "assistant",
-            content: `❌ Triage failed. Please try again or contact support if the issue persists.`,
+            content: `Chat failed. Please try again or contact support if the issue persists.`,
             timestamp: status.metadata.updated_at,
           });
         }
 
-        setMessages(newMessages);
+        setMessages(orderMessagesForDisplay(newMessages));
 
         // Stop polling if task is complete
         if (
@@ -622,6 +752,7 @@ const Triage = () => {
       pollingIntervalRef.current = null;
     }
     setIsPolling(false);
+    focusNewConversationInput();
   };
 
   const selectThread = async (threadId: string) => {
@@ -666,9 +797,10 @@ const Triage = () => {
         role: m.role as any,
         content: m.content,
         timestamp: m.timestamp || new Date().toISOString(),
+        metadata: m.metadata,
       }));
 
-      setMessages(newMessages);
+      setMessages(orderMessagesForDisplay(newMessages));
 
       // Update message count and last message in sidebar for this thread
       setThreads((prev) =>
@@ -683,18 +815,16 @@ const Triage = () => {
                 instanceId:
                   (status.context as any)?.instance_id || t.instanceId,
                 clusterId: (status.context as any)?.cluster_id || t.clusterId,
-                instanceName:
-                  (status.context as any)?.instance_id
-                    ? instances.find(
-                        (i) => i.id === (status.context as any)?.instance_id,
-                      )?.name || t.instanceName
-                    : t.instanceName,
-                clusterName:
-                  (status.context as any)?.cluster_id
-                    ? clusters.find(
-                        (c) => c.id === (status.context as any)?.cluster_id,
-                      )?.name || t.clusterName
-                    : t.clusterName,
+                instanceName: (status.context as any)?.instance_id
+                  ? instances.find(
+                      (i) => i.id === (status.context as any)?.instance_id,
+                    )?.name || t.instanceName
+                  : t.instanceName,
+                clusterName: (status.context as any)?.cluster_id
+                  ? clusters.find(
+                      (c) => c.id === (status.context as any)?.cluster_id,
+                    )?.name || t.clusterName
+                  : t.clusterName,
               }
             : t,
         ),
@@ -759,6 +889,8 @@ const Triage = () => {
       setIsSubmittingApproval(false);
     }
   };
+
+  const displayMessages = orderMessagesForDisplay(messages);
 
   const sendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
@@ -918,7 +1050,7 @@ const Triage = () => {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleComposerKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -933,7 +1065,7 @@ const Triage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex min-h-0 flex-1 flex-col space-y-6">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -948,7 +1080,7 @@ const Triage = () => {
           </Button>
           <div>
             <h1 className="text-redis-xl font-bold text-foreground">
-              SRE Agent Triage
+              SRE Agent Chat
             </h1>
             <p className="text-redis-sm text-redis-dusk-04 mt-1">
               {activeThreadId
@@ -964,13 +1096,13 @@ const Triage = () => {
             onClick={() => setShowMemoryPanel((v) => !v)}
             title={showMemoryPanel ? "Hide memory panel" : "Show memory panel"}
           >
-            🧠 Memory
+            Memory
           </Button>
         )}
       </div>
 
       {/* Main Content Area */}
-      <div className="flex gap-4 h-[calc(100vh-200px)]">
+      <div className="flex gap-4 min-h-0 flex-1">
         {/* Thread Sidebar - Responsive visibility */}
         <div
           className={`${showSidebar ? "flex" : "hidden"} md:flex w-full md:w-80 md:min-w-80 max-w-80 flex-col h-full`}
@@ -1019,10 +1151,7 @@ const Triage = () => {
                 </div>
               </div>
             </CardHeader>
-            <div
-              className="overflow-y-auto"
-              style={{ maxHeight: "calc(100vh - 300px)" }}
-            >
+            <div className="overflow-y-auto min-h-0 flex-1">
               <div className="space-y-1 p-0">
                 {threads
                   .filter((thread) => {
@@ -1133,13 +1262,15 @@ const Triage = () => {
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 max-w-[140px] truncate">
                             {thread.instanceName ||
                               (thread.instanceId
-                                ? instances.find((i) => i.id === thread.instanceId)
-                                    ?.name
+                                ? instances.find(
+                                    (i) => i.id === thread.instanceId,
+                                  )?.name
                                 : undefined) ||
                               thread.clusterName ||
                               (thread.clusterId
-                                ? clusters.find((c) => c.id === thread.clusterId)
-                                    ?.name
+                                ? clusters.find(
+                                    (c) => c.id === thread.clusterId,
+                                  )?.name
                                 : undefined) ||
                               "General Q&A"}
                           </span>
@@ -1222,7 +1353,7 @@ const Triage = () => {
                 })()}
 
                 {/* Chat Content Area: WebSocket monitor for live threads, static transcript for completed */}
-                <CardContent className="flex-1 overflow-hidden">
+                <CardContent className="flex-1 min-h-0 overflow-hidden">
                   {showWebSocketMonitor ? (
                     <TaskMonitor
                       threadId={activeThreadId}
@@ -1277,7 +1408,7 @@ const Triage = () => {
                       }}
                     />
                   ) : (
-                    <div className="h-full overflow-y-auto p-4 space-y-4">
+                    <div className="h-full min-h-0 overflow-y-auto p-4 space-y-4">
                       {approvalBlocked && pendingApproval && (
                         <div className="rounded-redis-md border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950">
                           <div className="text-redis-sm font-semibold">
@@ -1330,7 +1461,8 @@ const Triage = () => {
                                             approval.requested_at,
                                           ).toLocaleString()}
                                         </div>
-                                        {approval.decision?.decision_comment && (
+                                        {approval.decision
+                                          ?.decision_comment && (
                                           <div>
                                             Comment:{" "}
                                             {approval.decision.decision_comment}
@@ -1382,12 +1514,12 @@ const Triage = () => {
                           )}
                         </div>
                       )}
-                      {messages.length === 0 ? (
+                      {displayMessages.length === 0 ? (
                         <div className="text-redis-sm text-redis-dusk-04">
                           No messages yet for this conversation.
                         </div>
                       ) : (
-                        messages.map((msg) => (
+                        displayMessages.map((msg) => (
                           <div
                             key={msg.id}
                             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
@@ -1395,55 +1527,74 @@ const Triage = () => {
                             {msg.role === "system" &&
                             isCitationMessage(msg.content) ? (
                               // Citation accordion
-                              <div
-                                className="max-w-[80%] rounded-redis-md bg-redis-dusk-09 border border-redis-dusk-07 text-redis-sm"
+                              <details
+                                data-testid="citation-accordion"
+                                open={expandedCitations.has(msg.id)}
+                                onToggle={(event) => {
+                                  const isExpanded = event.currentTarget.open;
+                                  setExpandedCitations((prev) => {
+                                    const next = new Set(prev);
+                                    if (isExpanded) {
+                                      next.add(msg.id);
+                                    } else {
+                                      next.delete(msg.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className="citation-accordion w-full max-w-3xl overflow-hidden rounded-redis-sm text-redis-sm"
                                 title={new Date(msg.timestamp).toLocaleString()}
                               >
-                                <button
-                                  onClick={() => toggleCitation(msg.id)}
-                                  className="w-full px-3 py-2 flex items-center justify-between text-left text-redis-dusk-03 hover:text-redis-dusk-02 transition-colors"
-                                >
-                                  <span className="font-semibold">
-                                    📚 {citationHeading(msg.content)}
-                                  </span>
+                                <summary className="citation-accordion-summary group flex cursor-pointer items-center gap-2 px-3 py-2 text-left font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-redis-blue-03">
                                   <span
-                                    className={`transform transition-transform ${expandedCitations.has(msg.id) ? "rotate-180" : ""}`}
+                                    aria-hidden="true"
+                                    className="flex h-3 w-3 flex-shrink-0 items-center justify-center transition-colors"
                                   >
-                                    ▼
+                                    <span
+                                      className={`h-1.5 w-1.5 border-b border-r border-current transition-transform ${expandedCitations.has(msg.id) ? "translate-y-[-1px] rotate-45" : "-rotate-45"}`}
+                                    />
                                   </span>
-                                </button>
+                                  <span>{citationHeading(msg.content)}</span>
+                                </summary>
                                 {expandedCitations.has(msg.id) && (
-                                  <div className="px-3 pb-2 text-redis-dusk-04 border-t border-redis-dusk-07">
-                                    <div className="markdown-content pt-2">
-                                      <ReactMarkdown
-                                        components={{
-                                          p: ({ children }) => (
-                                            <p className="mb-1">{children}</p>
-                                          ),
-                                          ul: ({ children }) => (
-                                            <ul className="list-disc pl-4 space-y-1">
-                                              {children}
-                                            </ul>
-                                          ),
-                                          li: ({ children }) => (
-                                            <li>{children}</li>
-                                          ),
-                                          strong: ({ children }) => (
-                                            <strong className="font-semibold">
-                                              {children}
-                                            </strong>
-                                          ),
-                                        }}
-                                      >
-                                        {citationBody(msg.content)}
-                                      </ReactMarkdown>
-                                    </div>
+                                  <div className="citation-accordion-body px-3 py-2 pl-8">
+                                    {(() => {
+                                      const citationItems =
+                                        getCitationItems(msg);
+                                      if (citationItems.length === 0) {
+                                        return (
+                                          <div className="markdown-content">
+                                            <MarkdownRenderer
+                                              content={citationBody(
+                                                msg.content,
+                                              )}
+                                            />
+                                          </div>
+                                        );
+                                      }
+
+                                      return (
+                                        <ul className="citation-link-list">
+                                          {citationItems.map((item) => (
+                                            <li key={item.key}>
+                                              {item.to ? (
+                                                <Link to={item.to}>
+                                                  {item.title}
+                                                </Link>
+                                              ) : (
+                                                <span>{item.title}</span>
+                                              )}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      );
+                                    })()}
                                   </div>
                                 )}
-                              </div>
+                              </details>
                             ) : (
                               <div
-                                className={`max-w-[80%] rounded-redis-md px-3 py-2 whitespace-pre-wrap break-words ${
+                                className={`max-w-[80%] rounded-redis-md px-3 py-2 break-words ${
                                   msg.role === "user"
                                     ? "bg-redis-blue-03 text-white text-redis-sm"
                                     : msg.role === "assistant"
@@ -1455,66 +1606,12 @@ const Triage = () => {
                                 title={new Date(msg.timestamp).toLocaleString()}
                               >
                                 {msg.role === "assistant" ? (
-                                  <div className="markdown-content text-redis-sm leading-[1.35]">
-                                    <ReactMarkdown
-                                      components={{
-                                        // Use CSS to control spacing; avoid Tailwind margin/space-y utilities here
-                                        h1: ({ children }) => (
-                                          <h1>{children}</h1>
-                                        ),
-                                        h2: ({ children }) => (
-                                          <h2>{children}</h2>
-                                        ),
-                                        h3: ({ children }) => (
-                                          <h3>{children}</h3>
-                                        ),
-                                        p: ({ children }) => <p>{children}</p>,
-                                        ul: ({ children }) => (
-                                          <ul>{children}</ul>
-                                        ),
-                                        ol: ({ children }) => (
-                                          <ol>{children}</ol>
-                                        ),
-                                        li: ({ children }) => (
-                                          <li>{children}</li>
-                                        ),
-                                        code: ({ children, ...props }) => {
-                                          const isInline =
-                                            !props.className?.includes(
-                                              "language-",
-                                            );
-                                          return isInline ? (
-                                            <code className="bg-redis-dusk-08 text-foreground px-1 py-0.5 rounded text-xs font-mono">
-                                              {children}
-                                            </code>
-                                          ) : (
-                                            <code className="block bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap">
-                                              {children}
-                                            </code>
-                                          );
-                                        },
-                                        pre: ({ children }) => (
-                                          <pre className="bg-redis-dusk-08 text-foreground p-2 rounded text-[12px] font-mono whitespace-pre-wrap overflow-x-auto">
-                                            {children}
-                                          </pre>
-                                        ),
-                                        strong: ({ children }) => (
-                                          <strong className="font-semibold text-foreground">
-                                            {children}
-                                          </strong>
-                                        ),
-                                        blockquote: ({ children }) => (
-                                          <blockquote className="border-l-4 border-gray-300 pl-3 italic text-redis-sm">
-                                            {children}
-                                          </blockquote>
-                                        ),
-                                      }}
-                                    >
-                                      {msg.content}
-                                    </ReactMarkdown>
-                                  </div>
+                                  <MarkdownRenderer
+                                    content={msg.content}
+                                    className="text-redis-sm"
+                                  />
                                 ) : (
-                                  <div className="text-redis-sm">
+                                  <div className="text-redis-sm whitespace-pre-wrap">
                                     {msg.content}
                                   </div>
                                 )}
@@ -1535,9 +1632,7 @@ const Triage = () => {
                           <div className="flex justify-start pl-0">
                             <FeedbackButtons
                               taskId={activeTaskId}
-                              initialVerdict={
-                                threadFeedback?.verdict ?? null
-                              }
+                              initialVerdict={threadFeedback?.verdict ?? null}
                               onError={(msg) => setError(msg)}
                             />
                           </div>
@@ -1559,7 +1654,7 @@ const Triage = () => {
                     <textarea
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyPress={handleKeyPress}
+                      onKeyDown={handleComposerKeyDown}
                       placeholder={
                         approvalBlocked
                           ? "Approval required before this conversation can continue"
@@ -1568,7 +1663,9 @@ const Triage = () => {
                       className="flex-1 p-3 border border-redis-dusk-06 rounded-redis-sm resize-none focus:outline-none focus:ring-2 focus:ring-redis-blue-03 focus:border-transparent min-h-[60px]"
                       rows={2}
                       disabled={
-                        isLoading || agentStatus !== "available" || approvalBlocked
+                        isLoading ||
+                        agentStatus !== "available" ||
+                        approvalBlocked
                       }
                     />
                     {isThreadBusy ? (
@@ -1602,10 +1699,10 @@ const Triage = () => {
                     {approvalBlocked
                       ? "This task is paused for approval. Use the approval controls above to approve or reject it."
                       : isThreadBusy
-                      ? "Task is running — press Stop to cancel before sending a new message."
-                      : agentStatus === "available"
-                        ? "Press Enter to send, Shift+Enter for new line"
-                        : "Agent is currently unavailable"}
+                        ? "Task is running — press Stop to cancel before sending a new message."
+                        : agentStatus === "available"
+                          ? "Press Enter to send, Shift+Enter for new line"
+                          : "Agent is currently unavailable"}
                   </div>
                 </div>
               </>
@@ -1684,9 +1781,10 @@ const Triage = () => {
 
                   <div className="flex gap-2">
                     <textarea
+                      ref={newConversationInputRef}
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyPress={handleKeyPress}
+                      onKeyDown={handleComposerKeyDown}
                       placeholder="Describe your Redis issue or ask a question..."
                       className="flex-1 p-3 border border-redis-dusk-06 rounded-redis-sm resize-none focus:outline-none focus:ring-2 focus:ring-redis-blue-03 focus:border-transparent min-h-[80px] lg:min-h-[60px]"
                       rows={window.innerWidth < 1024 ? 2 : 3}

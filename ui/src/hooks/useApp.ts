@@ -17,14 +17,15 @@ export const useApp = () => {
       isActive: location.pathname === "/",
     },
     {
-      label: "Triage",
-      href: "/triage",
-      isActive: location.pathname === "/triage",
+      label: "Chat",
+      href: "/chat",
+      isActive:
+        location.pathname === "/chat" || location.pathname === "/triage",
     },
     {
       label: "Knowledge",
       href: "/knowledge",
-      isActive: location.pathname === "/knowledge",
+      isActive: location.pathname.startsWith("/knowledge"),
     },
     {
       label: "Schedules",
@@ -35,7 +36,9 @@ export const useApp = () => {
       label: "Settings",
       href: "/settings",
       isActive:
-        location.pathname === "/settings" || location.pathname === "/instances",
+        location.pathname === "/settings" ||
+        location.pathname === "/instances" ||
+        location.pathname === "/clusters",
     },
   ];
 
