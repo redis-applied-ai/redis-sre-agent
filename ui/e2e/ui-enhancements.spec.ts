@@ -86,6 +86,7 @@ async function mockApi(page: Page, options: MockApiOptions = {}) {
     options.feedbackResponses || {};
   let latestTaskBody: unknown = null;
   const knowledgeSearchQueries: string[] = [];
+  const feedbackRequestIds: string[] = [];
 
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
@@ -143,6 +144,7 @@ async function mockApi(page: Page, options: MockApiOptions = {}) {
     ) {
       const parts = path.split("/");
       const taskId = parts[parts.length - 2] || "";
+      feedbackRequestIds.push(taskId);
       if (feedbackResponses[taskId]) {
         return json(feedbackResponses[taskId]);
       }
@@ -258,6 +260,7 @@ async function mockApi(page: Page, options: MockApiOptions = {}) {
   return {
     latestTaskBody: () => latestTaskBody,
     knowledgeSearchQueries: () => [...knowledgeSearchQueries],
+    feedbackRequestIds: () => [...feedbackRequestIds],
   };
 }
 
@@ -334,10 +337,19 @@ test("chat can start a cluster-scoped agent task", async ({ page }) => {
     page.getByRole("heading", { name: "SRE Agent Chat" }),
   ).toBeVisible();
 
-  await page
-    .locator("select")
-    .filter({ hasText: "Prod RE Cluster - production" })
-    .selectOption("cluster-1");
+  const targetAccordion = page.getByTestId("chat-target-accordion");
+  await expect(targetAccordion).not.toHaveAttribute("open", "");
+  await expect(targetAccordion.locator("summary")).toContainText(
+    "General troubleshooting",
+  );
+  await expect(
+    page.getByText("No specific instance", { exact: false }),
+  ).not.toBeVisible();
+  await targetAccordion.locator("summary").click();
+  await targetAccordion.getByLabel("Target").selectOption("cluster:cluster-1");
+  await expect(targetAccordion.locator("summary")).toContainText(
+    "Prod RE Cluster",
+  );
   await page
     .getByPlaceholder("Describe your Redis issue or ask a question...")
     .fill("inspect cluster");
@@ -397,7 +409,7 @@ test("chat submits the empty-state composer with Command Enter", async ({
 test("chat renders Markdown in completed assistant messages", async ({
   page,
 }) => {
-  await mockApi(page, {
+  const api = await mockApi(page, {
     threads: [
       {
         thread_id: "thread-markdown",
@@ -426,6 +438,14 @@ test("chat renders Markdown in completed assistant messages", async ({
             content:
               "## Findings\n\n- Memory pressure is elevated\n\n| Metric | Value |\n| --- | --- |\n| used_memory | 12mb |",
             metadata: { timestamp: now },
+          },
+          {
+            role: "assistant",
+            content: "I'm running the memory diagnostics now...",
+            metadata: {
+              timestamp: now,
+              update_type: "agent_processing",
+            },
           },
           {
             role: "assistant",
@@ -523,6 +543,7 @@ test("chat renders Markdown in completed assistant messages", async ({
   await expect(
     page.getByRole("heading", { name: "SRE Agent Chat" }),
   ).toBeVisible();
+  expect(api.feedbackRequestIds()).toEqual([]);
   await expect(page.getByRole("button", { name: "Memory" })).toHaveClass(
     /redis-button-base/,
   );
@@ -536,6 +557,11 @@ test("chat renders Markdown in completed assistant messages", async ({
   ).not.toBeVisible();
   await expect(
     page.getByText("Chat agent processing your question...", { exact: true }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByText("I'm running the memory diagnostics now...", {
+      exact: true,
+    }),
   ).not.toBeVisible();
   await expect(page.getByText("Knowledge loaded at startup")).toBeVisible();
   const toolCallsAccordion = page.getByTestId("tool-calls-accordion");
@@ -610,6 +636,105 @@ test("chat renders Markdown in completed assistant messages", async ({
   expect(answerMarkdownBox!.width).toBeGreaterThan(toolCallsBox!.width - 40);
 });
 
+test("chat thread selection syncs the URL and shows session details", async ({
+  page,
+}) => {
+  const api = await mockApi(page, {
+    threads: [
+      {
+        thread_id: "thread-details",
+        subject: "Session debug details",
+        created_at: now,
+        updated_at: now,
+        user_id: "sre-user-1",
+        latest_message: "Details loaded",
+        tags: [],
+        priority: 0,
+      },
+    ],
+    threadResponses: {
+      "thread-details": {
+        thread_id: "thread-details",
+        task_id: "task-details",
+        status: "done",
+        messages: [
+          {
+            role: "user",
+            content: "show session details",
+            metadata: { timestamp: now },
+          },
+          {
+            role: "assistant",
+            content: "Session details are available.",
+            metadata: { timestamp: now, task_id: "task-details" },
+          },
+        ],
+        updates: [],
+        result: null,
+        metadata: {
+          created_at: now,
+          updated_at: now,
+          priority: 0,
+          tags: [],
+          subject: "Session debug details",
+        },
+        context: { cluster_id: "cluster-1" },
+        resume_supported: false,
+      },
+    },
+    taskResponses: {
+      "task-details": {
+        task_id: "task-details",
+        thread_id: "thread-details",
+        status: "done",
+        updates: [],
+        result: null,
+        tool_calls: [
+          {
+            id: "details-call-1",
+            name: "redis_sre_get_cluster_info",
+            args: { cluster_id: "cluster-1" },
+            result: { nodes: 3 },
+          },
+        ],
+        feedback: {
+          task_id: "task-details",
+          verdict: "up",
+          comment: null,
+          created_at: now,
+          updated_at: now,
+        },
+      },
+    },
+  });
+
+  await page.goto("/chat");
+
+  await page.getByText("Session debug details").click();
+
+  await expect(page).toHaveURL(/\/chat\?thread=thread-details$/);
+  await expect(
+    page
+      .getByRole("paragraph")
+      .filter({ hasText: "Session details are available." }),
+  ).toBeVisible();
+  expect(api.feedbackRequestIds()).toEqual([]);
+
+  await page.getByRole("button", { name: "Session Details" }).click();
+
+  const detailsPanel = page.getByTestId("session-details-panel");
+  await expect(
+    detailsPanel.getByRole("heading", { name: "Session Details" }),
+  ).toBeVisible();
+  await expect(detailsPanel.getByText("thread-details")).toBeVisible();
+  await expect(detailsPanel.getByText("task-details")).toBeVisible();
+  await expect(detailsPanel.getByText("done", { exact: true })).toBeVisible();
+  await expect(detailsPanel.getByText("Prod RE Cluster")).toBeVisible();
+  await expect(detailsPanel.getByText("Tool calls loaded")).toBeVisible();
+  await expect(detailsPanel.getByText("1", { exact: true })).toBeVisible();
+  await expect(detailsPanel.getByText("up", { exact: true })).toBeVisible();
+});
+
 test("chat shows running tool calls in the standard transcript", async ({
   page,
 }) => {
@@ -644,6 +769,11 @@ test("chat shows running tool calls in the standard transcript", async ({
           },
         ],
         updates: [
+          {
+            timestamp: now,
+            message: "I'm running redis_sre_get_metric_window now...",
+            type: "agent_processing",
+          },
           {
             timestamp: now,
             message: "Executing tool: redis_sre_123abc_get_metric_window",
@@ -702,6 +832,11 @@ test("chat shows running tool calls in the standard transcript", async ({
   await expect(page.getByText("Task is running.")).toBeVisible();
   await expect(
     page.getByText("Executing tool: redis_sre_123abc_get_metric_window", {
+      exact: true,
+    }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByText("I'm running redis_sre_get_metric_window now...", {
       exact: true,
     }),
   ).not.toBeVisible();

@@ -165,6 +165,95 @@ interface ChatThread {
   clusterName?: string;
 }
 
+interface SessionDetailsPanelProps {
+  thread: ChatThread | undefined;
+  threadId: string;
+  taskId: string | null;
+  status: string;
+  isThreadBusy: boolean;
+  pendingApproval: PendingApprovalSummary | null;
+  feedback: FeedbackRecord | null;
+  toolCallCount: number;
+  onClose: () => void;
+}
+
+const DetailRow = ({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+}) => (
+  <div className="border-b border-redis-dusk-08 py-3 last:border-b-0">
+    <dt className="text-redis-xs font-semibold uppercase tracking-wide text-redis-dusk-04">
+      {label}
+    </dt>
+    <dd className="mt-1 break-all text-redis-sm text-foreground">
+      {value == null || value === "" ? "Not available" : value}
+    </dd>
+  </div>
+);
+
+const SessionDetailsPanel = ({
+  thread,
+  threadId,
+  taskId,
+  status,
+  isThreadBusy,
+  pendingApproval,
+  feedback,
+  toolCallCount,
+  onClose,
+}: SessionDetailsPanelProps) => {
+  const targetLabel =
+    thread?.instanceName ||
+    thread?.instanceId ||
+    thread?.clusterName ||
+    thread?.clusterId ||
+    "General Q&A";
+
+  return (
+    <Card className="h-full flex flex-col" padding="none">
+      <CardHeader className="flex-shrink-0 p-4 border-b border-redis-dusk-08">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-redis-lg font-semibold text-foreground">
+              Session Details
+            </h3>
+            <p className="mt-1 text-redis-xs text-redis-dusk-04">
+              Current chat routing and task state.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 overflow-y-auto p-4">
+        <dl>
+          <DetailRow label="Thread ID" value={threadId} />
+          <DetailRow label="Task ID" value={taskId} />
+          <DetailRow label="Status" value={status || "unknown"} />
+          <DetailRow label="Busy" value={isThreadBusy ? "Yes" : "No"} />
+          <DetailRow label="Subject" value={thread?.subject || thread?.name} />
+          <DetailRow label="Target" value={targetLabel} />
+          <DetailRow label="Messages" value={thread?.messageCount ?? 0} />
+          <DetailRow label="Tool calls loaded" value={toolCallCount} />
+          <DetailRow
+            label="Feedback"
+            value={feedback?.verdict ? feedback.verdict : "None"}
+          />
+          <DetailRow
+            label="Pending approval"
+            value={pendingApproval?.status || "None"}
+          />
+          <DetailRow label="Last updated" value={thread?.timestamp} />
+        </dl>
+      </CardContent>
+    </Card>
+  );
+};
+
 const Triage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -190,6 +279,8 @@ const Triage = () => {
   const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
   const [isThreadBusy, setIsThreadBusy] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [activeThreadStatus, setActiveThreadStatus] =
+    useState<string>("unknown");
   const [pendingApproval, setPendingApproval] =
     useState<PendingApprovalSummary | null>(null);
   const [resumeSupported, setResumeSupported] = useState(false);
@@ -201,6 +292,13 @@ const Triage = () => {
   const [expandedCitations, setExpandedCitations] = useState<Set<string>>(
     new Set(),
   );
+  const [showSessionDetailsPanel, setShowSessionDetailsPanel] =
+    useState<boolean>(() => {
+      if (typeof window === "undefined") return false;
+      return (
+        window.localStorage.getItem("triage.showSessionDetailsPanel") === "1"
+      );
+    });
   const [showMemoryPanel, setShowMemoryPanel] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("triage.showMemoryPanel") === "1";
@@ -222,6 +320,14 @@ const Triage = () => {
     );
   }, [showMemoryPanel]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      "triage.showSessionDetailsPanel",
+      showSessionDetailsPanel ? "1" : "0",
+    );
+  }, [showSessionDetailsPanel]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const newConversationInputRef = useRef<HTMLTextAreaElement>(null);
   const hydratedToolCallTaskIdsRef = useRef<Set<string>>(new Set());
@@ -229,6 +335,14 @@ const Triage = () => {
   const isCitationMessage = (content: string) => {
     return /^\*\*(Sources for previous response|Discovered context|Startup context loaded|Knowledge loaded at startup)\*\*/.test(
       content,
+    );
+  };
+  const isStartupCitationMessage = (message: ChatMessage) => {
+    return (
+      message.role === "system" &&
+      /^\*\*(Startup context loaded|Knowledge loaded at startup)\*\*/.test(
+        message.content,
+      )
     );
   };
   const citationHeading = (content: string) => {
@@ -309,7 +423,55 @@ const Triage = () => {
       /^processing query with chat agent$/i,
       /^chat agent processing your question/i,
       /^processing query\b/i,
+      /^i['’]m running\b/i,
+      /^i am running\b/i,
+      /^running (?:tool|query|analysis|diagnostic)\b/i,
+      /^executing tool\b/i,
+      /^calling tool\b/i,
+      /^using tool\b/i,
+      /^tool call\b/i,
     ].some((pattern) => pattern.test(text));
+  };
+
+  const isProgressUpdateType = (updateType: string | undefined) => {
+    return Boolean(
+      updateType &&
+        [
+          "agent_reflection",
+          "agent_processing",
+          "agent_start",
+          "agent_status",
+          "status_update",
+          "tool_call",
+          "tool_result",
+          "task_queued",
+          "task_started",
+          "task_completed",
+        ].includes(updateType),
+    );
+  };
+
+  const getMessageUpdateType = (message: ChatMessage) => {
+    const metadata = message.metadata || {};
+    const nestedMetadata =
+      metadata.metadata && typeof metadata.metadata === "object"
+        ? metadata.metadata
+        : {};
+    const updateType =
+      metadata.type ||
+      metadata.update_type ||
+      nestedMetadata.type ||
+      nestedMetadata.update_type;
+    return typeof updateType === "string" ? updateType : undefined;
+  };
+
+  const shouldHideTranscriptMessage = (message: ChatMessage) => {
+    if (message.role === "status") return true;
+    if (message.role !== "assistant") return false;
+    return (
+      isAssistantStatusContent(message.content) ||
+      isProgressUpdateType(getMessageUpdateType(message))
+    );
   };
 
   const getMessageTaskId = (message: ChatMessage) => {
@@ -353,7 +515,7 @@ const Triage = () => {
           .filter(
             (message) =>
               message.role === "assistant" &&
-              !isAssistantStatusContent(message.content),
+              !shouldHideTranscriptMessage(message),
           )
           .map(getMessageTaskId)
           .filter((taskId): taskId is string => Boolean(taskId)),
@@ -466,6 +628,27 @@ const Triage = () => {
     }, 0);
   };
 
+  const syncThreadSearchParam = (
+    threadId: string | null,
+    options: { replace?: boolean } = {},
+  ) => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (threadId) {
+        params.set("thread", threadId);
+      } else {
+        params.delete("thread");
+      }
+
+      const nextSearch = params.toString() ? `?${params.toString()}` : "";
+      if (window.location.search === nextSearch) return;
+      setSearchParams(params, { replace: options.replace ?? false });
+    } catch {
+      // URL sync is helpful for reload/linking, but chat state should still
+      // work if browser history APIs are unavailable.
+    }
+  };
+
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
@@ -515,23 +698,14 @@ const Triage = () => {
   // Handle URL parameters to auto-select thread
   useEffect(() => {
     const threadParam = searchParams.get("thread");
-    if (
-      threadParam &&
-      threads.length > 0 &&
-      !activeThreadId &&
-      // If the user has explicitly chosen to start a new chat, do not
-      // auto-select a thread from the URL. This prevents the `?thread=`
-      // query param from re-activating an old conversation after clicking
-      // the "New Chat" button.
-      !showNewConversation
-    ) {
+    if (threadParam && threads.length > 0 && activeThreadId !== threadParam) {
       // Check if the thread exists in our loaded threads
       const threadExists = threads.some((thread) => thread.id === threadParam);
       if (threadExists) {
-        selectThread(threadParam);
+        selectThread(threadParam, { syncUrl: false });
       }
     }
-  }, [threads, searchParams, activeThreadId, showNewConversation]);
+  }, [threads, searchParams, activeThreadId]);
 
   // Auto-show new conversation when landing on the page or when threads exist but none selected
   useEffect(() => {
@@ -602,6 +776,7 @@ const Triage = () => {
           status.task_id,
           normalizeToolCalls(status.tool_calls, status.updates),
         );
+        setActiveThreadStatus(status.status || "unknown");
 
         // Update messages from task updates
         const newMessages: ChatMessage[] = [];
@@ -681,28 +856,6 @@ const Triage = () => {
               content: update.message,
               timestamp: update.timestamp,
             });
-          } else if (updateType === "agent_reflection") {
-            // Show agent's reasoning and analysis (only if meaningful)
-            if (
-              update.message &&
-              update.message.length > 10 &&
-              !update.message.toLowerCase().includes("completed")
-            ) {
-              newMessages.push({
-                id: `reflection-${index}`,
-                role: "assistant",
-                content: update.message,
-                timestamp: update.timestamp,
-              });
-            }
-          } else if (updateType === "safety_check") {
-            // Show safety and fact-checking steps
-            newMessages.push({
-              id: `safety-${index}`,
-              role: "system",
-              content: update.message,
-              timestamp: update.timestamp,
-            });
           }
         });
 
@@ -767,6 +920,7 @@ const Triage = () => {
 
   const handleWebSocketMonitorClose = () => {
     setShowWebSocketMonitor(false);
+    setActiveThreadStatus("unknown");
     // Reload the thread to show the completed conversation
     if (activeThreadId) {
       selectThread(activeThreadId);
@@ -778,6 +932,7 @@ const Triage = () => {
     try {
       await sreAgentApi.cancelTask(activeThreadId);
       setIsThreadBusy(false);
+      setActiveThreadStatus("cancelled");
       setLiveModeLocked(false);
       setShowWebSocketMonitor(false);
       // Refresh thread list and reload current thread transcript
@@ -800,22 +955,10 @@ const Triage = () => {
     setShowNewConversation(true);
     setShowWebSocketMonitor(false);
     setThreadFeedback(null);
+    setActiveThreadStatus("unknown");
     clearTurnToolCalls();
     resetApprovalState();
-
-    // Clear any `thread` query parameter from the URL so that the page
-    // no longer treats an existing thread as selected. Without this, the
-    // URL effect above can immediately re-select the old thread after we
-    // clear `activeThreadId`, causing the UI to stay in "continue
-    // conversation" mode instead of showing the new chat form.
-    try {
-      const params = new URLSearchParams(searchParams);
-      params.delete("thread");
-      setSearchParams(params);
-    } catch {
-      // If anything goes wrong manipulating search params, fail soft and
-      // continue showing the new chat UI based on component state.
-    }
+    syncThreadSearchParam(null);
 
     // On mobile only, switch to chat view
     if (window.innerWidth < 768) {
@@ -832,7 +975,10 @@ const Triage = () => {
     focusNewConversationInput();
   };
 
-  const selectThread = async (threadId: string) => {
+  const selectThread = async (
+    threadId: string,
+    options: { syncUrl?: boolean } = {},
+  ) => {
     // Stop any existing polling
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -850,6 +996,9 @@ const Triage = () => {
 
     // Reset state and optimistically set live view based on sidebar status
     setActiveThreadId(threadId);
+    if (options.syncUrl !== false) {
+      syncThreadSearchParam(threadId);
+    }
     setMessages([]);
     setError("");
     setIsPolling(false);
@@ -857,6 +1006,7 @@ const Triage = () => {
     setLiveModeLocked(sidebarActive);
     setShowWebSocketMonitor(sidebarActive);
     setThreadFeedback(null);
+    setActiveThreadStatus(sidebarThread?.status || "unknown");
     if (!isSameThread) {
       clearTurnToolCalls();
     } else {
@@ -928,17 +1078,13 @@ const Triage = () => {
       );
       setIsThreadBusy(active);
       setActiveTaskId(status.task_id || null);
+      setActiveThreadStatus(status.status || "unknown");
       setPendingApproval(status.pending_approval || null);
       setResumeSupported(Boolean(status.resume_supported));
       if (status.task_id) {
         const approvals = await sreAgentApi.getTaskApprovals(status.task_id);
         setApprovalHistory(approvals);
-        try {
-          const feedback = await sreAgentApi.getFeedback(status.task_id);
-          setThreadFeedback(feedback);
-        } catch {
-          setThreadFeedback(null);
-        }
+        setThreadFeedback(status.feedback ?? null);
       } else {
         setApprovalHistory([]);
         setThreadFeedback(null);
@@ -948,6 +1094,7 @@ const Triage = () => {
     } catch (err) {
       console.warn("Could not load thread status:", err);
       setIsThreadBusy(false);
+      setActiveThreadStatus("unknown");
       setThreadToolCalls([]);
       resetApprovalState();
     }
@@ -986,11 +1133,7 @@ const Triage = () => {
   };
 
   const displayMessages = orderMessagesForDisplay(messages).filter(
-    (message) =>
-      !(
-        message.role === "assistant" &&
-        isAssistantStatusContent(message.content)
-      ),
+    (message) => !shouldHideTranscriptMessage(message),
   );
   const displayRows = (() => {
     const rows: Array<
@@ -998,8 +1141,31 @@ const Triage = () => {
       | { kind: "tool-calls"; id: string; toolCalls: TaskToolCall[] }
     > = [];
     const insertedTaskIds = new Set<string>();
+    const startupCitationMessages = displayMessages.filter(
+      isStartupCitationMessage,
+    );
+    const transcriptMessages = displayMessages.filter(
+      (message) => !isStartupCitationMessage(message),
+    );
+    let insertedStartupCitations = false;
 
-    displayMessages.forEach((message) => {
+    const insertStartupCitations = () => {
+      if (insertedStartupCitations) return;
+      startupCitationMessages.forEach((message) => {
+        rows.push({ kind: "message", message });
+      });
+      insertedStartupCitations = true;
+    };
+
+    transcriptMessages.forEach((message) => {
+      if (
+        message.role === "assistant" &&
+        startupCitationMessages.length > 0 &&
+        !insertedStartupCitations
+      ) {
+        insertStartupCitations();
+      }
+
       if (
         message.role === "assistant" &&
         !isAssistantStatusContent(message.content)
@@ -1031,8 +1197,16 @@ const Triage = () => {
           insertedTaskIds.add(resolvedTaskId);
         }
       }
+
       rows.push({ kind: "message", message });
+      if (message.role === "user" && startupCitationMessages.length > 0) {
+        insertStartupCitations();
+      }
     });
+
+    if (startupCitationMessages.length > 0) {
+      insertStartupCitations();
+    }
 
     if (
       activeTaskId &&
@@ -1096,6 +1270,7 @@ const Triage = () => {
 
         // Update the active thread ID
         setActiveThreadId(threadId);
+        syncThreadSearchParam(threadId);
         setShowNewConversation(false);
         clearTurnToolCalls();
 
@@ -1103,6 +1278,7 @@ const Triage = () => {
         sessionStorage.setItem(`thread-${threadId}-query`, messageContent);
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
+        setActiveThreadStatus("queued");
         resetApprovalState();
 
         // Add new thread to the list
@@ -1149,6 +1325,7 @@ const Triage = () => {
         setShowWebSocketMonitor(true);
         setIsThreadBusy(true);
         setLiveModeLocked(true);
+        setActiveThreadStatus("queued");
         setThreadToolCalls([]);
         resetApprovalState();
       }
@@ -1187,6 +1364,8 @@ const Triage = () => {
         setError("");
         setIsPolling(false);
         setThreadFeedback(null);
+        setActiveThreadStatus("unknown");
+        syncThreadSearchParam(null);
         clearTurnToolCalls();
         resetApprovalState();
 
@@ -1225,6 +1404,103 @@ const Triage = () => {
     });
   };
 
+  const activeThread = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId)
+    : undefined;
+  const loadedToolCallCount = Array.from(
+    new Map(
+      [...Object.values(turnToolCallsByTaskId).flat(), ...threadToolCalls].map(
+        (toolCall, index) => [
+          toolCall.id || `${toolCall.name || "tool"}-${index}`,
+          toolCall,
+        ],
+      ),
+    ).values(),
+  ).length;
+  const targetSelectionValue = selectedClusterId
+    ? `cluster:${selectedClusterId}`
+    : selectedInstanceId
+      ? `instance:${selectedInstanceId}`
+      : "";
+  const targetSelectionLabel = selectedClusterId
+    ? clusters.find((cluster) => cluster.id === selectedClusterId)?.name ||
+      "Selected cluster"
+    : selectedInstanceId
+      ? instances.find((instance) => instance.id === selectedInstanceId)
+          ?.name || "Selected instance"
+      : "General troubleshooting";
+  const hasTargetOptions = instances.length > 0 || clusters.length > 0;
+  const handleTargetSelectionChange = (value: string) => {
+    if (value.startsWith("instance:")) {
+      setSelectedInstanceId(value.slice("instance:".length));
+      setSelectedClusterId("");
+      return;
+    }
+
+    if (value.startsWith("cluster:")) {
+      setSelectedClusterId(value.slice("cluster:".length));
+      setSelectedInstanceId("");
+      return;
+    }
+
+    setSelectedInstanceId("");
+    setSelectedClusterId("");
+  };
+  const targetSelectionAccordion = hasTargetOptions ? (
+    <details
+      data-testid="chat-target-accordion"
+      className="mt-3 overflow-hidden rounded-redis-sm border border-redis-dusk-08 bg-redis-dusk-09 text-redis-sm"
+    >
+      <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-left font-medium text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-redis-blue-03">
+        <span
+          aria-hidden="true"
+          className="accordion-chevron flex h-3 w-3 flex-shrink-0 items-center justify-center"
+        >
+          <span className="h-1.5 w-1.5 border-b border-r border-current" />
+        </span>
+        <span className="min-w-0 flex-1 truncate">Troubleshooting target</span>
+        <span className="max-w-[220px] truncate text-redis-xs font-normal text-redis-dusk-04">
+          {targetSelectionLabel}
+        </span>
+      </summary>
+      <div className="border-t border-redis-dusk-08 px-3 py-3">
+        <label
+          htmlFor="chat-target-select"
+          className="block text-redis-xs font-semibold uppercase tracking-wide text-redis-dusk-04"
+        >
+          Target
+        </label>
+        <select
+          id="chat-target-select"
+          value={targetSelectionValue}
+          onChange={(e) => handleTargetSelectionChange(e.target.value)}
+          className="mt-1 w-full rounded-redis-sm border border-redis-dusk-06 px-3 py-2 text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+          disabled={isLoading || agentStatus !== "available"}
+        >
+          <option value="">General troubleshooting</option>
+          {instances.length > 0 && (
+            <optgroup label="Instances">
+              {instances.map((instance) => (
+                <option key={instance.id} value={`instance:${instance.id}`}>
+                  {instance.name} - {instance.environment}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {clusters.length > 0 && (
+            <optgroup label="Clusters">
+              {clusters.map((cluster) => (
+                <option key={cluster.id} value={`cluster:${cluster.id}`}>
+                  {cluster.name} - {cluster.environment}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </select>
+      </div>
+    </details>
+  ) : null;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col space-y-6">
       {/* Page Header */}
@@ -1251,14 +1527,30 @@ const Triage = () => {
           </div>
         </div>
         {activeThreadId && (
-          <Button
-            variant={showMemoryPanel ? "primary" : "outline"}
-            size="sm"
-            onClick={() => setShowMemoryPanel((v) => !v)}
-            title={showMemoryPanel ? "Hide memory panel" : "Show memory panel"}
-          >
-            Memory
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={showSessionDetailsPanel ? "primary" : "outline"}
+              size="sm"
+              onClick={() => setShowSessionDetailsPanel((v) => !v)}
+              title={
+                showSessionDetailsPanel
+                  ? "Hide session details"
+                  : "Show session details"
+              }
+            >
+              Session Details
+            </Button>
+            <Button
+              variant={showMemoryPanel ? "primary" : "outline"}
+              size="sm"
+              onClick={() => setShowMemoryPanel((v) => !v)}
+              title={
+                showMemoryPanel ? "Hide memory panel" : "Show memory panel"
+              }
+            >
+              Memory
+            </Button>
+          </div>
         )}
       </div>
 
@@ -1462,9 +1754,6 @@ const Triage = () => {
               <>
                 {/* Chat Header with Target Info */}
                 {(() => {
-                  const activeThread = threads.find(
-                    (t) => t.id === activeThreadId,
-                  );
                   const activeInstance = activeThread?.instanceId
                     ? instances.find((i) => i.id === activeThread.instanceId)
                     : undefined;
@@ -1532,6 +1821,7 @@ const Triage = () => {
                           })),
                         );
                         setMessages(snapshotMessages);
+                        setActiveThreadStatus(snapshot.status || "unknown");
                         if (snapshot.taskId) {
                           setActiveTaskId(snapshot.taskId);
                           rememberTurnToolCalls(
@@ -1546,6 +1836,7 @@ const Triage = () => {
                         );
                       }}
                       onStatusChange={(status) => {
+                        setActiveThreadStatus(status || "unknown");
                         const active = [
                           "queued",
                           "in_progress",
@@ -1580,6 +1871,7 @@ const Triage = () => {
                       }}
                       onCompleted={async () => {
                         setIsThreadBusy(false);
+                        setActiveThreadStatus("done");
                         setLiveModeLocked(false);
                         setShowWebSocketMonitor(false);
                         resetApprovalState();
@@ -1913,63 +2205,6 @@ const Triage = () => {
 
                 {/* Input Area */}
                 <div className="p-4 border-t border-redis-dusk-08">
-                  {/* Target Selection */}
-                  {instances.length > 0 && (
-                    <div className="mb-3">
-                      <select
-                        value={selectedInstanceId}
-                        onChange={(e) => {
-                          setSelectedInstanceId(e.target.value);
-                          if (e.target.value) {
-                            setSelectedClusterId("");
-                          }
-                        }}
-                        className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-                        disabled={isLoading || agentStatus !== "available"}
-                      >
-                        <option value="">
-                          No specific instance (general troubleshooting)
-                        </option>
-                        {instances.map((instance) => (
-                          <option key={instance.id} value={instance.id}>
-                            {instance.name} - {instance.environment}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-redis-xs text-redis-dusk-04 mt-1">
-                        Select a Redis instance for troubleshooting.
-                      </p>
-                    </div>
-                  )}
-
-                  {clusters.length > 0 && (
-                    <div className="mb-3">
-                      <select
-                        value={selectedClusterId}
-                        onChange={(e) => {
-                          setSelectedClusterId(e.target.value);
-                          if (e.target.value) {
-                            setSelectedInstanceId("");
-                          }
-                        }}
-                        className="w-full px-3 py-2 border border-redis-dusk-06 rounded-redis-sm text-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-                        disabled={isLoading || agentStatus !== "available"}
-                      >
-                        <option value="">
-                          No specific cluster (general troubleshooting)
-                        </option>
-                        {clusters.map((cluster) => (
-                          <option key={cluster.id} value={cluster.id}>
-                            {cluster.name} - {cluster.environment}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-redis-xs text-redis-dusk-04 mt-1">
-                        Select a Redis cluster for cluster-scoped diagnostics.
-                      </p>
-                    </div>
-                  )}
-
                   <div className="flex gap-2">
                     <textarea
                       ref={newConversationInputRef}
@@ -1994,6 +2229,7 @@ const Triage = () => {
                       {isLoading ? <Loader size="sm" /> : "Send"}
                     </Button>
                   </div>
+                  {targetSelectionAccordion}
                   <div className="text-redis-xs text-redis-dusk-04 mt-2">
                     {agentStatus === "available"
                       ? "Press Enter to send, Shift+Enter for new line"
@@ -2006,6 +2242,26 @@ const Triage = () => {
             )}
           </Card>
         </div>
+
+        {/* Session Details Panel - right rail */}
+        {activeThreadId && showSessionDetailsPanel && (
+          <div
+            data-testid="session-details-panel"
+            className="flex w-full md:w-96 md:min-w-96 md:max-w-96 flex-col h-full"
+          >
+            <SessionDetailsPanel
+              thread={activeThread}
+              threadId={activeThreadId}
+              taskId={activeTaskId}
+              status={activeThreadStatus}
+              isThreadBusy={isThreadBusy}
+              pendingApproval={pendingApproval}
+              feedback={threadFeedback}
+              toolCallCount={loadedToolCallCount}
+              onClose={() => setShowSessionDetailsPanel(false)}
+            />
+          </div>
+        )}
 
         {/* Memory Panel - right rail */}
         {activeThreadId && showMemoryPanel && (
