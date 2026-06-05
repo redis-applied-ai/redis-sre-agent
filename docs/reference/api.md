@@ -55,6 +55,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 
 | Method | Path | Summary |
 |---|---|---|
+| `GET` | `/api/v1/knowledge/document-chunks/{document_hash}` | get_knowledge_document_chunks |
 | `POST` | `/api/v1/knowledge/ingest/document` | ingest_single_document |
 | `POST` | `/api/v1/knowledge/ingest/pipeline` | start_ingestion_pipeline |
 | `POST` | `/api/v1/knowledge/ingest/source-documents` | ingest_source_documents |
