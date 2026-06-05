@@ -1037,7 +1037,7 @@ class SREAgentAPI {
 
   // Cluster Management Methods
   async listClusters(params?: ListClustersParams): Promise<ClusterListResponse> {
-    const url = new URL(`${this.tasksBaseUrl}/clusters`);
+    const url = this.createURL(`${this.tasksBaseUrl}/clusters`);
 
     if (params) {
       if (params.environment)
@@ -1128,7 +1128,7 @@ class SREAgentAPI {
   async listInstances(
     params?: ListInstancesParams,
   ): Promise<InstanceListResponse> {
-    const url = new URL(`${this.tasksBaseUrl}/instances`);
+    const url = this.createURL(`${this.tasksBaseUrl}/instances`);
 
     if (params) {
       if (params.environment)

@@ -203,6 +203,7 @@ services:
       - ./evals:/app/evals  # Mount live eval suites and scenarios for container CLI runs
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
+      - ./redis-docs:/app/redis-docs  # Checked-out redis docs submodule
     group_add:
       - "0"  # Docker Desktop exposes the socket as root:root
     command: uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
