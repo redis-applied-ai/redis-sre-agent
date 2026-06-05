@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import ToolCallsAccordion, { normalizeToolCalls } from "./ToolCallsAccordion";
 import sreAgentApi, {
+  type CitationGroup,
   type PendingApprovalSummary,
   type TaskToolCall,
 } from "../services/sreAgentApi";
@@ -28,6 +29,7 @@ interface ChatMessage {
 interface TaskMonitorSnapshot {
   messages: ChatMessage[];
   toolCalls: TaskToolCall[];
+  citationGroups: CitationGroup[];
   taskId?: string;
   status: string;
 }
@@ -294,6 +296,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       onSnapshot?.({
         messages: chatMessages,
         toolCalls: nextToolCalls,
+        citationGroups: taskStatus.citation_groups || [],
         taskId: taskStatus.task_id,
         status: derivedStatus,
       });

@@ -10,6 +10,7 @@ import ToolCallsAccordion, {
 } from "../components/ToolCallsAccordion";
 import sreAgentApi, {
   type ApprovalRecord,
+  type CitationGroup,
   type FeedbackRecord,
   type FeedbackVerdict,
   type PendingApprovalSummary,
@@ -308,8 +309,14 @@ const Triage = () => {
     null,
   );
   const [threadToolCalls, setThreadToolCalls] = useState<TaskToolCall[]>([]);
+  const [threadCitationGroups, setThreadCitationGroups] = useState<
+    CitationGroup[]
+  >([]);
   const [turnToolCallsByTaskId, setTurnToolCallsByTaskId] = useState<
     Record<string, TaskToolCall[]>
+  >({});
+  const [turnCitationGroupsByTaskId, setTurnCitationGroupsByTaskId] = useState<
+    Record<string, CitationGroup[]>
   >({});
 
   useEffect(() => {
@@ -357,6 +364,34 @@ const Triage = () => {
       /^\*\*(Sources for previous response|Discovered context|Startup context loaded|Knowledge loaded at startup)\*\*\n?/,
       "",
     );
+  const citationGroupToMessage = (
+    group: CitationGroup,
+    taskId?: string,
+  ): ChatMessage => {
+    const label = String(group.label || "Sources").trim() || "Sources";
+    const citations = Array.isArray(group.citations) ? group.citations : [];
+
+    return {
+      role: "system",
+      content: `**${label}**`,
+      metadata: {
+        message_type: "citations",
+        citation_group: group.group_key,
+        citation_group_label: label,
+        citations,
+        count: group.count ?? citations.length,
+        synthetic: true,
+        ...(taskId ? { task_id: taskId } : {}),
+      },
+    };
+  };
+  const sortCitationMessages = (citationMessages: ChatMessage[]) =>
+    [...citationMessages].sort((a, b) => {
+      const aStartup = isStartupCitationMessage(a);
+      const bStartup = isStartupCitationMessage(b);
+      if (aStartup === bStartup) return 0;
+      return aStartup ? -1 : 1;
+    });
 
   const getCitationItems = (message: ChatMessage): CitationDisplayItem[] => {
     const metadata = message.metadata || {};
@@ -487,27 +522,38 @@ const Triage = () => {
   const rememberTurnToolCalls = (
     taskId: string | null | undefined,
     toolCalls: TaskToolCall[],
+    citationGroups: CitationGroup[] = [],
   ) => {
     setThreadToolCalls(toolCalls);
-    if (!taskId || toolCalls.length === 0) return;
+    setThreadCitationGroups(citationGroups);
+    if (!taskId || (toolCalls.length === 0 && citationGroups.length === 0)) {
+      return;
+    }
 
     hydratedToolCallTaskIdsRef.current.add(taskId);
     setTurnToolCallsByTaskId((prev) => ({
       ...prev,
       [taskId]: toolCalls,
     }));
+    setTurnCitationGroupsByTaskId((prev) => ({
+      ...prev,
+      [taskId]: citationGroups,
+    }));
   };
 
   const clearTurnToolCalls = () => {
     hydratedToolCallTaskIdsRef.current = new Set();
     setThreadToolCalls([]);
+    setThreadCitationGroups([]);
     setTurnToolCallsByTaskId({});
+    setTurnCitationGroupsByTaskId({});
   };
 
   const hydrateTranscriptToolCalls = async (
     transcriptMessages: ChatMessage[],
     latestTaskId: string | null | undefined,
     latestToolCalls: TaskToolCall[],
+    latestCitationGroups: CitationGroup[] = [],
   ) => {
     const taskIds = Array.from(
       new Set(
@@ -527,22 +573,33 @@ const Triage = () => {
         !hydratedToolCallTaskIdsRef.current.has(taskId),
     );
 
-    if (latestTaskId && latestToolCalls.length > 0) {
+    if (
+      latestTaskId &&
+      (latestToolCalls.length > 0 || latestCitationGroups.length > 0)
+    ) {
       hydratedToolCallTaskIdsRef.current.add(latestTaskId);
     }
 
-    if (taskIdsToFetch.length === 0 && latestToolCalls.length === 0) {
+    if (
+      taskIdsToFetch.length === 0 &&
+      latestToolCalls.length === 0 &&
+      latestCitationGroups.length === 0
+    ) {
       return;
     }
 
     const fetchedEntries = await Promise.all(
       taskIdsToFetch.map(async (taskId) => {
         try {
-          const toolCalls = await sreAgentApi.getTaskToolCalls(taskId);
-          return { taskId, toolCalls };
+          const evidence = await sreAgentApi.getTaskEvidence(taskId);
+          return {
+            taskId,
+            toolCalls: evidence.toolCalls,
+            citationGroups: evidence.citationGroups,
+          };
         } catch (err) {
-          console.error(`Failed to load tool calls for task ${taskId}:`, err);
-          return { taskId, toolCalls: [] };
+          console.error(`Failed to load task evidence for ${taskId}:`, err);
+          return { taskId, toolCalls: [], citationGroups: [] };
         }
       }),
     );
@@ -558,6 +615,21 @@ const Triage = () => {
         hydratedToolCallTaskIdsRef.current.add(taskId);
         if (toolCalls.length > 0) {
           next[taskId] = toolCalls;
+        }
+      });
+
+      return next;
+    });
+    setTurnCitationGroupsByTaskId((prev) => {
+      const next = { ...prev };
+
+      if (latestTaskId && latestCitationGroups.length > 0) {
+        next[latestTaskId] = latestCitationGroups;
+      }
+
+      fetchedEntries.forEach(({ taskId, citationGroups }) => {
+        if (citationGroups.length > 0) {
+          next[taskId] = citationGroups;
         }
       });
 
@@ -775,6 +847,7 @@ const Triage = () => {
         rememberTurnToolCalls(
           status.task_id,
           normalizeToolCalls(status.tool_calls, status.updates),
+          status.citation_groups || [],
         );
         setActiveThreadStatus(status.status || "unknown");
 
@@ -1028,7 +1101,11 @@ const Triage = () => {
         status.tool_calls,
         status.updates,
       );
-      rememberTurnToolCalls(status.task_id, latestToolCalls);
+      rememberTurnToolCalls(
+        status.task_id,
+        latestToolCalls,
+        status.citation_groups || [],
+      );
 
       const newMessages: ChatMessage[] = transcript.map((m, idx) => ({
         id: `m-${idx}-${m.role}-${m.timestamp || idx}`,
@@ -1037,12 +1114,20 @@ const Triage = () => {
         timestamp: m.timestamp || new Date().toISOString(),
         metadata: m.metadata,
       }));
+      const latestPreviewMessage = [...newMessages]
+        .reverse()
+        .find(
+          (message) =>
+            !shouldHideTranscriptMessage(message) &&
+            !(message.role === "system" && isCitationMessage(message.content)),
+        );
 
       setMessages(orderMessagesForDisplay(newMessages));
       await hydrateTranscriptToolCalls(
         newMessages,
         status.task_id,
         latestToolCalls,
+        status.citation_groups || [],
       );
 
       // Update message count and last message in sidebar for this thread
@@ -1052,8 +1137,7 @@ const Triage = () => {
             ? {
                 ...t,
                 messageCount: newMessages.length,
-                lastMessage:
-                  newMessages[newMessages.length - 1]?.content || t.lastMessage,
+                lastMessage: latestPreviewMessage?.content || t.lastMessage,
                 timestamp: new Date().toISOString(),
                 instanceId:
                   (status.context as any)?.instance_id || t.instanceId,
@@ -1132,8 +1216,19 @@ const Triage = () => {
     }
   };
 
+  const hasStructuredCitationGroups =
+    threadCitationGroups.length > 0 ||
+    Object.values(turnCitationGroupsByTaskId).some(
+      (groups) => groups.length > 0,
+    );
   const displayMessages = orderMessagesForDisplay(messages).filter(
-    (message) => !shouldHideTranscriptMessage(message),
+    (message) =>
+      !shouldHideTranscriptMessage(message) &&
+      !(
+        hasStructuredCitationGroups &&
+        message.role === "system" &&
+        isCitationMessage(message.content)
+      ),
   );
   const displayRows = (() => {
     const rows: Array<
@@ -1141,29 +1236,54 @@ const Triage = () => {
       | { kind: "tool-calls"; id: string; toolCalls: TaskToolCall[] }
     > = [];
     const insertedTaskIds = new Set<string>();
-    const startupCitationMessages = displayMessages.filter(
-      isStartupCitationMessage,
-    );
+    const insertedCitationTaskIds = new Set<string>();
+    const citationMessagesByTaskId: Record<string, ChatMessage[]> = {};
+    Object.entries(turnCitationGroupsByTaskId).forEach(([taskId, groups]) => {
+      if (groups.length === 0) return;
+      citationMessagesByTaskId[taskId] = sortCitationMessages(
+        groups.map((group) => citationGroupToMessage(group, taskId)),
+      );
+    });
+    if (
+      activeTaskId &&
+      threadCitationGroups.length > 0 &&
+      !citationMessagesByTaskId[activeTaskId]
+    ) {
+      citationMessagesByTaskId[activeTaskId] = sortCitationMessages(
+        threadCitationGroups.map((group) =>
+          citationGroupToMessage(group, activeTaskId),
+        ),
+      );
+    }
+    const legacyCitationMessages = hasStructuredCitationGroups
+      ? []
+      : sortCitationMessages(
+          displayMessages.filter(
+            (message) =>
+              message.role === "system" && isCitationMessage(message.content),
+          ),
+        );
     const transcriptMessages = displayMessages.filter(
-      (message) => !isStartupCitationMessage(message),
+      (message) =>
+        !(message.role === "system" && isCitationMessage(message.content)),
     );
-    let insertedStartupCitations = false;
+    let insertedLegacyCitations = false;
 
-    const insertStartupCitations = () => {
-      if (insertedStartupCitations) return;
-      startupCitationMessages.forEach((message) => {
+    const insertLegacyCitations = () => {
+      if (insertedLegacyCitations) return;
+      legacyCitationMessages.forEach((message) => {
         rows.push({ kind: "message", message });
       });
-      insertedStartupCitations = true;
+      insertedLegacyCitations = true;
     };
 
     transcriptMessages.forEach((message) => {
       if (
         message.role === "assistant" &&
-        startupCitationMessages.length > 0 &&
-        !insertedStartupCitations
+        legacyCitationMessages.length > 0 &&
+        !insertedLegacyCitations
       ) {
-        insertStartupCitations();
+        insertLegacyCitations();
       }
 
       if (
@@ -1174,11 +1294,24 @@ const Triage = () => {
         const fallbackTaskId =
           !taskId &&
           activeTaskId &&
-          threadToolCalls.length > 0 &&
+          (threadToolCalls.length > 0 || threadCitationGroups.length > 0) &&
           !insertedTaskIds.has(activeTaskId)
             ? activeTaskId
             : undefined;
         const resolvedTaskId = taskId || fallbackTaskId;
+        const citationMessages = resolvedTaskId
+          ? citationMessagesByTaskId[resolvedTaskId] || []
+          : [];
+        if (
+          resolvedTaskId &&
+          citationMessages.length > 0 &&
+          !insertedCitationTaskIds.has(resolvedTaskId)
+        ) {
+          citationMessages.forEach((citationMessage) => {
+            rows.push({ kind: "message", message: citationMessage });
+          });
+          insertedCitationTaskIds.add(resolvedTaskId);
+        }
         const toolCalls = taskId
           ? turnToolCallsByTaskId[taskId] || []
           : fallbackTaskId
@@ -1199,13 +1332,24 @@ const Triage = () => {
       }
 
       rows.push({ kind: "message", message });
-      if (message.role === "user" && startupCitationMessages.length > 0) {
-        insertStartupCitations();
+      if (message.role === "user" && legacyCitationMessages.length > 0) {
+        insertLegacyCitations();
       }
     });
 
-    if (startupCitationMessages.length > 0) {
-      insertStartupCitations();
+    if (legacyCitationMessages.length > 0) {
+      insertLegacyCitations();
+    }
+
+    if (
+      activeTaskId &&
+      threadCitationGroups.length > 0 &&
+      !insertedCitationTaskIds.has(activeTaskId)
+    ) {
+      const citationMessages = citationMessagesByTaskId[activeTaskId] || [];
+      citationMessages.forEach((citationMessage) => {
+        rows.push({ kind: "message", message: citationMessage });
+      });
     }
 
     if (
@@ -1827,12 +1971,14 @@ const Triage = () => {
                           rememberTurnToolCalls(
                             snapshot.taskId,
                             snapshot.toolCalls,
+                            snapshot.citationGroups,
                           );
                         }
                         void hydrateTranscriptToolCalls(
                           snapshotMessages,
                           snapshot.taskId,
                           snapshot.toolCalls,
+                          snapshot.citationGroups,
                         );
                       }}
                       onStatusChange={(status) => {

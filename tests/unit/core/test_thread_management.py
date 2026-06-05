@@ -547,8 +547,8 @@ class TestProcessAgentTurn:
             mock_task_manager.set_task_error.assert_called()
 
     @pytest.mark.asyncio
-    async def test_process_agent_turn_appends_citation_message_when_search_results_exist(self):
-        """Test that citation system message is appended when search_results exist."""
+    async def test_process_agent_turn_keeps_citations_structured(self):
+        """Test that citations stay out of the transcript and in task result metadata."""
         with (
             patch("redis_sre_agent.core.docket_tasks.get_redis_client") as mock_get_redis,
             patch("redis_sre_agent.core.docket_tasks.ThreadManager") as mock_manager_class,
@@ -559,6 +559,7 @@ class TestProcessAgentTurn:
             ) as mock_get_knowledge_agent,
             patch("redis_sre_agent.core.docket_tasks.route_to_appropriate_agent") as mock_route,
             patch("redis_sre_agent.core.docket_tasks.QAManager") as mock_qa_manager_class,
+            patch("redis_sre_agent.core.docket_tasks.TaskManager") as mock_task_manager_class,
         ):
             # Mock Redis client
             mock_redis = AsyncMock()
@@ -578,6 +579,28 @@ class TestProcessAgentTurn:
             # Mock QAManager
             mock_qa = AsyncMock()
             mock_qa_manager_class.return_value = mock_qa
+
+            mock_task_manager = AsyncMock()
+            mock_task_manager.get_task_state.return_value = SimpleNamespace(
+                status=TaskStatus.IN_PROGRESS,
+                updates=[
+                    SimpleNamespace(
+                        update_type="agent_processing",
+                        message="Processing query with chat agent",
+                        timestamp="2026-06-05T00:00:00Z",
+                        metadata={},
+                    ),
+                    SimpleNamespace(
+                        update_type="agent_reflection",
+                        message="I'm running the memory diagnostics now...",
+                        timestamp="2026-06-05T00:00:01Z",
+                        metadata={},
+                    ),
+                ],
+                pending_approval=None,
+                resume_supported=False,
+            )
+            mock_task_manager_class.return_value = mock_task_manager
 
             # Mock routing to use Redis-focused agent (not knowledge-only)
             from redis_sre_agent.agent.router import AgentType
@@ -621,24 +644,25 @@ class TestProcessAgentTurn:
             mock_manager.get_thread.return_value = test_thread
 
             # Execute the task
-            await process_agent_turn(thread_id="test_thread", message="Test message")
+            result = await process_agent_turn(thread_id="test_thread", message="Test message")
 
             # Verify that _save_thread_state was called
             mock_manager._save_thread_state.assert_called()
 
-            # Check the messages on the thread object - should have user, assistant, and system
+            # Check the messages on the thread object - should have user and assistant only.
             roles = [msg.role for msg in test_thread.messages]
             assert "user" in roles
             assert "assistant" in roles
-            assert "system" in roles
+            assert "system" not in roles
+            assert all(
+                "Processing query" not in msg.content and "memory diagnostics" not in msg.content
+                for msg in test_thread.messages
+            )
 
-            # Find the system message and verify it contains citation info
-            system_msg = next(msg for msg in test_thread.messages if msg.role == "system")
-            assert "Discovered context" in system_msg.content
-            assert "Redis Memory Guide" in system_msg.content
-            assert "abc123def456" in system_msg.content
-            assert system_msg.metadata is not None
-            assert system_msg.metadata["metadata"]["citation_group"] == "discovered_context"
+            citation_groups = result["citation_groups"]
+            assert citation_groups[0]["group_key"] == "discovered_context"
+            assert citation_groups[0]["citations"][0]["title"] == "Redis Memory Guide"
+            assert citation_groups[0]["citations"][0]["document_hash"] == "abc123def456"
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_no_citation_message_when_no_search_results(self):

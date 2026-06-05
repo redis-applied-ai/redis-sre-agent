@@ -517,6 +517,11 @@ async def get_task_by_id(*, task_id: str, redis_client=None) -> Dict[str, Any]:
     }
 
     tool_calls = await task_manager.get_task_tool_calls(task)
+    from redis_sre_agent.core.citation_message import (
+        extract_citation_groups_from_task_result,
+    )
+
+    citation_groups = extract_citation_groups_from_task_result(task.result)
 
     return {
         "task_id": task.task_id,
@@ -525,6 +530,7 @@ async def get_task_by_id(*, task_id: str, redis_client=None) -> Dict[str, Any]:
         "updates": updates,
         "result": task.result,
         "tool_calls": tool_calls,
+        "citation_groups": citation_groups,
         "error_message": task.error_message,
         "pending_approval": task.pending_approval.model_dump(mode="json")
         if task.pending_approval

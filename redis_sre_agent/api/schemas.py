@@ -109,6 +109,7 @@ class TaskResponse(BaseModel):
     updates: List[Dict[str, Any]] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    citation_groups: List[Dict[str, Any]] = Field(default_factory=list)
     error_message: Optional[str] = None
     pending_approval: Optional[PendingApprovalSummary] = None
     resume_supported: bool = False
@@ -179,6 +180,7 @@ class ThreadResponse(BaseModel):
     # Task-level fields for real-time updates
     updates: List[Dict[str, Any]] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
+    citation_groups: List[Dict[str, Any]] = Field(default_factory=list)
     error_message: Optional[str] = None
     status: Optional[str] = None
     pending_approval: Optional[PendingApprovalSummary] = None

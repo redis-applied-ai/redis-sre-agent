@@ -158,7 +158,16 @@ class TestThreadsAPI:
 
         class TaskState:
             updates = []
-            result = None
+            result = {
+                "citation_groups": [
+                    {
+                        "group_key": "startup_context_loaded",
+                        "label": "Startup context loaded",
+                        "citations": [{"title": "Pinned Runbook"}],
+                        "count": 1,
+                    }
+                ]
+            }
             error_message = None
             status = "awaiting_approval"
             pending_approval = pending
@@ -190,6 +199,8 @@ class TestThreadsAPI:
         assert data["pending_approval"]["approval_id"] == "approval-1"
         assert data["task_id"] == "task-1"
         assert data["resume_supported"] is True
+        assert data["citation_groups"][0]["group_key"] == "startup_context_loaded"
+        assert data["citation_groups"][0]["citations"][0]["title"] == "Pinned Runbook"
 
     def test_update_thread_not_found(self, client):
         """PATCH /api/v1/threads/{id} returns 404 when no state."""

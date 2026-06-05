@@ -16,10 +16,6 @@ from redis_sre_agent.agent.chat_agent import get_chat_agent
 from redis_sre_agent.agent.langgraph_agent import get_sre_agent
 from redis_sre_agent.agent.router import AgentType, route_to_appropriate_agent
 from redis_sre_agent.cli.logging_utils import log_cli_exception
-from redis_sre_agent.core.citation_message import (
-    build_citation_message_payloads,
-    should_include_citations,
-)
 from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.instances import get_instance_by_id
@@ -241,9 +237,8 @@ def query(
                 conversation_history=conversation_history if conversation_history else None,
             )
 
-            # Extract response text and search results from AgentResponse
+            # Extract response text from AgentResponse
             response_text = agent_response.response
-            search_results = agent_response.search_results
 
             assistant_message_id = str(ULID())
 
@@ -264,17 +259,6 @@ def query(
                     "metadata": {"message_id": assistant_message_id},
                 },
             ]
-
-            # Add citation system message if there are search results
-            if should_include_citations(search_results):
-                for citation_msg in build_citation_message_payloads(search_results):
-                    messages_to_save.append(
-                        {
-                            "role": "system",
-                            "content": citation_msg["content"],
-                            "metadata": citation_msg["metadata"],
-                        }
-                    )
 
             # Save messages to thread
             await thread_manager.append_messages(active_thread_id, messages_to_save)

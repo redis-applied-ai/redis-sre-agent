@@ -457,26 +457,6 @@ test("chat renders Markdown in completed assistant messages", async ({
             content: "Chat agent processing your question...",
             metadata: { timestamp: now },
           },
-          {
-            role: "system",
-            content:
-              '**Startup context loaded**\n\n• "Memory Tuning Guide" (redis-docs) [hash:doc-1]',
-            metadata: {
-              timestamp: now,
-              metadata: {
-                message_type: "citations",
-                citations: [
-                  {
-                    id: "sre_knowledge:doc-1:chunk:0",
-                    title: "Memory Tuning Guide",
-                    document_hash: "doc-1",
-                    chunk_index: 0,
-                    version: "8.0",
-                  },
-                ],
-              },
-            },
-          },
         ],
         updates: [],
         result: null,
@@ -510,6 +490,22 @@ test("chat renders Markdown in completed assistant messages", async ({
             name: "knowledge_search",
             args: { query: "memory pressure" },
             result: { results_count: 1 },
+          },
+        ],
+        citation_groups: [
+          {
+            group_key: "startup_context_loaded",
+            label: "Startup context loaded",
+            count: 1,
+            citations: [
+              {
+                id: "sre_knowledge:doc-1:chunk:0",
+                title: "Memory Tuning Guide",
+                document_hash: "doc-1",
+                chunk_index: 0,
+                version: "8.0",
+              },
+            ],
           },
         ],
         feedback: {

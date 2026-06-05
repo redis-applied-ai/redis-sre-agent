@@ -118,6 +118,7 @@ describe("SREAgentAPI UI enhancement calls", () => {
           messages: [],
           updates: [],
           result: null,
+          citation_groups: [],
           metadata: {
             created_at: "2026-06-04T18:00:00Z",
             updated_at: "2026-06-04T18:00:00Z",
@@ -141,6 +142,14 @@ describe("SREAgentAPI UI enhancement calls", () => {
               args: { metric: "used_memory" },
             },
           ],
+          citation_groups: [
+            {
+              group_key: "startup_context_loaded",
+              label: "Startup context loaded",
+              citations: [{ title: "Memory Tuning Guide" }],
+              count: 1,
+            },
+          ],
           feedback: null,
         }),
       });
@@ -153,6 +162,14 @@ describe("SREAgentAPI UI enhancement calls", () => {
         id: "call-1",
         name: "redis_sre_123abc_get_metric_window",
         args: { metric: "used_memory" },
+      },
+    ]);
+    expect(status.citation_groups).toEqual([
+      {
+        group_key: "startup_context_loaded",
+        label: "Startup context loaded",
+        citations: [{ title: "Memory Tuning Guide" }],
+        count: 1,
       },
     ]);
     expect(fetch).toHaveBeenNthCalledWith(

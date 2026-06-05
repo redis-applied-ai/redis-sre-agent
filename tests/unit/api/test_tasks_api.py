@@ -137,6 +137,46 @@ class TestTasksAPI:
         assert data["created_at"] == "2024-01-01T00:00:00Z"
         assert data["updated_at"] == "2024-01-01T00:01:00Z"
         assert data["tool_calls"] is None
+        assert data["citation_groups"] == []
+
+    def test_get_task_includes_structured_citation_groups(self, client):
+        """GET /api/v1/tasks/{task_id} exposes citation groups from task result."""
+
+        class Metadata:
+            subject = "Test subject"
+            created_at = "2024-01-01T00:00:00Z"
+            updated_at = "2024-01-01T00:01:00Z"
+
+        class S:
+            task_id = "t1"
+            thread_id = "th1"
+            status = TaskStatus.DONE
+            updates = []
+            result = {
+                "response": {
+                    "search_results": [
+                        {
+                            "title": "Pinned Runbook",
+                            "source": "file:///tmp/pinned.md",
+                            "document_hash": "pinned123",
+                            "retrieval_kind": "pinned_context",
+                        }
+                    ]
+                }
+            }
+            error_message = None
+            metadata = Metadata()
+
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=S())
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=[])
+        with patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm):
+            resp = client.get("/api/v1/tasks/t1")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["citation_groups"][0]["group_key"] == "startup_context_loaded"
+        assert data["citation_groups"][0]["citations"][0]["title"] == "Pinned Runbook"
 
     def test_get_task_done_includes_tool_calls(self, client):
         """GET /api/v1/tasks/{task_id} returns tool_calls for completed tasks."""

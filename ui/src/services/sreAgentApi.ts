@@ -37,6 +37,13 @@ export interface TaskToolCall {
   [key: string]: any;
 }
 
+export interface CitationGroup {
+  group_key?: string;
+  label?: string;
+  count?: number;
+  citations: Array<Record<string, any>>;
+}
+
 export interface PendingApprovalSummary {
   approval_id: string;
   interrupt_id: string;
@@ -95,6 +102,7 @@ export interface TaskStatusResponse {
   updates: TaskUpdate[];
   result?: Record<string, any>;
   tool_calls?: TaskToolCall[];
+  citation_groups: CitationGroup[];
   error_message?: string;
   pending_approval?: PendingApprovalSummary | null;
   resume_supported: boolean;
@@ -558,8 +566,23 @@ export class SREAgentAPI {
   }
 
   async getTaskToolCalls(taskId: string): Promise<TaskToolCall[]> {
+    const evidence = await this.getTaskEvidence(taskId);
+    return evidence.toolCalls;
+  }
+
+  async getTaskEvidence(taskId: string): Promise<{
+    toolCalls: TaskToolCall[];
+    citationGroups: CitationGroup[];
+  }> {
     const taskDetail = await this.getTaskDetail(taskId);
-    return Array.isArray(taskDetail?.tool_calls) ? taskDetail.tool_calls : [];
+    return {
+      toolCalls: Array.isArray(taskDetail?.tool_calls)
+        ? taskDetail.tool_calls
+        : [],
+      citationGroups: Array.isArray(taskDetail?.citation_groups)
+        ? taskDetail.citation_groups
+        : [],
+    };
   }
 
   async submitTriageRequest(
@@ -675,6 +698,12 @@ export class SREAgentAPI {
     const taskToolCalls = Array.isArray(taskDetail?.tool_calls)
       ? taskDetail.tool_calls
       : [];
+    const threadCitationGroups = Array.isArray(thread.citation_groups)
+      ? thread.citation_groups
+      : [];
+    const taskCitationGroups = Array.isArray(taskDetail?.citation_groups)
+      ? taskDetail.citation_groups
+      : [];
 
     return {
       thread_id: thread.thread_id,
@@ -696,6 +725,10 @@ export class SREAgentAPI {
         : [],
       result: thread.result,
       tool_calls: threadToolCalls.length > 0 ? threadToolCalls : taskToolCalls,
+      citation_groups:
+        threadCitationGroups.length > 0
+          ? threadCitationGroups
+          : taskCitationGroups,
       error_message: thread.error_message,
       pending_approval: thread.pending_approval || null,
       resume_supported: Boolean(thread.resume_supported),

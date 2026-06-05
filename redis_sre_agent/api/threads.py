@@ -17,6 +17,7 @@ from redis_sre_agent.api.schemas import (
     ThreadResponse,
     ThreadUpdateRequest,
 )
+from redis_sre_agent.core.citation_message import extract_citation_groups_from_task_result
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.threads import ThreadManager
 from redis_sre_agent.core.threads import delete_thread as delete_thread_model
@@ -164,6 +165,7 @@ async def get_thread(thread_id: str) -> ThreadResponse:
     latest_task_id = None
     pending_approval = None
     resume_supported = False
+    citation_groups = []
 
     try:
         from redis_sre_agent.core.keys import RedisKeys
@@ -180,6 +182,7 @@ async def get_thread(thread_id: str) -> ThreadResponse:
             if task_state:
                 updates = [u.model_dump() for u in (task_state.updates or [])]
                 result = task_state.result
+                citation_groups = extract_citation_groups_from_task_result(result)
                 error_message = task_state.error_message
                 task_status = task_state.status
                 pending_approval = getattr(task_state, "pending_approval", None)
@@ -199,6 +202,7 @@ async def get_thread(thread_id: str) -> ThreadResponse:
         metadata=metadata,
         updates=updates,
         result=result,
+        citation_groups=citation_groups,
         error_message=error_message,
         status=task_status,
         pending_approval=pending_approval,

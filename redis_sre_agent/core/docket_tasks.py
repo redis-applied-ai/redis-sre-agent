@@ -27,8 +27,7 @@ from redis_sre_agent.core.approvals import (
     ApprovalStatus,
 )
 from redis_sre_agent.core.citation_message import (
-    build_citation_message_payloads,
-    should_include_citations,
+    build_citation_group_payloads,
 )
 from redis_sre_agent.core.clusters import get_cluster_by_id
 from redis_sre_agent.core.config import Settings, settings
@@ -2486,6 +2485,7 @@ async def _process_agent_turn_impl(
         assistant_metadata = dict(agent_response.get("metadata", {}) or {})
         assistant_metadata["task_id"] = task_id
         assistant_metadata["message_id"] = assistant_message_id
+        citation_groups = build_citation_group_payloads(search_results)
         conversation_state["messages"].append(
             {
                 "message_id": assistant_message_id,
@@ -2496,20 +2496,6 @@ async def _process_agent_turn_impl(
             }
         )
 
-        # Add citation system message if there are search results
-        # This allows the LLM to see which sources were used and retrieve more info
-        if should_include_citations(search_results):
-            citation_timestamp = datetime.now(timezone.utc).isoformat()
-            for citation_msg in build_citation_message_payloads(search_results):
-                conversation_state["messages"].append(
-                    {
-                        "role": "system",
-                        "content": citation_msg["content"],
-                        "timestamp": citation_timestamp,
-                        "metadata": citation_msg["metadata"],
-                    }
-                )
-
         # Update thread context with new conversation state
         # Only save user/assistant/system messages - tool messages are internal to LangGraph
         # and shouldn't be persisted across turns
@@ -2518,45 +2504,6 @@ async def _process_agent_turn_impl(
             for msg in conversation_state["messages"]
             if isinstance(msg, dict) and msg.get("role") in ["user", "assistant", "system"]
         ]
-
-        # Persist agent reflections/status updates for this turn as chat messages
-        # Note: Updates are now stored on TaskState, not Thread
-        try:
-            task_state = await task_manager.get_task_state(task_id)
-            if task_state and task_state.updates:
-                # Keep only relevant types of updates
-                relevant_types = {"agent_reflection", "agent_processing", "agent_start"}
-                turn_updates = [
-                    u for u in task_state.updates if u.update_type in relevant_types and u.message
-                ]
-                # Order chronologically
-                turn_updates.sort(key=lambda u: u.timestamp)
-                reflection_messages = [
-                    {
-                        "role": "assistant",
-                        "content": u.message,
-                        "timestamp": u.timestamp,
-                        "metadata": {"update_type": u.update_type, **(u.metadata or {})},
-                    }
-                    for u in turn_updates
-                ]
-                if reflection_messages:
-                    # Insert reflections before the final assistant message for this turn
-                    if clean_messages:
-                        final_msg = clean_messages[-1]
-                        base_msgs = clean_messages[:-1]
-                        # Deduplicate by content
-                        seen = set(m.get("content") for m in base_msgs)
-                        merged = (
-                            base_msgs
-                            + [m for m in reflection_messages if m["content"] not in seen]
-                            + [final_msg]
-                        )
-                        clean_messages = merged
-                    else:
-                        clean_messages = reflection_messages
-        except Exception as e:
-            logger.warning(f"Failed to merge reflection updates into transcript: {e}")
 
         # Convert clean_messages dicts to Message objects for thread storage
         thread.messages = [
@@ -2612,6 +2559,7 @@ async def _process_agent_turn_impl(
             "task_id": task_id,
             "message_id": assistant_message_id,
             "turn_completed_at": datetime.now(timezone.utc).isoformat(),
+            "citation_groups": citation_groups,
         }
 
         await task_manager.set_task_result(task_id, result)
@@ -3042,6 +2990,7 @@ async def resume_task_after_approval(
     assistant_metadata = dict(agent_response.get("metadata", {}) or {})
     assistant_metadata["task_id"] = task_id
     assistant_metadata["message_id"] = assistant_message_id
+    citation_groups = build_citation_group_payloads(agent_response.get("search_results", []))
     conversation_state["messages"].append(
         {
             "message_id": assistant_message_id,
@@ -3057,35 +3006,6 @@ async def resume_task_after_approval(
         for msg in conversation_state["messages"]
         if isinstance(msg, dict) and msg.get("role") in ["user", "assistant", "system"]
     ]
-    try:
-        latest_task_state = await task_manager.get_task_state(task_id)
-        if latest_task_state and latest_task_state.updates:
-            relevant_types = {"agent_reflection", "agent_processing", "agent_start"}
-            turn_updates = [
-                u
-                for u in latest_task_state.updates
-                if u.update_type in relevant_types and u.message
-            ]
-            turn_updates.sort(key=lambda u: u.timestamp)
-            reflection_messages = [
-                {
-                    "role": "assistant",
-                    "content": u.message,
-                    "timestamp": u.timestamp,
-                    "metadata": {"update_type": u.update_type, **(u.metadata or {})},
-                }
-                for u in turn_updates
-            ]
-            if reflection_messages:
-                final_msg = clean_messages[-1] if clean_messages else None
-                base_msgs = clean_messages[:-1] if final_msg else clean_messages
-                seen = set(m.get("content") for m in base_msgs)
-                merged = base_msgs + [m for m in reflection_messages if m["content"] not in seen]
-                if final_msg:
-                    merged.append(final_msg)
-                clean_messages = merged
-    except Exception as e:
-        logger.warning("Failed to merge reflection updates into resumed transcript: %s", e)
 
     thread.messages = [
         Message(
@@ -3107,6 +3027,7 @@ async def resume_task_after_approval(
         "task_id": task_id,
         "message_id": assistant_message_id,
         "turn_completed_at": datetime.now(timezone.utc).isoformat(),
+        "citation_groups": citation_groups,
     }
     await task_manager.set_task_result(task_id, result)
     await task_manager.update_task_status(task_id, TaskStatus.DONE)

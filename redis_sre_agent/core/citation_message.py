@@ -1,8 +1,7 @@
-"""Citation message formatting for thread history.
+"""Citation formatting helpers.
 
-Formats knowledge base search results as system messages that become part of
-the conversation history, allowing the LLM to see which sources were used
-in previous responses.
+Knowledge citations are now exposed to clients as structured task/thread data.
+The message payload helpers remain for legacy persisted transcript rows.
 """
 
 from typing import Any, Dict, List, Optional
@@ -96,3 +95,55 @@ def build_citation_message_payloads(
             }
         )
     return payloads
+
+
+def build_citation_group_payloads(
+    search_results: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Build structured citation groups for API/task metadata."""
+    if not should_include_citations(search_results):
+        return []
+
+    return [
+        {
+            "group_key": citation_group["group_key"],
+            "label": citation_group["label"],
+            "citations": citation_group["citations"],
+            "count": citation_group["count"],
+        }
+        for citation_group in build_citation_groups(list(search_results or []))
+    ]
+
+
+def extract_citation_groups_from_task_result(
+    result: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Extract structured citation groups from current or legacy task results."""
+    if not isinstance(result, dict):
+        return []
+
+    citation_groups = result.get("citation_groups")
+    if isinstance(citation_groups, list):
+        return citation_groups
+
+    metadata = result.get("metadata")
+    if isinstance(metadata, dict):
+        metadata_citation_groups = metadata.get("citation_groups")
+        if isinstance(metadata_citation_groups, list):
+            return metadata_citation_groups
+
+    response = result.get("response")
+    if isinstance(response, dict):
+        response_citation_groups = response.get("citation_groups")
+        if isinstance(response_citation_groups, list):
+            return response_citation_groups
+
+        search_results = response.get("search_results")
+        if isinstance(search_results, list):
+            return build_citation_group_payloads(search_results)
+
+    search_results = result.get("search_results")
+    if isinstance(search_results, list):
+        return build_citation_group_payloads(search_results)
+
+    return []
