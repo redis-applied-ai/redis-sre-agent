@@ -86,7 +86,6 @@ Scrapers collect documents from various sources and save them as **artifacts** (
 
 - `redis_docs`: Scrape Redis documentation from redis.io (slow, downloads from web)
 - `redis_docs_local`: Scrape Redis documentation from local clone (fast, recommended)
-- `redis_kb`: Scrape Redis Knowledge Base articles from redis.io/kb with product labels
 - `redis_cloud_api`: Scrape Redis Cloud API documentation from OpenAPI/Swagger spec
 - User-added documents in `source_documents/` (via `prepare_sources`)
 
@@ -275,7 +274,7 @@ For front matter fields and behavior for pinned docs, skills, and support-ticket
 
 ```bash
 uv run redis-sre-agent pipeline scrape \
-    --scrapers redis_docs_local,redis_kb,redis_cloud_api \
+    --scrapers redis_docs_local,redis_cloud_api \
     --latest-only \
     --artifacts-path ./artifacts
 ```
@@ -288,7 +287,6 @@ uv run redis-sre-agent pipeline scrape \
 **Available scrapers**:
 - `redis_docs`: Scrape from redis.io (slow, web download)
 - `redis_docs_local`: Scrape from local clone (fast, recommended - use `./scripts/setup_redis_docs_local.sh`)
-- `redis_kb`: Scrape Knowledge Base articles from redis.io/kb (includes product labels: Cloud, Enterprise, OSS)
 - `redis_cloud_api`: Scrape Redis Cloud API docs from OpenAPI/Swagger spec (REST API reference)
 
 **Output**: Artifacts saved to `./artifacts/YYYY-MM-DD/`

@@ -42,10 +42,10 @@ class TestPipelineScrapeCLI:
         mock_orchestrator.run_scraping_pipeline.return_value = {
             "batch_date": "2025-08-20",
             "total_documents": 15,
-            "scrapers_run": ["redis_docs", "redis_kb"],
+            "scrapers_run": ["redis_docs", "redis_cloud_api"],
             "scraper_results": {
                 "redis_docs": {"documents_scraped": 10},
-                "redis_kb": {"documents_scraped": 5},
+                "redis_cloud_api": {"documents_scraped": 5},
             },
         }
 
@@ -81,17 +81,17 @@ class TestPipelineScrapeCLI:
         mock_orchestrator.run_scraping_pipeline.return_value = {
             "batch_date": "2025-08-20",
             "total_documents": 5,
-            "scrapers_run": ["redis_docs", "redis_kb"],
+            "scrapers_run": ["redis_docs", "redis_cloud_api"],
             "scraper_results": {
                 "redis_docs": {"documents_scraped": 5},
-                "redis_kb": {"error": "Failed to connect"},
+                "redis_cloud_api": {"error": "Failed to connect"},
             },
         }
 
         result = cli_runner.invoke(pipeline, ["scrape", "--artifacts-path", temp_artifacts_path])
 
         assert result.exit_code == 0
-        assert "redis_kb: Failed to connect" in result.output
+        assert "redis_cloud_api: Failed to connect" in result.output
 
     def test_scrape_command_exception(self, cli_runner, temp_artifacts_path, mock_orchestrator):
         """Test scrape command with exception."""
@@ -214,7 +214,7 @@ class TestPipelineFullCLI:
                 "total_documents": 15,
                 "scraper_results": {
                     "redis_docs": {"documents_scraped": 10},
-                    "redis_kb": {"documents_scraped": 5},
+                    "redis_cloud_api": {"documents_scraped": 5},
                 },
             },
             "ingestion": {"documents_processed": 15, "chunks_indexed": 45, "skipped": False},
@@ -255,7 +255,7 @@ class TestPipelineStatusCLI:
             "available_batches": ["2025-08-18", "2025-08-19", "2025-08-20"],
             "scrapers": {
                 "redis_docs": {"source": "https://redis.io/docs"},
-                "redis_kb": {"source": "https://redis.io/kb"},
+                "redis_cloud_api": {"source": "https://redis.io/cloud"},
             },
             "ingestion": {"batches_ingested": 2},
         }
