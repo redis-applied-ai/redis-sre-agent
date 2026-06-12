@@ -741,7 +741,7 @@ const Schedules = () => {
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            navigate(`/triage?thread=${run.triage_task_id}`)
+                            navigate(`/chat?thread=${run.triage_task_id}`)
                           }
                         >
                           View Conversation

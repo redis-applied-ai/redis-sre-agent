@@ -158,7 +158,7 @@ jobs:
           uv run redis-sre-agent pipeline scrape \
             --batch-date "$BATCH_DATE" \
             --artifacts-path ./artifacts \
-            --scrapers redis_docs_local,redis_kb,redis_cloud_api \
+            --scrapers redis_docs_local,redis_cloud_api \
             --latest-only \
             --docs-path ./redis-docs
 
@@ -190,7 +190,7 @@ jobs:
             --output "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}.zip" \
             --release-tag "$RELEASE_TAG" \
             --repo-sha "$REPO_SHA" \
-            --scrapers-run source_documents,redis_docs_local,redis_kb,redis_cloud_api \
+            --scrapers-run source_documents,redis_docs_local,redis_cloud_api \
             --profile runtime
 
       - name: Ingest release corpus with air-gap embeddings
@@ -218,7 +218,7 @@ jobs:
             --output "dist/redis-sre-agent-knowledge-pack-${RELEASE_TAG}-airgap.zip" \
             --release-tag "$RELEASE_TAG" \
             --repo-sha "$REPO_SHA" \
-            --scrapers-run source_documents,redis_docs_local,redis_kb,redis_cloud_api \
+            --scrapers-run source_documents,redis_docs_local,redis_cloud_api \
             --profile airgap
 
       - name: Smoke-test knowledge pack restores

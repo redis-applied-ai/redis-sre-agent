@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type KeyboardEvent } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardHeader, CardContent, Button } from "@radar/ui-kit";
+import MarkdownRenderer from "../components/MarkdownRenderer";
 import { sreAgentApi } from "../services/sreAgentApi";
 
 interface KnowledgeStats {
@@ -12,20 +14,18 @@ interface KnowledgeStats {
 }
 
 interface SearchResult {
+  id?: string;
+  document_hash?: string;
+  chunk_index?: number | string | null;
   title: string;
   content: string;
   source: string;
   category: string;
+  doc_type?: string;
+  version?: string;
+  summary?: string;
   severity: string;
   score?: number;
-}
-
-interface SearchResponse {
-  query: string;
-  category_filter?: string;
-  results_count: number;
-  results: SearchResult[];
-  formatted_output: string;
 }
 
 interface IngestionJob {
@@ -51,7 +51,56 @@ interface IngestionConfig {
   source_text?: string;
 }
 
+const MINIMUM_AUTOMATIC_SEARCH_LENGTH = 4;
+const AUTOMATIC_SEARCH_DELAY_MS = 1000;
+
+const getSearchKey = (query: string, category: string) =>
+  JSON.stringify([query.trim(), category || ""]);
+
+const buildKnowledgeDocumentPath = (
+  documentHash: string,
+  chunkIndex?: number | string | null,
+  version?: string,
+) => {
+  const query = new URLSearchParams();
+  const chunk = String(chunkIndex ?? "").trim();
+  if (version?.trim()) query.set("version", version.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const anchor = chunk ? `#chunk-${encodeURIComponent(chunk)}` : "";
+  return `/knowledge/document-chunks/${encodeURIComponent(
+    documentHash,
+  )}${suffix}${anchor}`;
+};
+
+const parseChunkSearchQuery = (query: string) => {
+  const match = query.trim().match(/^chunk:(.+)$/i);
+  if (!match) return null;
+
+  const chunkId = match[1].trim();
+  if (!chunkId) return null;
+
+  const redisKeyMatch = chunkId.match(/^(?:sre_[^:]+:)?(.+):chunk:(\d+)$/);
+  if (redisKeyMatch) {
+    return {
+      documentHash: redisKeyMatch[1],
+      chunkIndex: redisKeyMatch[2],
+    };
+  }
+
+  const compactMatch = chunkId.match(/^(.+)[:#@](\d+)$/);
+  if (compactMatch) {
+    return {
+      documentHash: compactMatch[1],
+      chunkIndex: compactMatch[2],
+    };
+  }
+
+  return null;
+};
+
 const Knowledge = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [stats, setStats] = useState<KnowledgeStats | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJob[]>([]);
@@ -61,20 +110,27 @@ const Knowledge = () => {
   const [showIngestionForm, setShowIngestionForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchCategory, setSearchCategory] = useState("");
-  const [expandedResults, setExpandedResults] = useState<Set<number>>(
-    new Set(),
-  );
   const [distanceThreshold, setDistanceThreshold] = useState<number>(2.0);
+  const scheduledSearchRef = useRef<{
+    timer: ReturnType<typeof setTimeout>;
+    key: string;
+  } | null>(null);
+  const activeSearchKeysRef = useRef<Set<string>>(new Set());
+  const lastStartedSearchKeyRef = useRef<string | null>(null);
 
   // Simple ingestion form state
   const [ingestionText, setIngestionText] = useState("");
 
+  const clearScheduledSearch = () => {
+    if (scheduledSearchRef.current) {
+      clearTimeout(scheduledSearchRef.current.timer);
+      scheduledSearchRef.current = null;
+    }
+  };
+
   useEffect(() => {
     // Check for search query in URL parameters
-    const urlParams = new URLSearchParams(
-      window.location.hash.split("?")[1] || "",
-    );
-    const searchParam = urlParams.get("search");
+    const searchParam = searchParams.get("search");
     if (searchParam) {
       setSearchQuery(searchParam);
       // Trigger search after data loads
@@ -94,6 +150,7 @@ const Knowledge = () => {
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
+      clearScheduledSearch();
     };
   }, []);
 
@@ -151,21 +208,43 @@ const Knowledge = () => {
   const searchKnowledgeBase = async (
     query?: string,
     _thresholdOverride?: number,
+    categoryOverride?: string,
   ) => {
-    const queryToUse = query || searchQuery;
-    if (!queryToUse.trim()) {
+    const queryToUse = query ?? searchQuery;
+    const trimmedQuery = queryToUse.trim();
+    if (!trimmedQuery) {
       setSearchResults([]);
       return;
     }
 
+    const categoryToUse = categoryOverride ?? searchCategory;
+    const chunkReference = parseChunkSearchQuery(trimmedQuery);
+    if (chunkReference) {
+      setSearchResults([]);
+      navigate(
+        buildKnowledgeDocumentPath(
+          chunkReference.documentHash,
+          chunkReference.chunkIndex,
+        ),
+      );
+      return;
+    }
+
+    const searchKey = getSearchKey(trimmedQuery, categoryToUse);
+    if (activeSearchKeysRef.current.has(searchKey)) {
+      return;
+    }
+
     try {
+      activeSearchKeysRef.current.add(searchKey);
+      lastStartedSearchKeyRef.current = searchKey;
       setIsSearching(true);
       setError(null);
 
       const result = await sreAgentApi.searchKnowledge(
-        queryToUse,
+        trimmedQuery,
         10,
-        searchCategory || undefined,
+        categoryToUse || undefined,
       );
 
       console.log("Search result:", result);
@@ -176,7 +255,6 @@ const Knowledge = () => {
           severity: "info", // Default severity since API doesn't return it
         })),
       );
-      setExpandedResults(new Set()); // Clear expanded state on new search
     } catch (err) {
       console.error("Search error:", err);
       setError(
@@ -184,27 +262,81 @@ const Knowledge = () => {
       );
       setSearchResults([]);
     } finally {
-      setIsSearching(false);
+      activeSearchKeysRef.current.delete(searchKey);
+      setIsSearching(activeSearchKeysRef.current.size > 0);
     }
   };
 
   const handleSearch = (query: string) => {
+    clearScheduledSearch();
     setSearchQuery(query);
-    searchKnowledgeBase(query);
+    void searchKnowledgeBase(query);
   };
 
-  // Trigger search when query changes
+  const scheduleAutomaticSearch = (
+    query: string,
+    category = searchCategory,
+  ) => {
+    clearScheduledSearch();
+
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length < MINIMUM_AUTOMATIC_SEARCH_LENGTH) {
+      return;
+    }
+
+    const searchKey = getSearchKey(trimmedQuery, category);
+    scheduledSearchRef.current = {
+      key: searchKey,
+      timer: setTimeout(() => {
+        scheduledSearchRef.current = null;
+        void searchKnowledgeBase(trimmedQuery, undefined, category);
+      }, AUTOMATIC_SEARCH_DELAY_MS),
+    };
+  };
+
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
-    if (value.trim()) {
-      // Debounce search
-      const timer = setTimeout(() => {
-        searchKnowledgeBase();
-      }, 500);
-      return () => clearTimeout(timer);
-    } else {
+    const trimmedValue = value.trim();
+
+    if (!trimmedValue) {
+      clearScheduledSearch();
       setSearchResults([]);
+      return;
     }
+
+    scheduleAutomaticSearch(value);
+  };
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const query = event.currentTarget.value;
+      const trimmedQuery = query.trim();
+      const searchKey = getSearchKey(trimmedQuery, searchCategory);
+      const scheduledSearch = scheduledSearchRef.current;
+
+      if (scheduledSearch?.key === searchKey) {
+        clearScheduledSearch();
+        if (!activeSearchKeysRef.current.has(searchKey)) {
+          void searchKnowledgeBase(query);
+        }
+        return;
+      }
+
+      if (
+        activeSearchKeysRef.current.has(searchKey) ||
+        lastStartedSearchKeyRef.current === searchKey
+      ) {
+        return;
+      }
+
+      void searchKnowledgeBase(query);
+    }
+  };
+
+  const handleSearchCategoryChange = (category: string) => {
+    setSearchCategory(category);
+    scheduleAutomaticSearch(searchQuery, category);
   };
 
   if (isLoading) {
@@ -526,11 +658,12 @@ const Knowledge = () => {
                 placeholder="Search knowledge base..."
                 value={searchQuery}
                 onChange={(e) => handleSearchChange(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 className="flex-1 px-3 py-2 border border-redis-dusk-06 rounded-md focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
               />
               <select
                 value={searchCategory}
-                onChange={(e) => setSearchCategory(e.target.value)}
+                onChange={(e) => handleSearchCategoryChange(e.target.value)}
                 className="px-3 py-2 border border-redis-dusk-06 rounded-md focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
               >
                 <option value="">All Categories</option>
@@ -564,7 +697,7 @@ const Knowledge = () => {
               </div>
               <Button
                 variant="primary"
-                onClick={() => searchKnowledgeBase()}
+                onClick={() => handleSearch(searchQuery)}
                 disabled={isSearching || !searchQuery.trim()}
               >
                 {isSearching ? "Searching..." : "Search"}
@@ -611,69 +744,97 @@ const Knowledge = () => {
                 <p className="text-sm text-redis-dusk-04">
                   Found {searchResults.length} results for "{searchQuery}"
                 </p>
-                {searchResults.map((result, index) => (
-                  <div
-                    key={index}
-                    className="p-4 border border-redis-dusk-06 rounded-md hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <h4 className="text-sm font-medium text-redis-dusk-01">
-                        {result.title}
-                      </h4>
-                      <div className="flex gap-2">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          {result.category}
-                        </span>
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            result.severity === "critical"
-                              ? "bg-red-100 text-red-800"
-                              : result.severity === "warning"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-green-100 text-green-800"
-                          }`}
-                        >
-                          {result.severity}
-                        </span>
-                        {result.score && (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                            {(result.score * 100).toFixed(0)}% match
-                          </span>
+                {searchResults.map((result, index) => {
+                  const title =
+                    result.title || result.document_hash || "Untitled chunk";
+                  const documentPath = result.document_hash
+                    ? buildKnowledgeDocumentPath(
+                        result.document_hash,
+                        result.chunk_index,
+                        result.version,
+                      )
+                    : undefined;
+
+                  return (
+                    <Card
+                      key={`${result.document_hash || result.id || index}-${result.chunk_index || 0}`}
+                      className="hover:shadow-lg transition-shadow"
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-4 mb-3">
+                          <div className="min-w-0">
+                            <h4 className="text-redis-md font-semibold truncate">
+                              {documentPath ? (
+                                <Link
+                                  to={documentPath}
+                                  className="text-foreground hover:text-redis-blue-03 hover:underline"
+                                >
+                                  {title}
+                                </Link>
+                              ) : (
+                                <span className="text-foreground">{title}</span>
+                              )}
+                            </h4>
+                            <div className="flex flex-wrap items-center gap-2 mt-2">
+                              {result.category && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                  {result.category}
+                                </span>
+                              )}
+                              {result.doc_type && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                  {result.doc_type}
+                                </span>
+                              )}
+                              {result.version && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-redis-dusk-08 text-redis-dusk-02">
+                                  {result.version}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {documentPath && (
+                            <Link
+                              to={documentPath}
+                              className="text-redis-sm text-redis-blue-03 hover:underline whitespace-nowrap"
+                            >
+                              Open document
+                            </Link>
+                          )}
+                        </div>
+
+                        {result.summary && (
+                          <p className="text-redis-sm text-redis-dusk-04 mb-3">
+                            {result.summary}
+                          </p>
                         )}
-                      </div>
-                    </div>
-                    <div className="text-sm text-redis-dusk-01 mb-2">
-                      <p
-                        className={
-                          expandedResults.has(index) ? "" : "line-clamp-4"
-                        }
-                      >
-                        {result.content}
-                      </p>
-                      {result.content.length > 200 && (
-                        <button
-                          className="text-xs text-redis-blue-03 hover:text-redis-blue-02 font-medium mt-1"
-                          onClick={() => {
-                            const newExpanded = new Set(expandedResults);
-                            if (expandedResults.has(index)) {
-                              newExpanded.delete(index);
-                            } else {
-                              newExpanded.add(index);
-                            }
-                            setExpandedResults(newExpanded);
-                          }}
-                        >
-                          {expandedResults.has(index)
-                            ? "Show less"
-                            : "Show more..."}
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs text-redis-dusk-04">
-                      Source: {result.source}
-                    </p>
-                  </div>
-                ))}
+
+                        <div className="rounded-redis-sm border border-redis-dusk-08 bg-redis-dusk-09 p-3">
+                          <MarkdownRenderer
+                            content={result.content || ""}
+                            className="knowledge-fragment"
+                          />
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-redis-dusk-04">
+                          {result.source && (
+                            <span className="truncate">
+                              Source: {result.source}
+                            </span>
+                          )}
+                          {result.document_hash && (
+                            <span className="font-mono">
+                              Hash: {result.document_hash}
+                            </span>
+                          )}
+                          {result.chunk_index != null && (
+                            <span>Fragment: {String(result.chunk_index)}</span>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </div>

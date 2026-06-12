@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
+MULTI_TARGET_SELECTION_LIMIT = 5
+DISCOVERY_STATUS_TOO_MANY_MATCHES = "too_many_matches"
+
 
 class PublicTargetMatch(BaseModel):
     """Secret-safe target match shown to the model."""
@@ -163,11 +166,15 @@ class DiscoveryResponse(BaseModel):
     matches: List[PublicTargetMatch] = Field(default_factory=list)
     attached_target_handles: List[str] = Field(default_factory=list)
     toolset_generation: int = 0
+    message: Optional[str] = None
+    max_selectable: Optional[int] = None
+    match_count: int = 0
+    truncated: bool = False
     selected_matches: List[DiscoveryCandidate] = Field(default_factory=list, exclude=True)
 
     def public_dump(self) -> Dict[str, Any]:
         """Return the model-facing discovery payload."""
-        payload = self.model_dump(mode="json")
+        payload = self.model_dump(mode="json", exclude_none=True)
         payload["matches"] = [match.public_dump() for match in self.matches]
         return payload
 

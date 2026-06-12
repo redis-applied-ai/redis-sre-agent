@@ -46,6 +46,7 @@ class SpanCategory(str, Enum):
     KNOWLEDGE = "knowledge"
     HTTP = "http"
     REDIS = "redis"  # Infrastructure - can be filtered out
+    FEEDBACK = "feedback"
 
 
 # Attribute keys

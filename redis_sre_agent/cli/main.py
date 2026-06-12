@@ -24,7 +24,6 @@ _COMMANDS = {
     "knowledge": "redis_sre_agent.cli.knowledge:knowledge",
     "skills": "redis_sre_agent.cli.skills:skills",
     "pipeline": "redis_sre_agent.cli.pipeline:pipeline",
-    "runbook": "redis_sre_agent.cli.runbook:runbook",
     "query": "redis_sre_agent.cli.query:query",
     "worker": "redis_sre_agent.cli.worker:worker",
     "mcp": "redis_sre_agent.cli.mcp:mcp",
@@ -32,6 +31,7 @@ _COMMANDS = {
     "knowledge-pack": "redis_sre_agent.cli.knowledge_pack:knowledge_pack",
     "support-package": "redis_sre_agent.cli.support_package:support_package",
     "eval": "redis_sre_agent.cli.eval:eval",
+    "feedback": "redis_sre_agent.cli.feedback:feedback",
 }
 
 # Built-in commands that don't need lazy loading

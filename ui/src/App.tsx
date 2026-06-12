@@ -9,6 +9,7 @@ import {
 import Dashboard from "./pages/Dashboard";
 import Triage from "./pages/Triage";
 import Knowledge from "./pages/Knowledge";
+import KnowledgeDocumentChunks from "./pages/KnowledgeDocumentChunks";
 import Schedules from "./pages/Schedules";
 import Settings from "./pages/Settings";
 import { useApp } from "./hooks/useApp";
@@ -43,17 +44,27 @@ function App() {
         />
       }
       variant="centered"
+      contentClassName="app-content-shell"
     >
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/triage" element={<Triage />} />
+        <Route path="/chat" element={<Triage />} />
+        <Route path="/triage" element={<Navigate to="/chat" replace />} />
         <Route path="/knowledge" element={<Knowledge />} />
+        <Route
+          path="/knowledge/document-chunks/:documentHash"
+          element={<KnowledgeDocumentChunks />}
+        />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/settings" element={<Settings />} />
         {/* Redirect instances to settings with instances section */}
         <Route
           path="/instances"
           element={<Navigate to="/settings?section=instances" replace />}
+        />
+        <Route
+          path="/clusters"
+          element={<Navigate to="/settings?section=clusters" replace />}
         />
       </Routes>
     </Layout>

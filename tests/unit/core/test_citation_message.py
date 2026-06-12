@@ -1,10 +1,9 @@
-"""Tests for citation message formatting (TDD approach).
-
-Tests written first for the feature that appends citation messages to threads.
-"""
+"""Tests for citation formatting helpers."""
 
 from redis_sre_agent.core.citation_message import (
+    build_citation_group_payloads,
     build_citation_message_payloads,
+    extract_citation_groups_from_task_result,
     format_citation_message,
     should_include_citations,
 )
@@ -149,3 +148,66 @@ class TestFormatCitationMessage:
         assert payloads[0]["content"].startswith("**Discovered context**")
         assert payloads[1]["metadata"]["citation_group"] == "startup_context_loaded"
         assert payloads[1]["content"].startswith("**Startup context loaded**")
+
+    def test_builds_structured_payloads_for_discovered_and_startup_context(self):
+        results = [
+            {
+                "title": "Redis Memory Management",
+                "source": "redis.io/docs/memory",
+                "document_hash": "abc123def",
+                "score": 0.95,
+                "retrieval_kind": "knowledge_search",
+            },
+            {
+                "title": "Pinned Runbook",
+                "source": "file:///tmp/pinned.md",
+                "document_hash": "pinned123",
+                "retrieval_kind": "pinned_context",
+            },
+        ]
+
+        payloads = build_citation_group_payloads(results)
+
+        assert [payload["group_key"] for payload in payloads] == [
+            "discovered_context",
+            "startup_context_loaded",
+        ]
+        assert payloads[0]["label"] == "Discovered context"
+        assert payloads[0]["citations"][0]["title"] == "Redis Memory Management"
+        assert payloads[1]["label"] == "Startup context loaded"
+        assert payloads[1]["citations"][0]["title"] == "Pinned Runbook"
+
+    def test_extracts_structured_groups_from_current_task_result(self):
+        task_result = {
+            "citation_groups": [
+                {
+                    "group_key": "discovered_context",
+                    "label": "Discovered context",
+                    "citations": [{"title": "Redis Memory Management"}],
+                    "count": 1,
+                }
+            ]
+        }
+
+        payloads = extract_citation_groups_from_task_result(task_result)
+
+        assert payloads == task_result["citation_groups"]
+
+    def test_extracts_structured_groups_from_legacy_response_search_results(self):
+        task_result = {
+            "response": {
+                "search_results": [
+                    {
+                        "title": "Pinned Runbook",
+                        "source": "file:///tmp/pinned.md",
+                        "document_hash": "pinned123",
+                        "retrieval_kind": "pinned_context",
+                    }
+                ]
+            }
+        }
+
+        payloads = extract_citation_groups_from_task_result(task_result)
+
+        assert payloads[0]["group_key"] == "startup_context_loaded"
+        assert payloads[0]["citations"][0]["title"] == "Pinned Runbook"

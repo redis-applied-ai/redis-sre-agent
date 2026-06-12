@@ -3,16 +3,41 @@
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
+  background-color: var(--background);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
 }
 
 /* Fix layout issues by overriding the centered layout behavior */
 main {
   align-items: flex-start !important; /* Override items-center to align content to top */
+  min-height: 0;
 }
 
 /* Fix gap between header and content by reducing top padding */
 main > div {
   padding-top: 1rem !important; /* Override the default pt-6 (24px) with pt-4 (16px) */
+}
+
+.app-content-shell {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: calc(100vh - 4.5rem);
+  padding-bottom: 1rem !important;
+}
+
+.app-content-shell > * {
+  width: 100%;
 }
 
 /* Form input dark mode support */
@@ -85,54 +110,215 @@ select option {
   border-color: var(--border) !important;
 }
 
-/* Compact markdown spacing for agent responses */
+.citation-accordion {
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+}
+
+.citation-accordion summary {
+  list-style: none;
+}
+
+.citation-accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.citation-accordion summary::marker {
+  content: "";
+}
+
+.citation-accordion-summary {
+  color: var(--foreground);
+}
+
+.citation-accordion-summary:hover {
+  background-color: var(--muted);
+}
+
+.citation-accordion-summary [aria-hidden="true"] {
+  color: var(--muted-foreground);
+}
+
+.citation-accordion-summary:hover [aria-hidden="true"] {
+  color: var(--foreground);
+}
+
+.citation-accordion-body {
+  border-top: 1px solid var(--border);
+  background-color: var(--muted);
+  color: var(--foreground);
+}
+
+.citation-link-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.citation-link-list li + li {
+  margin-top: 0.4rem;
+}
+
+.citation-link-list a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.citation-link-list a:hover {
+  color: var(--foreground);
+}
+
+.tool-calls-accordion {
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+}
+
+.tool-calls-accordion summary,
+.tool-call-item summary {
+  list-style: none;
+}
+
+.tool-calls-accordion summary::-webkit-details-marker,
+.tool-call-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-calls-accordion summary::marker,
+.tool-call-item summary::marker {
+  content: "";
+}
+
+.tool-calls-accordion-summary,
+.tool-call-item-summary {
+  color: var(--foreground);
+}
+
+.tool-calls-accordion-summary:hover,
+.tool-call-item-summary:hover {
+  background-color: var(--muted);
+}
+
+.tool-calls-count,
+.tool-call-status {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+}
+
+.tool-calls-accordion-body {
+  border-top: 1px solid var(--border);
+  background-color: var(--muted);
+}
+
+.tool-call-item {
+  border: 1px solid var(--border);
+  background-color: var(--card);
+}
+
+.tool-call-detail {
+  border-top: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.tool-call-detail-label {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+}
+
+.tool-call-detail pre {
+  margin: 0;
+  max-height: 14rem;
+  overflow: auto;
+  border-radius: 0.375rem;
+  background-color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 0.6rem;
+  color: var(--foreground);
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tool-call-detail p {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.accordion-chevron {
+  color: var(--muted-foreground);
+}
+
+.accordion-chevron > span {
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+details[open] > summary .accordion-chevron > span {
+  transform: translateY(-1px) rotate(45deg);
+}
+
+/* Markdown rendering for chat and knowledge content */
 .markdown-content {
-  line-height: 1.35;
+  width: 100%;
+  color: inherit;
+  font-size: inherit;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
-.markdown-content h1 {
-  margin-top: 0.75rem;
-  margin-bottom: 0.4rem;
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.markdown-content h1:first-child {
+.markdown-content > :first-child {
   margin-top: 0;
 }
 
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content h1,
 .markdown-content h2 {
-  margin-top: 0.6rem;
-  margin-bottom: 0.3rem;
-  font-size: 0.9375rem; /* 15px */
-  font-weight: 600;
-  line-height: 1.35;
+  margin: 1.15rem 0 0.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.markdown-content h1 {
+  font-size: 1.15rem;
+}
+
+.markdown-content h2 {
+  font-size: 1.05rem;
 }
 
 .markdown-content h3 {
-  margin-top: 0.5rem;
-  margin-bottom: 0.25rem;
-  font-size: 0.875rem; /* 14px */
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
   font-weight: 600;
   line-height: 1.35;
 }
 
 .markdown-content p {
-  margin: 0.15rem 0; /* very tight */
-  line-height: 1.35;
+  margin: 0.65rem 0;
 }
 
-/* Remove extra paragraph margins inside list items */
 .markdown-content li > p {
-  margin: 0;
+  margin: 0.25rem 0;
 }
 
 .markdown-content ul,
 .markdown-content ol {
-  margin: 0.15rem 0; /* very tight */
-  margin-left: 0.75rem;
-  padding-left: 0.25rem;
+  margin: 0.65rem 0;
+  padding-left: 1.35rem;
 }
 
 .markdown-content ul {
@@ -146,20 +332,18 @@ select option {
 }
 
 .markdown-content li {
-  margin-bottom: 0.1rem;
-  line-height: 1.35;
-  margin-left: 0.2rem;
+  margin: 0.3rem 0;
   display: list-item;
 }
 
 .markdown-content pre {
-  margin: 0.4rem 0;
-  padding: 0.5rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
   background-color: var(--muted);
   border-radius: 0.375rem;
   overflow-x: auto;
   font-size: 0.75rem;
-  line-height: 1.35;
+  line-height: 1.5;
 }
 
 .markdown-content code {
@@ -169,7 +353,7 @@ select option {
 
 .markdown-content p code {
   background-color: var(--muted);
-  padding: 0.1rem 0.2rem;
+  padding: 0.1rem 0.25rem;
   border-radius: 0.25rem;
 }
 
@@ -179,8 +363,50 @@ select option {
 }
 
 .markdown-content blockquote {
-  margin: 0.4rem 0;
-  padding-left: 0.75rem;
+  margin: 0.75rem 0;
+  padding-left: 0.85rem;
   border-left: 3px solid var(--border);
   font-style: italic;
+}
+
+.markdown-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-content hr {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.markdown-table-wrapper {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-content th {
+  background-color: var(--muted);
+  font-weight: 600;
+}
+
+.knowledge-fragment {
+  font-size: 0.875rem;
+  max-height: 16rem;
+  overflow: hidden;
 }

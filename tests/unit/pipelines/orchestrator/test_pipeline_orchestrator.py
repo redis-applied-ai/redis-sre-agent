@@ -29,8 +29,6 @@ class TestPipelineOrchestrator:
         """Create pipeline orchestrator instance."""
         config = {
             "redis_docs": {"source": "test"},
-            "redis_runbooks": {"source": "test"},
-            "runbook_generator": {"runbook_urls": ["https://test.com"]},
             "ingestion": {"chunk_size": 500},
         }
         return PipelineOrchestrator(str(tmp_path), config)
@@ -55,15 +53,15 @@ class TestPipelineOrchestrator:
         assert orchestrator.artifacts_path == Path(tmp_path)
         assert isinstance(orchestrator.storage, ArtifactStorage)
         assert "redis_docs" in orchestrator.scrapers
-        assert "redis_runbooks" in orchestrator.scrapers
-        assert "runbook_generator" in orchestrator.scrapers
+        assert "redis_docs_local" in orchestrator.scrapers
+        assert "redis_cloud_api" in orchestrator.scrapers
         assert orchestrator.ingestion is not None
 
     def test_init_with_custom_config(self, orchestrator):
         """Test orchestrator initialization with custom configuration."""
         assert orchestrator.config["ingestion"]["chunk_size"] == 500
         assert "redis_docs" in orchestrator.scrapers
-        assert "runbook_generator" in orchestrator.scrapers
+        assert "redis_docs_local" in orchestrator.scrapers
 
     @pytest.mark.asyncio
     async def test_run_scraping_pipeline_success(self, orchestrator):
@@ -101,10 +99,8 @@ class TestPipelineOrchestrator:
             result = await orchestrator.run_scraping_pipeline()
 
         assert result["success"] is True
-        assert result["total_documents"] == 18  # 6 scrapers * 3 documents each
-        assert (
-            len(result["scraper_results"]) == 6
-        )  # 6 scrapers: redis_docs, redis_docs_local, redis_kb, redis_runbooks, redis_cloud_api, runbook_generator
+        assert result["total_documents"] == 9  # 3 scrapers * 3 documents each
+        assert len(result["scraper_results"]) == 3
         assert "manifest_path" in result
 
         # Verify all scrapers were called
@@ -135,10 +131,7 @@ class TestPipelineOrchestrator:
         # Mock all other scrapers to succeed with 1 document each
         for scraper_name in [
             "redis_docs_local",
-            "redis_kb",
-            "redis_runbooks",
             "redis_cloud_api",
-            "runbook_generator",
         ]:
             orchestrator.scrapers[scraper_name].run_scraping_job = AsyncMock(
                 return_value={"documents_scraped": 1, "success": True}
@@ -154,8 +147,8 @@ class TestPipelineOrchestrator:
         assert "error" in result["scraper_results"]["redis_docs"]
         assert result["scraper_results"]["redis_docs"]["documents_scraped"] == 0
         assert (
-            result["total_documents"] == 5
-        )  # 5 successful scrapers with 1 document each (6 total - 1 failed)
+            result["total_documents"] == 2
+        )  # 2 successful scrapers with 1 document each (3 total - 1 failed)
 
     @pytest.mark.asyncio
     async def test_run_scraping_pipeline_with_specific_scrapers(self, orchestrator):
@@ -335,9 +328,7 @@ class TestPipelineOrchestrator:
         assert "artifacts_path" in status
         assert "current_batch_date" in status
         assert status["available_batches"] == ["2025-01-20", "2025-01-19"]
-        assert (
-            len(status["scrapers"]) == 6
-        )  # redis_docs, redis_docs_local, redis_kb, redis_runbooks, redis_cloud_api, runbook_generator
+        assert len(status["scrapers"]) == 3
         assert status["ingestion"]["batches_ingested"] == 1  # Only successful ones
         assert len(status["ingestion"]["recent_batches"]) == 2
 

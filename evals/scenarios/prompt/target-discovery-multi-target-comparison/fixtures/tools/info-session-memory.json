@@ -1,6 +1,8 @@
 {
+  "target": "prod session cache",
   "section": "memory",
   "data": {
+    "target": "prod session cache",
     "used_memory_human": "7.6G",
     "maxmemory_human": "8.0G",
     "maxmemory_policy": "allkeys-lru",

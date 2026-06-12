@@ -51,14 +51,24 @@ def _default_agent_factories() -> dict[str, AgentFactory]:
     }
 
 
+def _agent_tool_call_budget(scenario: EvalScenario) -> int:
+    """Allow one extra lookup for live models that need to refine evidence."""
+
+    return int(scenario.execution.max_tool_steps) + 1
+
+
 def _agent_iteration_budget(scenario: EvalScenario) -> int:
-    """Reserve one final synthesis turn beyond the tool-step budget.
+    """Reserve a final synthesis turn beyond the tool-call budget.
 
     Eval scenarios define `max_tool_steps`, but the direct agent entrypoints take
-    `max_iterations`, which counts LLM turns. Agent-only live evals need one
-    extra turn after the last tool call so the model can produce a final answer.
+    `max_iterations`, which counts LLM turns. The knowledge-only graph can stop
+    before executing a final pending tool call when the iteration limit is
+    exhausted, so knowledge-only live evals reserve room for that lookup and one
+    final synthesis turn.
     """
 
+    if _normalize_agent_name(scenario.execution.agent or "") == "knowledge_only":
+        return _agent_tool_call_budget(scenario) + 1
     return int(scenario.execution.max_tool_steps) + 1
 
 
@@ -171,7 +181,7 @@ async def run_agent_only_scenario(
         thread_id=thread_id,
         base_context=base_context,
     )
-    context["tool_call_budget_override"] = _agent_iteration_budget(scenario)
+    context["tool_call_budget_override"] = _agent_tool_call_budget(scenario)
     agent = factory()
     async with inject_memory_fixture(scenario):
         response = await agent.process_query(

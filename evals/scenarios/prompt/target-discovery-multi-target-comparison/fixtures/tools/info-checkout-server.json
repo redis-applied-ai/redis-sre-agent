@@ -1,0 +1,9 @@
+{
+  "target": "prod checkout cache",
+  "section": "server",
+  "data": {
+    "target": "prod checkout cache",
+    "redis_version": "8.0.0",
+    "redis_mode": "standalone"
+  }
+}

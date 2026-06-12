@@ -1,0 +1,124 @@
+id: prompt/target-discovery-over-limit-comparison
+name: Target discovery over limit comparison
+description: Evaluate whether a chat comparison request that names too many Redis targets asks the user to narrow the target set instead of attaching a partial set.
+provenance:
+  source_kind: synthetic
+  source_pack: prompt-core
+  source_pack_version: 2026-04-14
+  derived_from:
+    - redis_sre_agent.agent.chat_agent.CHAT_SYSTEM_PROMPT
+    - redis_sre_agent.targets.redis_catalog.RedisCatalogDiscoveryBackend
+  synthetic:
+    is_synthetic: true
+    method: hand-authored multi-target limit case
+  golden:
+    expectation_basis: human_authored
+    exemplar_sources:
+      - evals/goldens/prompt/target-discovery-over-limit-comparison/expected.md
+    review_status: reviewed
+    reviewed_by: sre-evals
+
+execution:
+  lane: full_turn
+  agent: redis_chat
+  route_via_router: false
+  query: >
+    Compare prod cache 0, prod cache 1, prod cache 2, prod cache 3, prod cache 4,
+    prod cache 5, prod cache 6, prod cache 7, prod cache 8, and prod cache 9 for
+    memory pressure right now.
+  max_tool_steps: 4
+  llm_mode: replay
+
+scope:
+  turn_scope:
+    resolution_policy: allow_zero_scope
+    automation_mode: interactive
+  target_catalog:
+    - handle: tgt_prod_cache_0
+      kind: instance
+      display_name: prod cache 0
+      resource_id: redis-prod-cache-0
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 0]}
+    - handle: tgt_prod_cache_1
+      kind: instance
+      display_name: prod cache 1
+      resource_id: redis-prod-cache-1
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 1]}
+    - handle: tgt_prod_cache_2
+      kind: instance
+      display_name: prod cache 2
+      resource_id: redis-prod-cache-2
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 2]}
+    - handle: tgt_prod_cache_3
+      kind: instance
+      display_name: prod cache 3
+      resource_id: redis-prod-cache-3
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 3]}
+    - handle: tgt_prod_cache_4
+      kind: instance
+      display_name: prod cache 4
+      resource_id: redis-prod-cache-4
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 4]}
+    - handle: tgt_prod_cache_5
+      kind: instance
+      display_name: prod cache 5
+      resource_id: redis-prod-cache-5
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 5]}
+    - handle: tgt_prod_cache_6
+      kind: instance
+      display_name: prod cache 6
+      resource_id: redis-prod-cache-6
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 6]}
+    - handle: tgt_prod_cache_7
+      kind: instance
+      display_name: prod cache 7
+      resource_id: redis-prod-cache-7
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 7]}
+    - handle: tgt_prod_cache_8
+      kind: instance
+      display_name: prod cache 8
+      resource_id: redis-prod-cache-8
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 8]}
+    - handle: tgt_prod_cache_9
+      kind: instance
+      display_name: prod cache 9
+      resource_id: redis-prod-cache-9
+      capabilities: [diagnostics]
+      public_metadata: {environment: production, usage: cache, aliases: [prod cache 9]}
+
+knowledge:
+  mode: full
+  version: latest
+  pinned_documents:
+    - ../../_shared/startup/live-system-boundary.md
+    - ../../_shared/startup/policies/target-discovery-before-live-access.md
+  corpus:
+    - ../../../corpora/prompt-core/2026-04-14
+
+tools: {}
+
+expectations:
+  required_tool_calls:
+    - provider_family: target_discovery
+      operation: resolve_redis_targets
+  forbidden_tool_calls:
+    - provider_family: redis_command
+      operation: info
+  required_findings:
+    - too many Redis targets
+    - 5 or fewer targets
+    - narrow the request
+  forbidden_claims:
+    - compared all 10 targets
+    - ran diagnostics on the first 5 targets
+  required_sources: []
+  expected_routing_decision: chat

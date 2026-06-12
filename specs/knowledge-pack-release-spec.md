@@ -165,7 +165,7 @@ redis-sre-agent-knowledge-pack-v0.4.1.zip
 - `scrapers_run`
 - `source_documents_git_sha`
 - `source_revisions`
-  - e.g. `redis_docs_commit`, `redis_kb_scrape_started_at`, `redis_cloud_api_source`
+  - e.g. `redis_docs_commit`, `redis_cloud_api_source`
 - `record_counts`
   - artifact documents, chunk records, tracked source documents
 
@@ -198,7 +198,6 @@ The first version of the pack should cover the release-managed `knowledge` corpu
 Included sources:
 
 - `redis_docs_local` output from a pinned `redis/docs` checkout
-- `redis_kb`
 - `redis_cloud_api`
 - prepared repo `source_documents/`
 
@@ -344,7 +343,7 @@ Recommended release pipeline:
 2. Fetch a pinned `redis/docs` clone.
 3. Start an ephemeral Redis 8 service.
 4. Run:
-   - `pipeline scrape --scrapers redis_docs_local,redis_kb,redis_cloud_api --latest-only`
+   - `pipeline scrape --scrapers redis_docs_local,redis_cloud_api --latest-only`
    - `pipeline prepare-sources --source-dir ./source_documents --prepare-only`
    - `pipeline ingest --batch-date <same batch>`
 5. Run `knowledge-pack build`.

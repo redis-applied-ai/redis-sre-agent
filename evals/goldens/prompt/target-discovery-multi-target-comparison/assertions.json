@@ -6,18 +6,21 @@
     },
     {
       "provider_family": "redis_command",
-      "operation": "info",
-      "target_handle": "tgt_checkout_cache_prod"
+      "operation": "info"
     },
     {
       "provider_family": "redis_command",
-      "operation": "info",
-      "target_handle": "tgt_session_cache_prod"
+      "operation": "info"
+    },
+    {
+      "provider_family": "redis_command",
+      "operation": "info"
     }
   ],
   "required_findings": [
     "prod checkout cache",
     "prod session cache",
+    "prod cart cache",
     "prod session cache is closer to maxmemory"
   ],
   "required_sources": [

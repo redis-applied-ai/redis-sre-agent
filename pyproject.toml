@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "redis-sre-agent"
-version = "0.5.1"
+version = "0.5.2"
 description = "A LangGraph-based Redis SRE Agent for infrastructure monitoring and incident response"
 readme = "README.md"
 license = {file = "LICENSE.txt"}
@@ -21,6 +21,7 @@ dependencies = [
     "langchain-text-splitters>=1.1.2,<2.0.0",
     "openai>=1.0.0",
     "agent-memory-client>=0.14.0",
+    "tiktoken>=0.11.0",
     "transformers>=5.8.0",
     # Redis and vector search
     "redis>=7.1.0",

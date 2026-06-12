@@ -89,6 +89,15 @@ uv run redis-sre-agent query -t <thread_id> \
   "Keep only the production caches and summarize which one needs attention first"
 ```
 
+For deep triage, the agent can fan out to one triage run per selected target, up to five targets in one request. If target discovery matches more than five Redis targets, the agent asks you to narrow the request instead of triaging a partial set.
+
+Continue the same thread with the smaller set:
+
+```bash
+uv run redis-sre-agent query -t <thread_id> \
+  "Use only checkout-prod, session-prod, and cart-prod"
+```
+
 These discovery-first flows depend on your configured target catalog and bindings. If discovery is
 not configured, use explicit `-r <instance_id>` or `-c <cluster_id>` flags instead.
 
@@ -106,14 +115,6 @@ uv run redis-sre-agent pipeline full
 uv run redis-sre-agent pipeline status
 uv run redis-sre-agent pipeline show-batch --batch <name>
 ```
-#### Runbooks
-```bash
-# Generate standardized runbooks for a topic
-uv run redis-sre-agent runbook generate --topic "Redis memory troubleshooting"
-# Evaluate runbooks you generated or imported
-uv run redis-sre-agent runbook evaluate
-```
-
 ### 5) Search what the agent knows (and verify context)
 Use this to confirm the agent’s view of your knowledge base.
 ```bash
@@ -249,7 +250,10 @@ docker compose exec -T sre-agent uv run redis-sre-agent support-package list
 docker compose exec -T sre-agent uv run redis-sre-agent query -p <package_id> "Show database memory usage"
 ```
 
-### 9) See task status and thread contents
+### 9) Feedback on agent responses
+**feedback**: 👍 / 👎 / withdraw on any task — see [feedback.md](./feedback.md).
+
+### 10) See task status and thread contents
 Tasks track execution; threads hold the conversation + context.
 ```bash
 # Tasks

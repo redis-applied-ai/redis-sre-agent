@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -261,6 +261,56 @@ async def search_knowledge_post(request: SearchRequest):
         limit=request.limit,
         distance_threshold=request.distance_threshold,
     )
+
+
+@router.get("/document-chunks/{document_hash}")
+async def get_knowledge_document_chunks(
+    document_hash: str,
+    include_metadata: bool = Query(True, description="Include document chunk metadata"),
+    index_type: str = Query("knowledge", description="Knowledge index type"),
+    version: Optional[str] = Query(None, description="Optional chunk version filter"),
+) -> Dict[str, Any]:
+    """Fetch the indexed chunks for a document hash."""
+    try:
+        from ..core.knowledge_helpers import get_all_document_fragments
+
+        if not document_hash.strip():
+            raise HTTPException(status_code=400, detail="Document hash cannot be empty")
+
+        result = await get_all_document_fragments(
+            document_hash.strip(),
+            include_metadata=include_metadata,
+            index_type=index_type,
+            version=version,
+        )
+
+        if result.get("error") and not result.get("fragments"):
+            raise HTTPException(status_code=404, detail=result["error"])
+
+        chunks = result.get("fragments", [])
+        return {
+            "document_hash": result.get("document_hash", document_hash.strip()),
+            "index_type": result.get("index_type", index_type),
+            "chunk_count": result.get("fragments_count", len(chunks)),
+            "chunks": chunks,
+            "title": result.get("title"),
+            "source": result.get("source"),
+            "category": result.get("category"),
+            "doc_type": result.get("doc_type"),
+            "name": result.get("name"),
+            "summary": result.get("summary"),
+            "priority": result.get("priority"),
+            "pinned": result.get("pinned"),
+            "metadata": result.get("metadata", {}),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Knowledge document chunks fetch failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Document chunks fetch failed: {str(e)}",
+        )
 
 
 @router.post("/ingest/document")

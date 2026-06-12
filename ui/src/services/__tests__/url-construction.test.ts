@@ -24,8 +24,7 @@ import { SREAgentAPI } from "../sreAgentApi";
 
 describe("URL Construction", () => {
   beforeEach(() => {
-    // Reset any environment variables
-    delete (import.meta as any).env;
+    vi.unstubAllEnvs();
   });
 
   test("should use relative URLs in production", () => {
@@ -56,21 +55,21 @@ describe("URL Construction", () => {
   test("should use environment variable when provided", () => {
     mockLocation("localhost", "3000");
 
-    // Mock import.meta.env
-    (import.meta as any).env = {
-      VITE_API_BASE_URL: "https://custom-api.example.com/api/v1",
-    };
+    vi.stubEnv(
+      "VITE_API_BASE_URL",
+      "https://custom-api.example.com/api/v1",
+    );
 
     const api = new (SREAgentAPI as any)();
     const baseUrl = api.getApiBaseUrl();
     expect(baseUrl).toBe("https://custom-api.example.com/api/v1");
   });
 
-  test("should handle remote hosts correctly", () => {
+  test("should use relative URLs on remote hosts", () => {
     mockLocation("my-server.example.com", "3000");
     const api = new (SREAgentAPI as any)();
 
     const baseUrl = api.getApiBaseUrl();
-    expect(baseUrl).toBe("http://my-server.example.com:8080/api/v1");
+    expect(baseUrl).toBe("/api/v1");
   });
 });

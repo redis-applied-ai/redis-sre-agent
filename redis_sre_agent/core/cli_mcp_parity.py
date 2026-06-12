@@ -17,6 +17,8 @@ EXCLUDED_CLI_COMMAND_PATHS = frozenset(
         "eval list",
         "eval live-suite",
         "eval run",
+        "feedback list",
+        "feedback show",
         "knowledge-pack build",
         "knowledge-pack inspect",
         "knowledge-pack load",
@@ -29,6 +31,9 @@ EXCLUDED_CLI_COMMAND_PATHS = frozenset(
 )
 
 CLI_TO_MCP_TOOL_NAMES = {
+    "feedback down": "redis_sre_submit_feedback",
+    "feedback up": "redis_sre_submit_feedback",
+    "feedback withdraw": "redis_sre_submit_feedback",
     "cache clear": "redis_sre_cache_clear",
     "cache stats": "redis_sre_cache_stats",
     "cluster backfill-instance-links": "redis_sre_backfill_instance_links",
@@ -55,13 +60,10 @@ CLI_TO_MCP_TOOL_NAMES = {
     "pipeline full": "redis_sre_run_pipeline_full",
     "pipeline ingest": "redis_sre_run_pipeline_ingest",
     "pipeline prepare-sources": "redis_sre_prepare_source_documents",
-    "pipeline runbooks": "redis_sre_generate_pipeline_runbooks",
     "pipeline scrape": "redis_sre_run_pipeline_scrape",
     "pipeline show-batch": "redis_sre_get_pipeline_batch",
     "pipeline status": "redis_sre_get_pipeline_status",
     "query": "redis_sre_query",
-    "runbook evaluate": "redis_sre_evaluate_runbooks",
-    "runbook generate": "redis_sre_generate_runbook",
     "schedule create": "redis_sre_create_schedule",
     "schedule delete": "redis_sre_delete_schedule",
     "schedule disable": "redis_sre_disable_schedule",

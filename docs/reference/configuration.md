@@ -95,6 +95,7 @@ For configuration precedence, `.env` behavior, config-file discovery order, and 
 | `llm_initial_delay` | `LLM_INITIAL_DELAY` | `float` | `1.0` | Initial retry delay (seconds). |
 | `llm_backoff_factor` | `LLM_BACKOFF_FACTOR` | `float` | `2.0` | Exponential backoff multiplier. |
 | `llm_timeout` | `LLM_TIMEOUT` | `float` | `180.0` | LLM HTTP timeout in seconds. |
+| `llm_context_token_budget` | `LLM_CONTEXT_TOKEN_BUDGET` | `int \| None` | `None` | Optional cap for estimated input/context tokens sent in one LLM request. Unset disables context budget enforcement. |
 | `llm_factory` | `LLM_FACTORY` | `str \| None` | `None` | Dot-path to custom LangChain chat model factory. |
 | `async_openai_client_factory` | `ASYNC_OPENAI_CLIENT_FACTORY` | `str \| None` | `None` | Dot-path to custom AsyncOpenAI-compatible client factory. |
 | `vectorizer_factory` | `VECTORIZER_FACTORY` | `str \| None` | `None` | Dot-path to custom embeddings/vectorizer factory. |

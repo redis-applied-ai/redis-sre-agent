@@ -750,6 +750,22 @@ class TestYamlConfigLoading:
         finally:
             os.unlink(config_path)
 
+    def test_llm_context_token_budget_loads_from_env(self):
+        """Test loading the optional LLM context token budget from env."""
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "LLM_CONTEXT_TOKEN_BUDGET": "12345",
+            },
+            clear=True,
+        ):
+            from redis_sre_agent.core.config import Settings
+
+            settings = Settings(_env_file=None)
+
+        assert settings.llm_context_token_budget == 12345
+
     def test_yaml_with_list_settings(self):
         """Test loading list settings from YAML.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from click.testing import CliRunner
 
@@ -563,6 +564,59 @@ def test_eval_live_suite_command_defaults_missing_overall_pass_to_failure(tmp_pa
 
     assert result.exit_code == 1
     assert "Overall pass: no" in result.output
+
+
+def test_live_eval_script_loads_repo_dotenv_before_requiring_credentials(tmp_path, monkeypatch):
+    import scripts.run_live_eval_suite as live_eval_script
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(live_eval_script, "_REPO_ROOT", tmp_path)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=dotenv-test-key\n", encoding="utf-8")
+
+    live_eval_script._require_live_model_credentials()
+
+    assert os.environ["OPENAI_API_KEY"] == "dotenv-test-key"
+
+
+def test_live_eval_script_uses_redis_testcontainer_scope(monkeypatch):
+    import scripts.run_live_eval_suite as live_eval_script
+
+    created_images = []
+    exited = False
+    original_settings_redis_url = live_eval_script.config_module.settings.redis_url
+
+    class FakeRedisContainer:
+        port = 6379
+
+        def __init__(self, image: str):
+            created_images.append(image)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            nonlocal exited
+            exited = True
+
+        def get_container_host_ip(self):
+            return "127.0.0.1"
+
+        def get_exposed_port(self, port):
+            assert port == 6379
+            return "49153"
+
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setattr(live_eval_script, "RedisContainer", FakeRedisContainer)
+
+    with live_eval_script._redis_testcontainer_scope(True) as redis_url:
+        assert redis_url == "redis://127.0.0.1:49153/0"
+        assert os.environ["REDIS_URL"] == redis_url
+        assert live_eval_script.config_module.settings.redis_url.get_secret_value() == redis_url
+
+    assert created_images == ["redis:8"]
+    assert exited is True
+    assert "REDIS_URL" not in os.environ
+    assert live_eval_script.config_module.settings.redis_url is original_settings_redis_url
 
 
 def test_eval_list_json_includes_known_scenario():

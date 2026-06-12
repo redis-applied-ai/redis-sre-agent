@@ -108,6 +108,7 @@ export SRE_AGENT_CONFIG=/path/to/my-config.toml
 - `PROMETHEUS_URL` / `GRAFANA_URL`: Optional app-level URLs for integrations
 - `TOOLS_PROMETHEUS_URL` / `TOOLS_LOKI_URL`: Tool-specific endpoints
 - `API_KEY`: API auth key (if you enable auth)
+- `LLM_CONTEXT_TOKEN_BUDGET`: Optional positive integer cap for estimated input/context tokens sent in one LLM request
 - `ALLOWED_HOSTS`: CORS origins (default: `["*"]`)
 
 Example `.env` (local):
@@ -119,6 +120,18 @@ REDIS_URL=redis://localhost:7843/0
 TOOLS_PROMETHEUS_URL=http://localhost:9090
 TOOLS_LOKI_URL=http://localhost:3100
 ```
+
+### LLM context token budget
+
+Set `LLM_CONTEXT_TOKEN_BUDGET` when you want to prevent an oversized outbound LLM request before it reaches the model provider. The agent estimates the input/context tokens for each guarded LLM request, including conversation messages and bound tool payloads when visible to the guard. If the estimate exceeds the configured budget, the task fails before the LLM call with an `LLM context token budget exceeded` error.
+
+Leave the setting unset to disable context budget enforcement. Use a positive integer when enabling it:
+
+```bash
+LLM_CONTEXT_TOKEN_BUDGET=120000
+```
+
+Choose a value below the context window of the model you deploy, leaving room for the model's answer. For example, with a 128k-token model, a value around `120000` gives the request guard space for completion tokens and provider-specific overhead. This setting is separate from `MAX_ITERATIONS`: `MAX_ITERATIONS` limits reasoning cycles, while `LLM_CONTEXT_TOKEN_BUDGET` limits the size of each outbound request.
 
 ### Tool caching
 

@@ -32,7 +32,7 @@ describe("SREAgentAPI", () => {
 
       // Verify the correct API endpoint was called with delete parameter
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/test-thread-123?delete=true",
+        "http://localhost:8080/api/v1/threads/test-thread-123",
         {
           method: "DELETE",
         },
@@ -72,26 +72,15 @@ describe("SREAgentAPI", () => {
   });
 
   describe("cancelTask", () => {
-    it("should successfully cancel a task", async () => {
-      // Mock successful cancellation (204 No Content)
-      (fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        status: 204,
-      });
-
+    it("does not delete a thread when cancelling an in-flight task", async () => {
       await expect(
         sreAgentApi.cancelTask("test-thread-123"),
       ).resolves.toBeUndefined();
 
-      expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/test-thread-123",
-        {
-          method: "DELETE",
-        },
-      );
+      expect(fetch).not.toHaveBeenCalled();
     });
 
-    it("should throw error for failed cancellation", async () => {
+    it("should throw error for failed thread deletion", async () => {
       (fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 404,
@@ -99,34 +88,67 @@ describe("SREAgentAPI", () => {
       });
 
       await expect(
-        sreAgentApi.cancelTask("nonexistent-thread"),
+        sreAgentApi.cancelTask("nonexistent-thread", true),
       ).rejects.toThrow("HTTP 404: Thread not found");
     });
   });
 
   describe("getTaskStatus", () => {
     it("should successfully get task status", async () => {
-      const mockStatus = {
+      const mockThread = {
         thread_id: "test-thread-123",
         status: "completed",
+        messages: [
+          {
+            role: "assistant",
+            content: "Task completed successfully",
+            metadata: { timestamp: "2023-01-01T00:01:00Z" },
+          },
+        ],
         updates: [],
         result: "Task completed successfully",
         metadata: {
           subject: "Test query",
           created_at: "2023-01-01T00:00:00Z",
+          updated_at: "2023-01-01T00:01:00Z",
+          priority: 0,
+          tags: [],
         },
+        context: {},
+        resume_supported: false,
       };
 
       (fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockStatus,
+        json: async () => mockThread,
       });
 
       const result = await sreAgentApi.getTaskStatus("test-thread-123");
 
-      expect(result).toEqual(mockStatus);
+      expect(result).toMatchObject({
+        thread_id: "test-thread-123",
+        status: "completed",
+        messages: [
+          {
+            role: "assistant",
+            content: "Task completed successfully",
+            metadata: { timestamp: "2023-01-01T00:01:00Z" },
+          },
+        ],
+        updates: [],
+        result: "Task completed successfully",
+        resume_supported: false,
+        metadata: {
+          created_at: "2023-01-01T00:00:00Z",
+          updated_at: "2023-01-01T00:01:00Z",
+          priority: 0,
+          tags: [],
+          subject: "Test query",
+        },
+        context: {},
+      });
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/test-thread-123",
+        "http://localhost:8080/api/v1/threads/test-thread-123",
       );
     });
   });

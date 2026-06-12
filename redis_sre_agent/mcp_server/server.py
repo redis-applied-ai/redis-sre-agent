@@ -47,10 +47,7 @@ the background. You MUST watch each task for:
 | `redis_sre_run_pipeline_ingest()` | Ingest a prepared batch | Varies |
 | `redis_sre_run_pipeline_full()` | Run scraping and ingestion together | Varies |
 | `redis_sre_prepare_source_documents()` | Prepare and optionally ingest local source docs | Varies |
-| `redis_sre_generate_pipeline_runbooks()` | Run pipeline runbook operations | Varies |
 | `redis_sre_cleanup_pipeline_batches()` | Remove old pipeline batches | Varies |
-| `redis_sre_generate_runbook()` | Generate a Redis SRE runbook | Varies |
-| `redis_sre_evaluate_runbooks()` | Evaluate runbook markdown files | Varies |
 
 **Note**: Deep triage performs comprehensive analysis including metrics collection, log analysis,
 knowledge base searches, and multi-topic recommendation synthesis. Complex queries or
@@ -143,7 +140,7 @@ while True:
 - Use `redis_sre_get_thread_sources()` and `redis_sre_get_thread_trace()` for thread provenance inspection
 - Use `redis_sre_knowledge_search()` for quick doc lookups (no polling needed)
 - Use fragment tools when you need the full document or nearby chunk context for a search hit
-- Use task-backed pipeline and runbook tools for scrape/ingest/prepare/runbook/cleanup workflows
+- Use task-backed pipeline tools for scrape/ingest/prepare/cleanup workflows
 - Use `redis_sre_get_pipeline_status()` and `redis_sre_get_pipeline_batch()` for ingestion inspection
 - Use support-package tools to upload, inspect, and extract Redis Enterprise diagnostics
 - Use `redis_sre_search_support_tickets()` and `redis_sre_get_support_ticket()` for ticket-only retrieval
@@ -253,6 +250,7 @@ async def redis_sre_deep_triage(
             instance_id=instance_id,
             cluster_id=cluster_id,
             user_id=user_id,
+            extra_context={"requested_agent_type": "triage"},
         )
 
         result = await create_task(
@@ -1053,37 +1051,6 @@ async def redis_sre_prepare_source_documents(
 
 
 @mcp.tool()
-async def redis_sre_generate_pipeline_runbooks(
-    url: Optional[str] = None,
-    test_url: Optional[str] = None,
-    list_urls: bool = False,
-    artifacts_path: str = "./artifacts",
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Create a task to run pipeline runbook generation operations."""
-    from redis_sre_agent.core.pipeline_execution_helpers import queue_pipeline_operation_task
-
-    logger.info("MCP pipeline runbooks request")
-
-    try:
-        return await queue_pipeline_operation_task(
-            operation="runbooks",
-            user_id=user_id,
-            url=url,
-            test_url=test_url,
-            list_urls=list_urls,
-            artifacts_path=artifacts_path,
-        )
-    except Exception as e:
-        logger.error("Pipeline runbooks failed: %s", e)
-        return {
-            "error": str(e),
-            "status": "failed",
-            "message": f"Failed to start pipeline runbooks: {e}",
-        }
-
-
-@mcp.tool()
 async def redis_sre_cleanup_pipeline_batches(
     keep_days: int = 30,
     artifacts_path: str = "./artifacts",
@@ -1114,74 +1081,6 @@ async def redis_sre_cleanup_pipeline_batches(
             "error": str(e),
             "status": "failed",
             "message": f"Failed to start pipeline cleanup: {e}",
-        }
-
-
-@mcp.tool()
-async def redis_sre_generate_runbook(
-    topic: str,
-    scenario_description: str,
-    severity: str = "warning",
-    category: str = "operational_runbook",
-    output_file: Optional[str] = None,
-    requirements: Optional[List[str]] = None,
-    max_iterations: int = 2,
-    auto_save: bool = True,
-    ingest: bool = False,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Create a task to generate a Redis SRE runbook."""
-    from redis_sre_agent.core.runbook_execution_helpers import queue_runbook_operation_task
-
-    logger.info("MCP runbook generate request")
-
-    try:
-        return await queue_runbook_operation_task(
-            operation="generate",
-            user_id=user_id,
-            topic=topic,
-            scenario_description=scenario_description,
-            severity=severity,
-            category=category,
-            output_file=output_file,
-            requirements=requirements,
-            max_iterations=max_iterations,
-            auto_save=auto_save,
-            ingest=ingest,
-        )
-    except Exception as e:
-        logger.error("Runbook generate failed: %s", e)
-        return {
-            "error": str(e),
-            "status": "failed",
-            "message": f"Failed to start runbook generation: {e}",
-        }
-
-
-@mcp.tool()
-async def redis_sre_evaluate_runbooks(
-    input_dir: str = "source_documents/runbooks",
-    output_file: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Create a task to evaluate runbook markdown files."""
-    from redis_sre_agent.core.runbook_execution_helpers import queue_runbook_operation_task
-
-    logger.info("MCP runbook evaluate request")
-
-    try:
-        return await queue_runbook_operation_task(
-            operation="evaluate",
-            user_id=user_id,
-            input_dir=input_dir,
-            output_file=output_file,
-        )
-    except Exception as e:
-        logger.error("Runbook evaluation failed: %s", e)
-        return {
-            "error": str(e),
-            "status": "failed",
-            "message": f"Failed to start runbook evaluation: {e}",
         }
 
 
@@ -3092,6 +2991,92 @@ async def redis_sre_delete_instance(instance_id: str, confirm: bool = False) -> 
             "id": instance_id,
             "status": "failed",
         }
+
+
+@mcp.tool()
+async def redis_sre_submit_feedback(
+    task_id: str,
+    verdict: str,
+    comment: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Submit, update, or withdraw feedback for a completed task.
+
+    Records a thumbs-up / thumbs-down / withdrawal against a task so the
+    SRE team can track agent quality over time.
+
+    Args:
+        task_id: The task ID returned by redis_sre_deep_triage / redis_sre_general_chat
+        verdict: One of "up", "down", or "withdrawn"
+        comment: Optional free-text explanation (max 2048 chars)
+
+    Returns:
+        FeedbackRecord dict with task_id, verdict, comment, created_at, updated_at
+
+    Raises:
+        pydantic.ValidationError: verdict is not one of "up"/"down"/"withdrawn",
+            or comment exceeds 2048 chars.
+        TaskNotFoundError: the task_id does not exist in Redis.
+
+    Note: Unlike redis_sre_general_chat and redis_sre_deep_triage, this tool
+    deliberately does NOT catch exceptions into success-shaped error dicts
+    ({"error": ..., "status": "failed"}). Validation errors and TaskNotFoundError
+    are meaningful signals that MCP callers should handle — swallowing them would
+    hide misuse (wrong verdict value, stale task_id) behind a silent "failed" dict.
+    """
+    # Deferred import — avoids potential import cycles (matches pattern at server.py:338+).
+    from redis_sre_agent.core.feedback import submit_feedback
+
+    record = await submit_feedback(task_id, verdict, comment)
+    return record.model_dump(mode="json")
+
+
+@mcp.tool()
+async def redis_sre_get_feedback(task_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch the joined feedback view for a single task.
+
+    Returns the FeedbackView dict (feedback + task) when feedback exists for the task,
+    or null when the task is known but has not been rated yet.
+    Raises TaskNotFoundError (propagated as a native MCP error) when the task itself does not exist.
+
+    Note: Like redis_sre_submit_feedback (and unlike redis_sre_general_chat), this tool
+    deliberately does NOT catch exceptions into success-shaped error dicts
+    ({"error": ..., "status": "failed"}). TaskNotFoundError is a meaningful signal
+    that MCP callers should handle.
+    """
+    # Deferred import — avoids potential import cycles (matches pattern at server.py:338+).
+    from redis_sre_agent.core.feedback import get_feedback_view
+
+    view = await get_feedback_view(task_id)
+    return view.model_dump(mode="json") if view is not None else None
+
+
+@mcp.tool()
+async def redis_sre_list_feedback(
+    since: Optional[str] = None,
+    verdict: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """List feedback views with optional filters.
+
+    Filters apply AND-semantics; results are sorted by feedback.updated_at descending and clamped to a max of 500.
+    Validation errors propagate as MCP-native errors (e.g. invalid `since` format or unknown `verdict`/`status`).
+
+    Returns: {"items": [<FeedbackView dict>, ...], "count": int}
+
+    Note: Like redis_sre_submit_feedback (and unlike redis_sre_general_chat), this tool
+    deliberately does NOT catch exceptions into success-shaped error dicts
+    ({"error": ..., "status": "failed"}). Validation errors are meaningful signals
+    that MCP callers should handle.
+    """
+    # Deferred import — avoids potential import cycles (matches pattern at server.py:338+).
+    from redis_sre_agent.core.feedback import list_feedback_views
+
+    views = await list_feedback_views(since=since, verdict=verdict, status=status, limit=limit)
+    return {
+        "items": [v.model_dump(mode="json") for v in views],
+        "count": len(views),
+    }
 
 
 # ============================================================================

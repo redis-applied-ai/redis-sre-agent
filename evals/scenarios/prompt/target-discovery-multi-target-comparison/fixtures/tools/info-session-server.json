@@ -1,0 +1,9 @@
+{
+  "target": "prod session cache",
+  "section": "server",
+  "data": {
+    "target": "prod session cache",
+    "redis_version": "8.0.0",
+    "redis_mode": "standalone"
+  }
+}

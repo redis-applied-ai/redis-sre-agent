@@ -1,0 +1,9 @@
+{
+  "target": "prod cart cache",
+  "section": "server",
+  "data": {
+    "target": "prod cart cache",
+    "redis_version": "8.0.0",
+    "redis_mode": "standalone"
+  }
+}

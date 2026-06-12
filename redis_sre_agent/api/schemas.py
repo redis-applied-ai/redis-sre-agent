@@ -11,6 +11,14 @@ from redis_sre_agent.core.approvals import (
     ApprovalRecord,
     PendingApprovalSummary,
 )
+from redis_sre_agent.core.feedback import (  # noqa: F401 — re-exported for API consumers
+    ConversationMessage,
+    FeedbackRecord,
+    FeedbackSubmitRequest,
+    FeedbackView,
+    TaskInfo,
+    ToolCallSummary,
+)
 from redis_sre_agent.core.tasks import TaskStatus
 
 
@@ -101,12 +109,14 @@ class TaskResponse(BaseModel):
     updates: List[Dict[str, Any]] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    citation_groups: List[Dict[str, Any]] = Field(default_factory=list)
     error_message: Optional[str] = None
     pending_approval: Optional[PendingApprovalSummary] = None
     resume_supported: bool = False
     subject: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    feedback: Optional[FeedbackRecord] = None
 
 
 class TaskResumeRequest(BaseModel):
@@ -170,6 +180,7 @@ class ThreadResponse(BaseModel):
     # Task-level fields for real-time updates
     updates: List[Dict[str, Any]] = Field(default_factory=list)
     result: Optional[Dict[str, Any]] = None
+    citation_groups: List[Dict[str, Any]] = Field(default_factory=list)
     error_message: Optional[str] = None
     status: Optional[str] = None
     pending_approval: Optional[PendingApprovalSummary] = None

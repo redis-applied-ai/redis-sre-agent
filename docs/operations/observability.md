@@ -81,7 +81,7 @@ Both the API and worker will automatically instrument and export spans when this
 - **HTTP clients** (HTTPX, AioHTTP)
 - **OpenAI API calls** (via OpenAIInstrumentor)
 - **LangGraph nodes**: Each node in the agent workflow gets a custom span with attributes:
-  - `langgraph.graph` - which graph (e.g., `sre_agent`, `knowledge`, `runbook`)
+  - `langgraph.graph` - which graph (e.g., `sre_agent`, `knowledge`)
   - `langgraph.node` - which node (e.g., `agent`, `tools`, `reasoning`)
 - **LLM calls**: Token usage and latency are added as span attributes
 

@@ -9,6 +9,7 @@ import logging
 
 from docket import Docket
 from fastapi import APIRouter, HTTPException, status
+from redis.exceptions import RedisError
 
 from redis_sre_agent.api.schemas import (
     TaskApprovalListResponse,
@@ -18,12 +19,14 @@ from redis_sre_agent.api.schemas import (
     TaskResumeRequest,
 )
 from redis_sre_agent.core.approvals import ApprovalManager
+from redis_sre_agent.core.citation_message import extract_citation_groups_from_task_result
 from redis_sre_agent.core.docket_tasks import (
     get_redis_url,
     process_agent_turn,
     resume_task_after_approval,
     validate_task_resume_request,
 )
+from redis_sre_agent.core.feedback import get_feedback
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.tasks import TaskManager, TaskStatus, create_task
 from redis_sre_agent.core.tasks import delete_task as delete_task_core
@@ -39,6 +42,12 @@ async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskR
         raise HTTPException(status_code=404, detail="Task not found")
 
     tool_calls = await task_manager.get_task_tool_calls(state)
+    citation_groups = extract_citation_groups_from_task_result(state.result)
+    # Feedback is an optional sidecar; a Redis hiccup must not fail the task GET.
+    try:
+        feedback = await get_feedback(task_id)
+    except RedisError:
+        feedback = None
 
     return TaskResponse(
         task_id=state.task_id,
@@ -47,12 +56,14 @@ async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskR
         updates=[u.model_dump() for u in state.updates],
         result=state.result,
         tool_calls=tool_calls,
+        citation_groups=citation_groups,
         error_message=state.error_message,
         pending_approval=getattr(state, "pending_approval", None),
         resume_supported=bool(getattr(state, "resume_supported", False)),
         subject=state.metadata.subject if state.metadata else None,
         created_at=state.metadata.created_at if state.metadata else None,
         updated_at=state.metadata.updated_at if state.metadata else None,
+        feedback=feedback,
     )
 
 

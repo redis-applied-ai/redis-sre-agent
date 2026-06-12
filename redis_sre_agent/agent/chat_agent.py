@@ -60,6 +60,11 @@ from .helpers import build_result_envelope, coerce_response_text, extract_last_a
 from .knowledge_context import build_startup_knowledge_context, merge_internal_tool_envelopes
 from .models import AgentResponse
 from .prompts import REDIS_COMMAND_SEMANTICS_GUARDRAILS
+from .terminal_synthesis import (
+    TerminalSynthesisConfig,
+    describe_captured_state,
+    synthesize_terminal_response,
+)
 from .tool_execution import execute_tool_calls_with_gate
 
 logger = logging.getLogger(__name__)
@@ -330,6 +335,7 @@ For target discovery:
 - If the user describes a target but has not given `instance_id` or `cluster_id`, call `resolve_redis_targets` before making live-state claims
 - Only treat target discovery as confirmed when it returns an exact live match. If the match is fuzzy, partial, or ambiguous, ask the user to confirm the target before you attach tools or describe live state
 - If the user asks to compare or investigate multiple targets, call `resolve_redis_targets` with `allow_multiple=true`, keep the attached target set, and gather evidence per target before comparing
+- If target discovery returns `status="too_many_matches"`, do not attach or inspect a partial target set. Say there are too many Redis targets, ask the user to narrow the request to the reported `max_selectable` target count, and include "5 or fewer targets" when `max_selectable` is 5
 - If the user asks both "what do you know about?" and asks to drill into one target in the same turn, list first, then resolve the chosen target and continue with the attached live tools
 - A hostname or hostname fragment is not enough to assume a live Redis target. If target discovery does not return an exact live match, do not attach or describe a different Redis deployment as if it were that hostname
 
@@ -403,6 +409,9 @@ class ChatAgent:
 
     # Threshold for summarizing tool outputs (chars)
     ENVELOPE_SUMMARY_THRESHOLD = 500
+    ITERATION_LIMIT_SYNTHESIS_MESSAGE_LIMIT = 14
+    ITERATION_LIMIT_SYNTHESIS_CONTEXT_LIMIT = 16000
+    ITERATION_LIMIT_SYNTHESIS_ITEM_LIMIT = 2000
     SKILL_CONTRACT_REPAIR_ATTEMPT_LIMIT = 1
 
     def _can_attempt_skill_contract_repair(self, state: Dict[str, Any]) -> bool:
@@ -731,7 +740,11 @@ class ChatAgent:
             ),
         ]
         try:
-            repaired = await self.llm.ainvoke(repair_messages)
+            repaired = await guarded_ainvoke(
+                self.llm,
+                repair_messages,
+                request_kind="chat_agent.skill_contract_repair",
+            )
         except Exception as exc:
             logger.warning(
                 "Skill contract repair failed; returning original response: %s",
@@ -756,6 +769,82 @@ class ChatAgent:
             response_text=response_text,
             tool_envelopes=tool_envelopes,
             messages=messages,
+        )
+
+    @staticmethod
+    def _reached_iteration_limit(
+        final_state: Dict[str, Any], requested_max_iterations: int
+    ) -> bool:
+        iteration_count = final_state.get("iteration_count")
+        max_iterations = final_state.get("max_iterations", requested_max_iterations)
+        if not isinstance(iteration_count, int) or not isinstance(max_iterations, int):
+            return False
+        return iteration_count >= max_iterations
+
+    @staticmethod
+    def _iteration_limit_failure_response(
+        *,
+        iteration_count: int,
+        max_iterations: int,
+        messages: List[BaseMessage],
+        tool_envelopes: List[Dict[str, Any]],
+    ) -> str:
+        gathered_text = describe_captured_state(messages=messages, tool_envelopes=tool_envelopes)
+        return (
+            f"I reached the chat iteration limit ({iteration_count}/{max_iterations}) "
+            "before producing a final answer. I was trying to answer the current request "
+            f"and had gathered {gathered_text}. The final synthesis step did not return "
+            "usable text, so I cannot complete the turn cleanly from the captured state."
+        )
+
+    async def _synthesize_iteration_limit_response(
+        self,
+        *,
+        messages: List[BaseMessage],
+        tool_envelopes: List[Dict[str, Any]],
+        iteration_count: int,
+        max_iterations: int,
+    ) -> str:
+        """Produce a terminal answer after the graph loop exhausts its turn budget."""
+        return await synthesize_terminal_response(
+            self.llm,
+            config=TerminalSynthesisConfig(
+                request_kind="chat_agent.iteration_limit_synthesis",
+                system_prompt=(
+                    "The chat workflow stopped because it reached its iteration budget "
+                    "before emitting terminal assistant text. Write the best possible final "
+                    "answer from the gathered conversation and tool evidence. Do not call "
+                    "tools. Do not claim evidence that is not present. If the evidence is "
+                    "incomplete, say what was gathered and what remains uncertain."
+                ),
+                messages_heading="Conversation tail",
+                evidence_heading="Structured tool evidence",
+                no_messages_text="No non-system conversation messages were captured.",
+                no_evidence_text="No structured tool result envelopes were captured.",
+                failure_log_message="Chat agent max-iteration synthesis failed: %s",
+                empty_log_message="Chat agent max-iteration synthesis returned no text",
+                context_limit=self.ITERATION_LIMIT_SYNTHESIS_CONTEXT_LIMIT,
+                item_limit=self.ITERATION_LIMIT_SYNTHESIS_ITEM_LIMIT,
+                message_item_limit=self.ITERATION_LIMIT_SYNTHESIS_ITEM_LIMIT,
+                message_tail_limit=self.ITERATION_LIMIT_SYNTHESIS_MESSAGE_LIMIT,
+                include_system_messages=False,
+                detailed_message_headers=True,
+                empty_message_text="(no text content)",
+                message_omitted_unit="conversation messages",
+                evidence_omitted_unit="tool result envelopes",
+            ),
+            messages=messages,
+            tool_envelopes=tool_envelopes,
+            guarded_invoke=guarded_ainvoke,
+            failure_response_factory=lambda: self._iteration_limit_failure_response(
+                iteration_count=iteration_count,
+                max_iterations=max_iterations,
+                messages=messages,
+                tool_envelopes=tool_envelopes,
+            ),
+            logger=logger,
+            human_prelude=f"Iteration budget: {iteration_count}/{max_iterations}",
+            format_exception=_format_exception_message,
         )
 
     def _build_workflow(
@@ -952,7 +1041,11 @@ class ChatAgent:
                         status_msg = self._tool_call_progress_message(
                             tool_mgr, tool_name, tool_args
                         )
-                        await emitter.emit(status_msg, "tool_call")
+                        await emitter.emit(
+                            status_msg,
+                            "tool_call",
+                            metadata={"tool_name": tool_name, "tool_args": tool_args},
+                        )
 
             with tracer.start_as_current_span("chat_tool_node"):
                 new_tool_messages = await execute_tool_calls_with_gate(
@@ -1286,6 +1379,26 @@ User Query: {query}"""
                             tool_envelopes=tool_envelopes,
                             messages=messages,
                             final_state=final_state,
+                        )
+                        response = AgentResponse(
+                            response=response_text,
+                            tool_envelopes=tool_envelopes,
+                        )
+                        await prepared_memory.persist_response_fail_open(response.response)
+                        return response
+
+                    if self._reached_iteration_limit(final_state, max_iterations):
+                        iteration_count = final_state.get("iteration_count", max_iterations)
+                        state_max_iterations = final_state.get("max_iterations", max_iterations)
+                        if not isinstance(iteration_count, int):
+                            iteration_count = max_iterations
+                        if not isinstance(state_max_iterations, int):
+                            state_max_iterations = max_iterations
+                        response_text = await self._synthesize_iteration_limit_response(
+                            messages=messages,
+                            tool_envelopes=tool_envelopes,
+                            iteration_count=iteration_count,
+                            max_iterations=state_max_iterations,
                         )
                         response = AgentResponse(
                             response=response_text,

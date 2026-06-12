@@ -64,13 +64,9 @@ Generated from the Click command tree.
 - pipeline full — Run the complete pipeline: scraping + ingestion.
 - pipeline ingest — Run the ingestion pipeline to process scraped documents.
 - pipeline prepare-sources — Prepare source documents as batch artifacts, optionally ingest them.
-- pipeline runbooks — Generate standardized runbooks from web sources using GPT-5.
 - pipeline scrape — Run the scraping pipeline to collect SRE documents.
 - pipeline show-batch — Show detailed information about a specific batch.
 - pipeline status — Show pipeline status and available batches.
-- runbook — Redis SRE runbook generation and management commands.
-- runbook evaluate — Evaluate existing runbooks in the source documents directory.
-- runbook generate — Generate a new Redis SRE runbook for the specified topic.
 - query — Execute an agent query.
 - worker — Manage the Docket worker.
 - worker start — Start the background worker.
@@ -99,6 +95,12 @@ Generated from the Click command tree.
 - eval list — List known eval scenario ids.
 - eval live-suite — Run one configured live-model eval suite.
 - eval run — Run one mocked eval scenario.
+- feedback — Agent response feedback commands (up / down / withdraw / show / list).
+- feedback down — Submit a thumbs-down for TASK_ID.
+- feedback list — List feedback views with optional filters.
+- feedback show — Show current feedback for TASK_ID (joined view with task info).
+- feedback up — Submit a thumbs-up for TASK_ID.
+- feedback withdraw — Withdraw feedback for TASK_ID (sets verdict to 'withdrawn').
 - version — Show the Redis SRE Agent version.
 
 See How-to guides for examples.

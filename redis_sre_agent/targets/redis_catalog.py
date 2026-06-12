@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import List
 
-from .contracts import DiscoveryCandidate, DiscoveryRequest, DiscoveryResponse
+from .contracts import (
+    DISCOVERY_STATUS_TOO_MANY_MATCHES,
+    MULTI_TARGET_SELECTION_LIMIT,
+    DiscoveryCandidate,
+    DiscoveryRequest,
+    DiscoveryResponse,
+)
 from .registry import get_target_integration_registry
 
 
@@ -14,19 +20,21 @@ def _select_catalog_candidates(
     *,
     allow_multiple: bool,
     max_results: int,
-) -> tuple[List[DiscoveryCandidate], bool]:
-    selection_limit = min(3, max_results)
+) -> tuple[List[DiscoveryCandidate], bool, bool]:
+    selection_limit = max(1, min(max_results, MULTI_TARGET_SELECTION_LIMIT))
 
     if exact_ranked:
         if allow_multiple:
-            return exact_ranked[:selection_limit], False
+            if len(exact_ranked) > selection_limit:
+                return [], False, True
+            return exact_ranked[:selection_limit], False, False
 
         top_exact = exact_ranked[0]
         if len(exact_ranked) > 1 and exact_ranked[1].score >= top_exact.score - 0.75:
-            return exact_ranked[:selection_limit], True
-        return [top_exact], False
+            return exact_ranked[:selection_limit], True, False
+        return [top_exact], False, False
 
-    return limited[:selection_limit], True
+    return limited[:selection_limit], True, False
 
 
 class RedisCatalogDiscoveryBackend:
@@ -90,24 +98,44 @@ class RedisCatalogDiscoveryBackend:
         exact_ranked.sort(
             key=lambda candidate: (candidate.score, candidate.confidence), reverse=True
         )
-        limited = ranked[: max(1, min(request.max_results, 10))]
+        response_limit = max(1, min(request.max_results, 10))
+        limited = ranked[:response_limit]
         if not limited:
             return DiscoveryResponse(status="no_match")
 
-        selected, clarification_required = _select_catalog_candidates(
+        selected, clarification_required, too_many_matches = _select_catalog_candidates(
             limited,
             exact_ranked,
             allow_multiple=request.allow_multiple,
             max_results=request.max_results,
         )
+        selection_limit = max(1, min(request.max_results, MULTI_TARGET_SELECTION_LIMIT))
+        response_matches = (
+            exact_ranked[:response_limit] if too_many_matches and exact_ranked else limited
+        )
+        match_count = len(exact_ranked) if exact_ranked else len(ranked)
+        status = (
+            DISCOVERY_STATUS_TOO_MANY_MATCHES
+            if too_many_matches
+            else "clarification_required"
+            if clarification_required
+            else "resolved"
+            if selected
+            else "no_match"
+        )
 
         return DiscoveryResponse(
-            status=(
-                "clarification_required"
-                if clarification_required
-                else ("resolved" if selected else "no_match")
-            ),
-            clarification_required=clarification_required,
-            matches=[candidate.public_match for candidate in limited],
+            status=status,
+            clarification_required=clarification_required or too_many_matches,
+            matches=[candidate.public_match for candidate in response_matches],
             selected_matches=selected,
+            message=(
+                f"Matched {match_count} Redis targets, but at most {selection_limit} "
+                "can be selected for one multi-target request. Ask the user to narrow the target set."
+                if too_many_matches
+                else None
+            ),
+            max_selectable=selection_limit if too_many_matches else None,
+            match_count=match_count,
+            truncated=len(response_matches) < match_count,
         )

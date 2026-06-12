@@ -1,8 +1,20 @@
 // SRE Agent API service - Task-based implementation
+
+export type FeedbackVerdict = "up" | "down" | "withdrawn";
+
+export interface FeedbackRecord {
+  task_id: string;
+  verdict: FeedbackVerdict;
+  comment: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
   content: string;
   timestamp?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface TaskUpdate {
@@ -10,6 +22,26 @@ export interface TaskUpdate {
   message: string;
   type: string;
   metadata: Record<string, any>;
+}
+
+export interface TaskToolCall {
+  id?: string;
+  name?: string;
+  tool_name?: string;
+  status?: string;
+  args?: Record<string, any>;
+  tool_args?: Record<string, any>;
+  result?: any;
+  data?: any;
+  message?: string;
+  [key: string]: any;
+}
+
+export interface CitationGroup {
+  group_key?: string;
+  label?: string;
+  count?: number;
+  citations: Array<Record<string, any>>;
 }
 
 export interface PendingApprovalSummary {
@@ -69,9 +101,12 @@ export interface TaskStatusResponse {
   // Updates come from the latest task (progress updates, not conversation)
   updates: TaskUpdate[];
   result?: Record<string, any>;
+  tool_calls?: TaskToolCall[];
+  citation_groups: CitationGroup[];
   error_message?: string;
   pending_approval?: PendingApprovalSummary | null;
   resume_supported: boolean;
+  feedback?: FeedbackRecord | null;
   metadata: {
     created_at: string;
     updated_at: string;
@@ -275,6 +310,56 @@ export interface KnowledgeStatsResponse {
   storage_size_mb: number;
 }
 
+export interface KnowledgeSearchResult {
+  id?: string;
+  document_hash?: string;
+  chunk_index?: number | string | null;
+  title: string;
+  content: string;
+  source: string;
+  category: string;
+  doc_type?: string;
+  version?: string;
+  summary?: string;
+  name?: string;
+  score?: number;
+  severity?: string;
+}
+
+export interface KnowledgeDocumentChunk {
+  id?: string;
+  document_hash?: string;
+  chunk_index?: number | string | null;
+  total_chunks?: number | string | null;
+  title?: string;
+  content?: string;
+  source?: string;
+  category?: string;
+  doc_type?: string;
+  severity?: string;
+  version?: string;
+  name?: string;
+  summary?: string;
+  [key: string]: unknown;
+}
+
+export interface KnowledgeDocumentChunksResponse {
+  document_hash: string;
+  index_type?: string;
+  chunk_count?: number;
+  chunks: KnowledgeDocumentChunk[];
+  title?: string;
+  source?: string;
+  category?: string;
+  doc_type?: string;
+  name?: string;
+  summary?: string;
+  priority?: string;
+  pinned?: boolean;
+  metadata?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface SystemHealthResponse {
   status: string;
   components: {
@@ -401,7 +486,7 @@ export interface ThreadMemoryParams {
   assetClusterId?: string;
 }
 
-class SREAgentAPI {
+export class SREAgentAPI {
   private tasksBaseUrl: string;
 
   constructor(baseUrl?: string) {
@@ -466,6 +551,40 @@ class SREAgentAPI {
     return new URL(urlString, "http://localhost:3000");
   }
 
+  private async getTaskDetail(
+    taskId?: string,
+  ): Promise<Record<string, any> | null> {
+    if (!taskId) return null;
+
+    try {
+      const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}`);
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async getTaskToolCalls(taskId: string): Promise<TaskToolCall[]> {
+    const evidence = await this.getTaskEvidence(taskId);
+    return evidence.toolCalls;
+  }
+
+  async getTaskEvidence(taskId: string): Promise<{
+    toolCalls: TaskToolCall[];
+    citationGroups: CitationGroup[];
+  }> {
+    const taskDetail = await this.getTaskDetail(taskId);
+    return {
+      toolCalls: Array.isArray(taskDetail?.tool_calls)
+        ? taskDetail.tool_calls
+        : [],
+      citationGroups: Array.isArray(taskDetail?.citation_groups)
+        ? taskDetail.citation_groups
+        : [],
+    };
+  }
+
   async submitTriageRequest(
     message: string,
     userId: string,
@@ -505,6 +624,7 @@ class SREAgentAPI {
     }
 
     const data = await response.json(); // TaskCreateResponse
+
     return {
       thread_id: data.thread_id,
       status: data.status,
@@ -554,6 +674,8 @@ class SREAgentAPI {
 
     const thread = await response.json();
 
+    const taskDetail = await this.getTaskDetail(thread.task_id);
+
     // Messages are now at top level; fall back to context.messages for old data
     const messages = Array.isArray(thread.messages)
       ? thread.messages
@@ -570,6 +692,19 @@ class SREAgentAPI {
       status = hasResponse ? "completed" : "in_progress";
     }
 
+    const threadToolCalls = Array.isArray(thread.tool_calls)
+      ? thread.tool_calls
+      : [];
+    const taskToolCalls = Array.isArray(taskDetail?.tool_calls)
+      ? taskDetail.tool_calls
+      : [];
+    const threadCitationGroups = Array.isArray(thread.citation_groups)
+      ? thread.citation_groups
+      : [];
+    const taskCitationGroups = Array.isArray(taskDetail?.citation_groups)
+      ? taskDetail.citation_groups
+      : [];
+
     return {
       thread_id: thread.thread_id,
       task_id: thread.task_id,
@@ -584,14 +719,20 @@ class SREAgentAPI {
         ? thread.updates.map((u: any) => ({
             timestamp: u.timestamp,
             message: u.message,
-            type: u.update_type,
+            type: u.update_type || u.type,
             metadata: u.metadata || {},
           }))
         : [],
       result: thread.result,
+      tool_calls: threadToolCalls.length > 0 ? threadToolCalls : taskToolCalls,
+      citation_groups:
+        threadCitationGroups.length > 0
+          ? threadCitationGroups
+          : taskCitationGroups,
       error_message: thread.error_message,
       pending_approval: thread.pending_approval || null,
       resume_supported: Boolean(thread.resume_supported),
+      feedback: thread.feedback || taskDetail?.feedback || null,
       metadata: {
         created_at: thread?.metadata?.created_at,
         updated_at: thread?.metadata?.updated_at,
@@ -606,7 +747,9 @@ class SREAgentAPI {
   }
 
   async getTaskApprovals(taskId: string): Promise<ApprovalRecord[]> {
-    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}/approvals`);
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/approvals`,
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -621,13 +764,16 @@ class SREAgentAPI {
     taskId: string,
     request: TaskResumeRequest,
   ): Promise<TaskStatusResponse> {
-    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}/resume`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/resume`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
       },
-      body: JSON.stringify(request),
-    });
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -649,9 +795,11 @@ class SREAgentAPI {
           }))
         : [],
       result: task.result,
+      tool_calls: Array.isArray(task.tool_calls) ? task.tool_calls : [],
       error_message: task.error_message,
       pending_approval: task.pending_approval || null,
       resume_supported: Boolean(task.resume_supported),
+      feedback: task.feedback || null,
       metadata: {
         created_at: task.created_at,
         updated_at: task.updated_at,
@@ -832,6 +980,7 @@ class SREAgentAPI {
         role: msg.role,
         content: msg.content,
         timestamp: msg.metadata?.timestamp || status.metadata.updated_at,
+        metadata: msg.metadata,
       })) as ChatMessage[];
     }
 
@@ -844,6 +993,7 @@ class SREAgentAPI {
         role: msg.role,
         content: msg.content,
         timestamp: msg.timestamp || status.metadata.updated_at,
+        metadata: msg.metadata,
       })) as ChatMessage[];
     }
 
@@ -1036,8 +1186,10 @@ class SREAgentAPI {
   }
 
   // Cluster Management Methods
-  async listClusters(params?: ListClustersParams): Promise<ClusterListResponse> {
-    const url = new URL(`${this.tasksBaseUrl}/clusters`);
+  async listClusters(
+    params?: ListClustersParams,
+  ): Promise<ClusterListResponse> {
+    const url = this.createURL(`${this.tasksBaseUrl}/clusters`);
 
     if (params) {
       if (params.environment)
@@ -1128,7 +1280,7 @@ class SREAgentAPI {
   async listInstances(
     params?: ListInstancesParams,
   ): Promise<InstanceListResponse> {
-    const url = new URL(`${this.tasksBaseUrl}/instances`);
+    const url = this.createURL(`${this.tasksBaseUrl}/instances`);
 
     if (params) {
       if (params.environment)
@@ -1337,15 +1489,10 @@ class SREAgentAPI {
     category?: string,
   ): Promise<{
     query: string;
-    results: Array<{
-      id: string;
-      title: string;
-      content: string;
-      source: string;
-      category: string;
-      score: number;
-    }>;
-    total_results: number;
+    results: KnowledgeSearchResult[];
+    total_results?: number;
+    results_count?: number;
+    formatted_output?: string;
   }> {
     const params = new URLSearchParams();
     params.append("query", query);
@@ -1360,6 +1507,38 @@ class SREAgentAPI {
     if (!response.ok) {
       throw new Error(
         `Failed to search knowledge base: ${response.statusText}`,
+      );
+    }
+    return response.json();
+  }
+
+  async getKnowledgeDocumentChunks(
+    documentHash: string,
+    params?: {
+      includeMetadata?: boolean;
+      indexType?: string;
+      version?: string;
+    },
+  ): Promise<KnowledgeDocumentChunksResponse> {
+    const query = new URLSearchParams();
+    if (params?.includeMetadata !== undefined) {
+      query.set("include_metadata", String(params.includeMetadata));
+    }
+    if (params?.indexType) {
+      query.set("index_type", params.indexType);
+    }
+    if (params?.version) {
+      query.set("version", params.version);
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const response = await fetch(
+      `${this.tasksBaseUrl}/knowledge/document-chunks/${encodeURIComponent(
+        documentHash,
+      )}${suffix}`,
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load knowledge document chunks: ${response.statusText}`,
       );
     }
     return response.json();
@@ -1577,6 +1756,41 @@ class SREAgentAPI {
       );
     }
     return response.json();
+  }
+
+  async submitFeedback(
+    taskId: string,
+    verdict: FeedbackVerdict,
+    comment?: string,
+  ): Promise<FeedbackRecord> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/feedback`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ verdict, comment: comment ?? null }),
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+    return response.json();
+  }
+
+  async getFeedback(taskId: string): Promise<FeedbackRecord | null> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/tasks/${taskId}/feedback`,
+    );
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+    const data = await response.json();
+    return data?.feedback || data || null;
   }
 }
 
