@@ -72,7 +72,7 @@ describe("SREAgentAPI", () => {
   });
 
   describe("cancelTask", () => {
-    it("cancels the task associated with a thread", async () => {
+    it("cancels the task associated with a thread without deleting it", async () => {
       (fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
@@ -118,9 +118,9 @@ describe("SREAgentAPI", () => {
       );
       expect(fetch).toHaveBeenNthCalledWith(
         3,
-        "http://localhost:8080/api/v1/tasks/task-456",
+        "http://localhost:8080/api/v1/tasks/task-456/cancel",
         {
-          method: "DELETE",
+          method: "POST",
         },
       );
     });

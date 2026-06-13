@@ -205,6 +205,145 @@ class TestTasksAPI:
         assert resp.status_code == 200
         assert resp.json()["tool_calls"] == tool_calls
 
+    def test_cancel_task_preserves_task_state(self, client):
+        """POST /api/v1/tasks/{task_id}/cancel cancels without deleting task data."""
+
+        class Metadata:
+            subject = "Running task"
+            created_at = "2024-01-01T00:00:00Z"
+            updated_at = "2024-01-01T00:01:00Z"
+
+        class ActiveState:
+            task_id = "t1"
+            thread_id = "th1"
+            status = TaskStatus.IN_PROGRESS
+            updates = []
+            result = None
+            error_message = None
+            metadata = Metadata()
+            pending_approval = {"approval_id": "approval-1"}
+            resume_supported = True
+
+        class CancelledState:
+            task_id = "t1"
+            thread_id = "th1"
+            status = TaskStatus.CANCELLED
+            updates = []
+            result = None
+            error_message = None
+            metadata = Metadata()
+            pending_approval = None
+            resume_supported = False
+
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(side_effect=[ActiveState(), CancelledState()])
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=None)
+        mock_tm.set_pending_approval = AsyncMock()
+        mock_tm.set_resume_supported = AsyncMock()
+        mock_tm.update_task_status = AsyncMock()
+        mock_tm.add_task_update = AsyncMock()
+        docket_instance = AsyncMock()
+        docket_instance.__aenter__.return_value = docket_instance
+        docket_instance.__aexit__.return_value = False
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client", return_value=MagicMock()),
+            patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm),
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
+            patch("redis_sre_agent.api.tasks.Docket", return_value=docket_instance),
+            patch(
+                "redis_sre_agent.api.tasks.delete_task_core",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch(
+                "redis_sre_agent.api.tasks.get_feedback",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            resp = client.post("/api/v1/tasks/t1/cancel")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["task_id"] == "t1"
+        assert data["status"] == TaskStatus.CANCELLED.value
+        docket_instance.cancel.assert_awaited_once_with("t1")
+        mock_tm.set_pending_approval.assert_awaited_once_with("t1", None)
+        mock_tm.set_resume_supported.assert_awaited_once_with("t1", False)
+        mock_tm.update_task_status.assert_awaited_once_with("t1", TaskStatus.CANCELLED)
+        mock_tm.add_task_update.assert_awaited_once_with(
+            "t1",
+            "Task cancelled by user request",
+            "cancellation",
+            None,
+        )
+        mock_delete.assert_not_awaited()
+
+    def test_cancel_task_not_found(self, client):
+        """POST /api/v1/tasks/{task_id}/cancel returns 404 when the task is missing."""
+
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=None)
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client", return_value=MagicMock()),
+            patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            resp = client.post("/api/v1/tasks/missing/cancel")
+
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Task not found"
+        mock_docket.assert_not_called()
+
+    def test_cancel_task_terminal_state_is_idempotent(self, client):
+        """POST /api/v1/tasks/{task_id}/cancel leaves terminal tasks unchanged."""
+
+        class Metadata:
+            subject = "Done task"
+            created_at = "2024-01-01T00:00:00Z"
+            updated_at = "2024-01-01T00:01:00Z"
+
+        class DoneState:
+            task_id = "t1"
+            thread_id = "th1"
+            status = TaskStatus.DONE
+            updates = []
+            result = {"response": "ok"}
+            error_message = None
+            metadata = Metadata()
+            pending_approval = None
+            resume_supported = False
+
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=DoneState())
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=[])
+        mock_tm.set_pending_approval = AsyncMock()
+        mock_tm.set_resume_supported = AsyncMock()
+        mock_tm.update_task_status = AsyncMock()
+        mock_tm.add_task_update = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client", return_value=MagicMock()),
+            patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+            patch(
+                "redis_sre_agent.api.tasks.get_feedback",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            resp = client.post("/api/v1/tasks/t1/cancel")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == TaskStatus.DONE.value
+        mock_docket.assert_not_called()
+        mock_tm.set_pending_approval.assert_not_awaited()
+        mock_tm.set_resume_supported.assert_not_awaited()
+        mock_tm.update_task_status.assert_not_awaited()
+        mock_tm.add_task_update.assert_not_awaited()
+
     def test_delete_task_success(self, client):
         """DELETE /api/v1/tasks/{task_id} cancels Docket task and deletes core state."""
 

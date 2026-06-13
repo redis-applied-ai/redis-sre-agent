@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+TERMINAL_TASK_STATUSES = {
+    TaskStatus.DONE,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELLED,
+}
+
 
 async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskResponse:
     state = await task_manager.get_task_state(task_id)
@@ -195,6 +201,42 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
             await task_manager.set_pending_approval(task_id, pending_approval)
             await task_manager.update_task_status(task_id, TaskStatus.AWAITING_APPROVAL)
         raise
+
+    return await _build_task_response(task_id, task_manager)
+
+
+@router.post("/tasks/{task_id}/cancel", response_model=TaskResponse)
+async def cancel_task(task_id: str) -> TaskResponse:
+    """Cancel a task without deleting its persisted status or history."""
+
+    redis_client = get_redis_client()
+    task_manager = TaskManager(redis_client=redis_client)
+    state = await task_manager.get_task_state(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if state.status not in TERMINAL_TASK_STATUSES:
+        cancel_msg = ""
+        try:
+            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+                try:
+                    await docket.cancel(task_id)
+                except Exception as e:  # pragma: no cover - defensive logging
+                    cancel_msg = f"Failed to cancel Docket task {task_id}: {e}"
+                    logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
+        except Exception as e:  # pragma: no cover - defensive logging
+            cancel_msg = f"Failed to initialize Docket for cancel of {task_id}: {e}"
+            logger.warning("Failed to initialize Docket for cancel of %s: %s", task_id, e)
+
+        await task_manager.set_pending_approval(task_id, None)
+        await task_manager.set_resume_supported(task_id, False)
+        await task_manager.update_task_status(task_id, TaskStatus.CANCELLED)
+        await task_manager.add_task_update(
+            task_id,
+            "Task cancelled by user request",
+            "cancellation",
+            {"cancel_message": cancel_msg} if cancel_msg else None,
+        )
 
     return await _build_task_response(task_id, task_manager)
 

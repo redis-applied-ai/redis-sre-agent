@@ -100,6 +100,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `DELETE` | `/api/v1/tasks/{task_id}` | delete_task |
 | `GET` | `/api/v1/tasks/{task_id}` | get_task |
 | `GET` | `/api/v1/tasks/{task_id}/approvals` | list_task_approvals |
+| `POST` | `/api/v1/tasks/{task_id}/cancel` | cancel_task |
 | `GET` | `/api/v1/tasks/{task_id}/feedback` | get_task_feedback |
 | `POST` | `/api/v1/tasks/{task_id}/feedback` | submit_task_feedback |
 | `POST` | `/api/v1/tasks/{task_id}/resume` | resume_task |
