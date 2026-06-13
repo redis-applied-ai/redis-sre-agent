@@ -6,9 +6,10 @@ from unittest.mock import patch
 
 import click
 import pytest
+from click.testing import CliRunner
 
 from redis_sre_agent.cli.logging_utils import log_cli_exception
-from redis_sre_agent.cli.main import LazyGroup
+from redis_sre_agent.cli.main import LazyGroup, main
 
 
 def test_log_cli_exception_uses_explicit_exception_info_outside_except(caplog):
@@ -46,3 +47,28 @@ def test_lazy_group_skips_duplicate_logging_for_already_logged_exception():
                     group.invoke(ctx)
 
     mock_log.assert_not_called()
+
+
+def test_lazy_group_does_not_log_successful_click_exit():
+    group = LazyGroup(name="test")
+    ctx = click.Context(group)
+
+    with patch("redis_sre_agent.cli.main.log_cli_exception") as mock_log:
+        with patch.object(click.MultiCommand, "invoke", side_effect=click.exceptions.Exit(0)):
+            with pytest.raises(click.exceptions.Exit) as raised:
+                group.invoke(ctx)
+
+    assert raised.value.exit_code == 0
+    mock_log.assert_not_called()
+
+
+def test_nested_help_does_not_log_cli_failure():
+    result = CliRunner().invoke(main, ["pipeline", "--help"])
+    combined_output = result.output
+    if result.stderr:
+        combined_output += result.stderr
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
+    assert "CLI command failed" not in combined_output
+    assert "click.exceptions.Exit" not in combined_output

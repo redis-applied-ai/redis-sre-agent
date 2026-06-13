@@ -40,7 +40,47 @@ Expected 200 response:
 curl -fsS http://localhost:8080/api/v1/tasks/<task_id>/feedback | jq
 ```
 
-Returns the `FeedbackRecord` JSON above (200) or a 404 when no feedback has been submitted yet.
+Returns a joined `FeedbackView` (200) or a 404 when no feedback has been submitted yet. `FeedbackView` contains the stored feedback plus a compact task summary:
+
+```json
+{
+  "feedback": {
+    "task_id": "task-abc123",
+    "verdict": "down",
+    "comment": "Missed the eviction policy angle",
+    "created_at": "2026-05-18T10:00:00.000000+00:00",
+    "updated_at": "2026-05-18T10:05:00.000000+00:00"
+  },
+  "task": {
+    "task_id": "task-abc123",
+    "thread_id": "thread-xyz789",
+    "status": "done",
+    "subject": "Redis memory investigation",
+    "created_at": "2026-05-18T09:59:00.000000+00:00",
+    "updated_at": "2026-05-18T10:04:00.000000+00:00",
+    "error_message": null,
+    "pending_approval": null,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Why is memory high?"
+      },
+      {
+        "role": "assistant",
+        "content": "Memory is high because..."
+      }
+    ],
+    "tool_calls": [
+      {
+        "tool": "redis_info",
+        "args_summary": "section=memory"
+      }
+    ]
+  }
+}
+```
+
+`task.messages` includes trimmed user and assistant messages only. `task.tool_calls` is a compact summary and does not include raw tool outputs.
 
 #### Validation errors (422)
 
@@ -74,6 +114,54 @@ redis_sre_submit_feedback(
 
 Returns the same `FeedbackRecord` dict on success. Unlike most other tools in this server, validation errors (`verdict` outside the enum, `comment` exceeding 2048 chars) and `TaskNotFoundError` propagate as native MCP errors rather than success-shaped `{"error": ..., "status": "failed"}` dicts. Handle them accordingly in your MCP client.
 
+Read the current feedback for one task with `redis_sre_get_feedback`:
+
+```python
+redis_sre_get_feedback(task_id="task-abc123")
+```
+
+This returns the same joined `FeedbackView` shape shown in the HTTP example, or `null` when the task exists but has not been rated yet. If the task itself does not exist, `TaskNotFoundError` propagates as a native MCP error.
+
+List recent feedback with `redis_sre_list_feedback`:
+
+```python
+redis_sre_list_feedback()
+redis_sre_list_feedback(since="24h", verdict="down", status="done", limit=50)
+```
+
+`redis_sre_list_feedback` returns:
+
+```json
+{
+  "items": [
+    {
+      "feedback": {
+        "task_id": "task-abc123",
+        "verdict": "down",
+        "comment": "Missed the eviction policy angle",
+        "created_at": "2026-05-18T10:00:00.000000+00:00",
+        "updated_at": "2026-05-18T10:05:00.000000+00:00"
+      },
+      "task": {
+        "task_id": "task-abc123",
+        "thread_id": "thread-xyz789",
+        "status": "done",
+        "subject": "Redis memory investigation",
+        "created_at": "2026-05-18T09:59:00.000000+00:00",
+        "updated_at": "2026-05-18T10:04:00.000000+00:00",
+        "error_message": null,
+        "pending_approval": null,
+        "messages": [],
+        "tool_calls": []
+      }
+    }
+  ],
+  "count": 1
+}
+```
+
+Filters use AND semantics. `since` accepts `<N>{s,m,h,d}` only, `verdict` accepts `up`, `down`, or `withdrawn`, and `status` filters by task status. `limit` defaults to 50 and is clamped to 500. Invalid filters propagate as MCP-native validation errors.
+
 ### CLI usage
 
 All feedback commands are under the `feedback` subgroup:
@@ -97,6 +185,8 @@ uv run redis-sre-agent feedback show <task_id>
 uv run redis-sre-agent feedback list
 uv run redis-sre-agent feedback list --since 24h --verdict down --limit 50
 ```
+
+**Read output shape**: `feedback show` prints the same joined `FeedbackView` JSON shown above, or `null` when the task exists but has no feedback yet. `feedback list` emits one `FeedbackView` JSON object per line by default, or a table with `--table`.
 
 **`feedback show` exit-code contract**: exits 0 and prints `null` when the task exists but has no feedback yet; exits non-zero only on hard errors (task not found, Redis error).
 

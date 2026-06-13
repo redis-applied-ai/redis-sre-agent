@@ -430,7 +430,7 @@ scrape_configs:
 
 ### High memory usage
 - Reduce worker concurrency: `--concurrency 2`
-- Limit LLM context in `.env`: `MAX_ITERATIONS=15`
+- Cap oversized LLM requests in `.env`: `LLM_CONTEXT_TOKEN_BUDGET=120000`
 - Monitor with: `ps aux | grep redis-sre-agent`
 
 ---

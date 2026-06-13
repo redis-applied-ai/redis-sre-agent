@@ -73,8 +73,8 @@ assumes each operator will rebuild indexable state on their own machine.
 - Auto-refreshing the pack after release publication.
 - Solving fully offline query embeddings in this change alone.
   The pack removes corpus-building work, but query-time embedding compatibility still matters.
-- Shipping LLM-generated `runbook_generator` output in the default release pack.
-  That source is less deterministic and should be handled separately if needed.
+- Shipping ad hoc LLM-generated runbook artifacts in the default release pack.
+  Generated artifacts are less deterministic and should be handled separately if needed.
 
 ## Current-State Constraints
 

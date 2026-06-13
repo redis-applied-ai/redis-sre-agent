@@ -948,10 +948,22 @@ const Triage = () => {
 
         // Add error message if task failed
         if (status.status === "failed") {
+          const resultError =
+            typeof status.result?.error === "string"
+              ? status.result.error
+              : undefined;
+          const resultMessage =
+            typeof status.result?.message === "string"
+              ? status.result.message
+              : undefined;
+          const failureDetail =
+            status.error_message || resultError || resultMessage;
           newMessages.push({
             id: `error-${status.thread_id}`,
             role: "assistant",
-            content: `Chat failed. Please try again or contact support if the issue persists.`,
+            content: failureDetail
+              ? `Chat failed: ${failureDetail}`
+              : `Chat failed. Please try again or contact support if the issue persists.`,
             timestamp: status.metadata.updated_at,
           });
         }

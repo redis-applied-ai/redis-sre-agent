@@ -50,8 +50,10 @@ the background. You MUST watch each task for:
 | `redis_sre_cleanup_pipeline_batches()` | Remove old pipeline batches | Varies |
 
 **Note**: Deep triage performs comprehensive analysis including metrics collection, log analysis,
-knowledge base searches, and multi-topic recommendation synthesis. Complex queries or
-instances with many data sources may take longer.
+knowledge base searches, and multi-topic recommendation synthesis. If target discovery finds
+multiple Redis targets, deep triage can fan out to one child task per target, up to five targets.
+If more than five targets match, the task asks you to narrow the scope instead of running a
+partial triage.
 
 After calling any of these, you MUST:
 1. Get the `task_id` from the response
@@ -207,6 +209,11 @@ async def redis_sre_deep_triage(
     - Synthesizes findings into actionable recommendations
     - Emits notifications as it works (visible via redis_sre_get_task_status)
     - Stores the final result on the task when complete
+    - Can fan out to one child triage task per discovered Redis target, up to five targets
+
+    If target discovery matches more than five Redis targets, the task returns guidance to
+    narrow the request instead of triaging a partial set. Continue the same thread with
+    a smaller target set, such as exact instance names, cluster IDs, environment, or region.
 
     ## How to Use the Task
 
@@ -232,7 +239,9 @@ async def redis_sre_deep_triage(
     """
     from docket import Docket
 
+    from redis_sre_agent.core.clusters import get_cluster_by_id
     from redis_sre_agent.core.docket_tasks import get_redis_url, process_agent_turn
+    from redis_sre_agent.core.instances import get_instance_by_id
     from redis_sre_agent.core.redis import get_redis_client
     from redis_sre_agent.core.tasks import create_task
 
@@ -243,6 +252,26 @@ async def redis_sre_deep_triage(
             return {
                 "status": "failed",
                 "message": "Please provide only one of instance_id or cluster_id",
+            }
+
+        if instance_id and await get_instance_by_id(instance_id) is None:
+            return {
+                "status": "failed",
+                "message": (
+                    f"Redis instance '{instance_id}' was not found. "
+                    "Use redis_sre_list_instances to choose a valid instance_id."
+                ),
+                "instance_id": instance_id,
+            }
+
+        if cluster_id and await get_cluster_by_id(cluster_id) is None:
+            return {
+                "status": "failed",
+                "message": (
+                    f"Redis cluster '{cluster_id}' was not found. "
+                    "Use redis_sre_list_clusters to choose a valid cluster_id."
+                ),
+                "cluster_id": cluster_id,
             }
 
         redis_client = get_redis_client()

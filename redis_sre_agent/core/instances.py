@@ -95,7 +95,7 @@ class RedisInstance(BaseModel):
     connection_url: SecretStr = Field(
         ..., description="Redis connection URL (e.g., redis://localhost:6379)"
     )
-    environment: str = Field(..., description="Environment: development, staging, production")
+    environment: str = Field(..., description="Environment: development, staging, production, test")
 
     @field_serializer("connection_url", "admin_password", when_used="json")
     def dump_secret(self, v):
@@ -435,7 +435,7 @@ async def query_instances(
     """Query instances with server-side filtering and pagination.
 
     Args:
-        environment: Filter by environment (development, staging, production)
+        environment: Filter by environment (development, staging, production, test)
         usage: Filter by usage type (cache, analytics, session, queue, custom)
         status: Filter by status (healthy, unhealthy, unknown)
         instance_type: Filter by type (oss_single, oss_cluster, redis_enterprise, redis_cloud)

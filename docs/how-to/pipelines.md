@@ -15,7 +15,6 @@ This separation allows you to prepare artifacts once (slow) and re-ingest them m
 flowchart TB
     subgraph Sources["📥 Data Sources"]
         WEB["redis.io/docs"]
-        KB["redis.io/kb"]
         API["Cloud API Spec"]
         LOCAL["Local Docs Clone"]
         USER["source_documents/"]
@@ -25,7 +24,6 @@ flowchart TB
         direction TB
         SCRAPERS["Scrapers"]
         WEB --> SCRAPERS
-        KB --> SCRAPERS
         API --> SCRAPERS
         LOCAL --> SCRAPERS
 
@@ -410,7 +408,11 @@ The pipeline uses content hashing for deduplication:
 
 - **Document hash**: SHA-256 of content
 - **Chunk hash**: SHA-256 of chunk content
-- **Deterministic IDs**: `{document_hash}_{chunk_index}`
+- **Deterministic Redis keys**: `sre_knowledge:{document_hash}:chunk:{chunk_index}`
+
+Other corpus indexes use the same shape with their own prefix, for example
+`sre_skills:{document_hash}:chunk:{chunk_index}` and
+`sre_support_tickets:{document_hash}:chunk:{chunk_index}`.
 
 When re-ingesting:
 
