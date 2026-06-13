@@ -89,6 +89,7 @@ async def test_resume_task_after_approval_completes_chat_turn():
     mock_task_manager.update_task_status = AsyncMock()
     mock_task_manager.add_task_update = AsyncMock()
     mock_task_manager.set_task_result = AsyncMock()
+    mock_task_manager.complete_task_if_open = AsyncMock(return_value=True)
 
     mock_thread_manager = AsyncMock()
     mock_thread_manager.get_thread = AsyncMock(return_value=thread)
@@ -129,7 +130,8 @@ async def test_resume_task_after_approval_completes_chat_turn():
     mock_approval_manager.record_decision.assert_awaited_once()
     mock_approval_manager.delete_resume_state.assert_awaited_once_with("task-1")
     mock_task_manager.update_task_status.assert_any_call("task-1", TaskStatus.IN_PROGRESS)
-    mock_task_manager.update_task_status.assert_any_call("task-1", TaskStatus.DONE)
+    mock_task_manager.complete_task_if_open.assert_awaited_once()
+    assert mock_task_manager.complete_task_if_open.await_args.args[0] == "task-1"
     mock_thread_manager.append_messages.assert_awaited_once()
 
 

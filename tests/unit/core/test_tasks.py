@@ -1372,6 +1372,7 @@ class TestProcessAgentTurn:
         mock_task_manager.add_task_update = AsyncMock()
         mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.complete_task_if_open = AsyncMock(return_value=True)
 
         mock_chat_agent = AsyncMock()
         mock_response = AgentResponse(
@@ -1419,9 +1420,9 @@ class TestProcessAgentTurn:
         assert result["message_id"] == "01HXTESTMESSAGEID1234567890"
 
         # Result payload should include the assistant message_id for trace lookup.
-        set_result_call = mock_task_manager.set_task_result.await_args
-        assert set_result_call.args[0] == "provided-task-123"
-        assert set_result_call.args[1]["message_id"] == "01HXTESTMESSAGEID1234567890"
+        complete_call = mock_task_manager.complete_task_if_open.await_args
+        assert complete_call.args[0] == "provided-task-123"
+        assert complete_call.args[1]["message_id"] == "01HXTESTMESSAGEID1234567890"
 
         # The assistant message persisted on thread should preserve message_id + task linkage metadata.
         assistant_msgs = [m for m in mock_thread.messages if m.role == "assistant"]
@@ -1438,6 +1439,79 @@ class TestProcessAgentTurn:
             tool_envelopes=[{"name": "redis_info", "status": "success"}],
             otel_trace_id=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_process_agent_turn_skips_completion_when_cancelled_after_agent_response(self):
+        mock_redis = AsyncMock()
+
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.metadata.subject = "Redis question"
+        mock_thread.messages = []
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager._save_thread_state = AsyncMock()
+        mock_thread_manager.set_message_trace = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.complete_task_if_open = AsyncMock(return_value=True)
+        mock_task_manager.get_task_state = AsyncMock(
+            return_value=MagicMock(status=TaskStatus.CANCELLED)
+        )
+
+        mock_chat_agent = AsyncMock()
+        mock_chat_agent.process_query = AsyncMock(
+            return_value=AgentResponse(
+                response="Late response",
+                search_results=[],
+                tool_envelopes=[{"name": "redis_info", "status": "success"}],
+            )
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            result = await process_agent_turn(
+                thread_id="thread-123",
+                message="What are Redis best practices?",
+                context={"requested_agent_type": "chat"},
+                task_id="provided-task-123",
+            )
+
+        assert result == {
+            "status": TaskStatus.CANCELLED.value,
+            "thread_id": "thread-123",
+            "task_id": "provided-task-123",
+        }
+        mock_task_manager.complete_task_if_open.assert_not_awaited()
+        mock_thread_manager._save_thread_state.assert_not_awaited()
+        mock_thread_manager.set_message_trace.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_approval_result_returns_awaiting_approval(self):
@@ -1763,6 +1837,7 @@ class TestProcessAgentTurn:
         mock_task_manager.add_task_update = AsyncMock()
         mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.complete_task_if_open = AsyncMock(return_value=True)
         mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
         mock_task_manager._publish_stream_update = AsyncMock()
 
@@ -2151,7 +2226,7 @@ class TestProcessAgentTurn:
             assert "cluster_id" not in context
 
         result_payloads = [
-            call.args[1] for call in mock_task_manager.set_task_result.await_args_list
+            call.args[1] for call in mock_task_manager.complete_task_if_open.await_args_list
         ]
         assert {payload["task_id"] for payload in result_payloads} == {
             "child-task-1",
@@ -2365,6 +2440,7 @@ class TestProcessAgentTurn:
         mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager._publish_stream_update = AsyncMock()
+        mock_task_manager.complete_task_if_open = AsyncMock(return_value=True)
         mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
 
         resolution = DiscoveryResponse(
@@ -2433,7 +2509,8 @@ class TestProcessAgentTurn:
         assert "narrow" in result["response"]
         appended_messages = mock_thread_manager.append_messages.await_args.args[1]
         assert [message["role"] for message in appended_messages] == ["user", "assistant"]
-        mock_task_manager.update_task_status.assert_any_await("provided-task-123", TaskStatus.DONE)
+        mock_task_manager.complete_task_if_open.assert_awaited_once()
+        assert mock_task_manager.complete_task_if_open.await_args.args[0] == "provided-task-123"
 
     @pytest.mark.asyncio
     async def test_bound_over_limit_deep_triage_recovers_user_append_failure(self):
@@ -2475,6 +2552,7 @@ class TestProcessAgentTurn:
         mock_task_manager.set_task_result = AsyncMock()
         mock_task_manager.update_task_status = AsyncMock()
         mock_task_manager._publish_stream_update = AsyncMock()
+        mock_task_manager.complete_task_if_open = AsyncMock(return_value=True)
         mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
 
         async def _return_scope(**kwargs):
@@ -2531,7 +2609,8 @@ class TestProcessAgentTurn:
             "assistant",
         ]
         assert append_calls[1].args[1][0]["content"] == "Deep triage all attached caches"
-        mock_task_manager.update_task_status.assert_any_await("provided-task-123", TaskStatus.DONE)
+        mock_task_manager.complete_task_if_open.assert_awaited_once()
+        assert mock_task_manager.complete_task_if_open.await_args.args[0] == "provided-task-123"
 
     @pytest.mark.asyncio
     async def test_process_agent_turn_chat_path_does_not_bind_single_target_for_multi_scope(self):

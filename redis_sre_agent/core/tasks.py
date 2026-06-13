@@ -166,6 +166,41 @@ class TaskManager:
         await self._upsert_task_search_doc(task_id)
         return True
 
+    async def complete_task_if_open(self, task_id: str, result: Dict[str, Any]) -> bool:
+        """Atomically persist a successful result unless the task is already terminal."""
+        import json
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        script = """
+        local status = redis.call('GET', KEYS[1])
+        if not status then
+            return 0
+        end
+        if status == ARGV[1] or status == ARGV[2] or status == ARGV[3] then
+            return 0
+        end
+        redis.call('SET', KEYS[2], ARGV[4])
+        redis.call('SET', KEYS[1], ARGV[5])
+        redis.call('HSET', KEYS[3], 'updated_at', ARGV[6])
+        return 1
+        """
+        completed = await self._redis.eval(
+            script,
+            3,
+            RedisKeys.task_status(task_id),
+            RedisKeys.task_result(task_id),
+            RedisKeys.task_metadata(task_id),
+            TaskStatus.DONE.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.CANCELLED.value,
+            json.dumps(result),
+            TaskStatus.DONE.value,
+            now_iso,
+        )
+        if bool(completed):
+            await self._upsert_task_search_doc(task_id)
+        return bool(completed)
+
     async def set_task_error(self, task_id: str, error_message: str) -> bool:
         await self._redis.set(RedisKeys.task_error(task_id), error_message)
         await self._redis.hset(
