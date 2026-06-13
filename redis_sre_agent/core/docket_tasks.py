@@ -2210,7 +2210,11 @@ async def _process_agent_turn_impl(
                     except Exception:
                         pass
                     return result
-                if resolution.selected_matches:
+                if (
+                    resolution.status == "resolved"
+                    and not resolution.clarification_required
+                    and resolution.selected_matches
+                ):
                     bound_scope = await materialize_bound_target_scope(
                         matches=resolution.selected_matches,
                         thread_id=thread_id,

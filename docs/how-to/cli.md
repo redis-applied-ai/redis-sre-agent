@@ -89,7 +89,7 @@ uv run redis-sre-agent query -t <thread_id> \
   "Keep only the production caches and summarize which one needs attention first"
 ```
 
-For deep triage, the agent can fan out to one triage run per selected target, up to five targets in one request. If target discovery matches more than five Redis targets, the agent asks you to narrow the request instead of triaging a partial set.
+For deep triage, the agent can start from a query-only request, run target discovery first, and fan out to one triage run per selected target, up to five targets in one request. Only resolved target matches are attached for live diagnostics; fuzzy or ambiguous matches request clarification instead. If target discovery matches more than five Redis targets, the agent asks you to narrow the request instead of triaging a partial set.
 
 Continue the same thread with the smaller set:
 
@@ -156,6 +156,7 @@ uv run redis-sre-agent knowledge-pack build \
 - Wrap a query in quotes to force the precise-search path for exact names, document hashes, source filenames, or literal phrases.
 - Unquoted single-token identifiers that contain digits or punctuation also trigger exact matching automatically.
 - Exact-looking queries first check identifier-style fields such as `name` and `source`, then run a literal phrase search across `title`, `summary`, and `content` before semantic results are merged in.
+- If the embedding provider is unavailable, exact identifier and literal phrase searches can still return those RediSearch matches. General semantic ranking still requires a configured vectorizer.
 - General knowledge search excludes pinned docs, skills, and support tickets. Use the support-ticket tools for historical ticket lookups.
 
 Examples:

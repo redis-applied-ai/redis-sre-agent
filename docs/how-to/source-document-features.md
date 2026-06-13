@@ -164,7 +164,83 @@ get_support_ticket("RET-4421")
 get_support_ticket("sre_support_tickets:RET-4421:chunk:0")
 ```
 
-For general knowledge documents, quoted queries trigger the same precise-search path. Use quotes when you need an exact name, source match, or literal phrase search over the document text.
+For general knowledge documents, quoted queries trigger the same precise-search path. Use quotes when you need an exact name, source match, or literal phrase search over the document text. If the embedding provider is unavailable, this path can still return exact RediSearch matches; general semantic ranking still requires a configured vectorizer.
+
+---
+
+## Knowledge Chunk Drill-Down
+
+Search results and citations are chunk-level because ingestion splits each source document before indexing it. Use the shared `document_hash` to open the full indexed document assembled from all chunks.
+
+### UI workflow
+
+From the Knowledge page:
+
+1. Search for a term, source name, quoted exact phrase, or document hash.
+2. Click the result title or **Open document**.
+3. The UI opens `/knowledge/document-chunks/<document_hash>`.
+4. If the search result includes `chunk_index`, the link also includes `#chunk-<chunk_index>` and scrolls to that chunk.
+
+The Triage page uses the same drill-down route for knowledge citations attached to agent responses. Use **Back to Knowledge** on the chunk page to return to the search surface.
+
+You can also paste a chunk reference into Knowledge search:
+
+```text
+chunk:sre_knowledge:<document_hash>:chunk:<chunk_index>
+chunk:<document_hash>:<chunk_index>
+chunk:<document_hash>#<chunk_index>
+chunk:<document_hash>@<chunk_index>
+```
+
+Those forms navigate directly to the document chunks page and target the matching chunk anchor.
+
+### HTTP workflow
+
+Fetch all indexed chunks for one source document:
+
+```bash
+curl -fsS \
+  'http://localhost:8080/api/v1/knowledge/document-chunks/<document_hash>?include_metadata=true&index_type=knowledge&version=latest' \
+  | jq
+```
+
+Response shape:
+
+```json
+{
+  "document_hash": "RET-4421",
+  "index_type": "knowledge",
+  "chunk_count": 2,
+  "title": "Failover Reset Runbook",
+  "source": "source_documents/shared/failover-reset.md",
+  "category": "shared",
+  "doc_type": "runbook",
+  "summary": "Failover reset investigation steps.",
+  "chunks": [
+    {
+      "document_hash": "RET-4421",
+      "chunk_index": 0,
+      "total_chunks": 2,
+      "title": "Failover Reset Runbook",
+      "content": "..."
+    },
+    {
+      "document_hash": "RET-4421",
+      "chunk_index": 1,
+      "total_chunks": 2,
+      "title": "Failover Reset Runbook",
+      "content": "..."
+    }
+  ],
+  "metadata": {}
+}
+```
+
+Chunks are sorted numerically by `chunk_index`. `include_metadata=false` omits the metadata lookup but still returns chunk fields. `index_type` selects the corpus (`knowledge`, `skills`, or `support_tickets`). `version` filters chunks to a specific indexed source version when the corpus includes versioned documents.
+
+### Source-document relationship
+
+`document_hash` identifies one indexed source document; `chunk_index` identifies one fragment within that document. Opening the document-chunks route does not re-read files from `source_documents/`; it reconstructs the view from Redis records that share the same `document_hash`. If a source file is changed and re-ingested, it may receive a new `document_hash`, so old chunk links can stop resolving after cleanup.
 
 ---
 

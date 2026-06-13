@@ -72,12 +72,82 @@ describe("SREAgentAPI", () => {
   });
 
   describe("cancelTask", () => {
-    it("does not delete a thread when cancelling an in-flight task", async () => {
+    it("cancels the task associated with a thread", async () => {
+      (fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            thread_id: "test-thread-123",
+            task_id: "task-456",
+            status: "in_progress",
+            messages: [],
+            updates: [],
+            metadata: {
+              created_at: "2023-01-01T00:00:00Z",
+              updated_at: "2023-01-01T00:01:00Z",
+              tags: [],
+            },
+            context: {},
+            resume_supported: false,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            task_id: "task-456",
+            tool_calls: [],
+            citation_groups: [],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () => "",
+        });
+
       await expect(
         sreAgentApi.cancelTask("test-thread-123"),
       ).resolves.toBeUndefined();
 
-      expect(fetch).not.toHaveBeenCalled();
+      expect(fetch).toHaveBeenNthCalledWith(
+        1,
+        "http://localhost:8080/api/v1/threads/test-thread-123",
+      );
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        "http://localhost:8080/api/v1/tasks/task-456",
+      );
+      expect(fetch).toHaveBeenNthCalledWith(
+        3,
+        "http://localhost:8080/api/v1/tasks/task-456",
+        {
+          method: "DELETE",
+        },
+      );
+    });
+
+    it("throws when the thread has no cancellable task", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          thread_id: "test-thread-123",
+          status: "in_progress",
+          messages: [],
+          updates: [],
+          metadata: {
+            created_at: "2023-01-01T00:00:00Z",
+            updated_at: "2023-01-01T00:01:00Z",
+            tags: [],
+          },
+          context: {},
+          resume_supported: false,
+        }),
+      });
+
+      await expect(sreAgentApi.cancelTask("test-thread-123")).rejects.toThrow(
+        "No cancellable task found for thread test-thread-123",
+      );
+
+      expect(fetch).toHaveBeenCalledTimes(1);
     });
 
     it("should throw error for failed thread deletion", async () => {

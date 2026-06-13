@@ -2170,6 +2170,114 @@ class TestProcessAgentTurn:
         ]
 
     @pytest.mark.asyncio
+    async def test_pre_resolved_deep_triage_does_not_bind_clarification_required_matches(self):
+        mock_redis = AsyncMock()
+        mock_thread = MagicMock()
+        mock_thread.context = {}
+        mock_thread.messages = []
+        mock_thread.metadata.user_id = "test-user"
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+        mock_thread_manager.set_message_trace = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="provided-task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager.get_task_state = AsyncMock(return_value=MagicMock(updates=[]))
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        resolution = TargetResolutionResult(
+            status="clarification_required",
+            clarification_required=True,
+            selected_matches=[
+                ResolvedTargetMatch(
+                    target_kind="instance",
+                    resource_id="redis-prod-cache",
+                    display_name="prod-cache",
+                    environment="production",
+                    target_type="oss_single",
+                    capabilities=["redis", "diagnostics"],
+                    confidence=0.68,
+                    match_reasons=["matched tokens=prod"],
+                ),
+                ResolvedTargetMatch(
+                    target_kind="instance",
+                    resource_id="redis-prod-cache-1",
+                    display_name="prod-cache-1",
+                    environment="production",
+                    target_type="oss_single",
+                    capabilities=["redis", "diagnostics"],
+                    confidence=0.76,
+                    match_reasons=["matched exact target reference"],
+                ),
+            ],
+        )
+        mock_materialize = AsyncMock()
+        mock_run_agent = AsyncMock(
+            return_value={
+                "response": "Triage response",
+                "search_results": [],
+                "tool_envelopes": [],
+                "metadata": {"agent_type": "redis_triage"},
+            }
+        )
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_TRIAGE),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.resolve_target_query",
+                new=AsyncMock(return_value=resolution),
+            ),
+            patch(
+                "redis_sre_agent.core.targets.materialize_bound_target_scope",
+                new=mock_materialize,
+            ),
+            patch("redis_sre_agent.core.docket_tasks.get_sre_agent", return_value=MagicMock()),
+            patch(
+                "redis_sre_agent.core.docket_tasks.run_agent_with_progress",
+                new=mock_run_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ULID", return_value="01HXTESTMESSAGEID1234567890"
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.set_attribute = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            await process_agent_turn(
+                thread_id="thread-123",
+                message="Deep triage prod cache",
+                task_id="provided-task-123",
+            )
+
+        mock_materialize.assert_not_awaited()
+        mock_run_agent.assert_awaited_once()
+        _, kwargs = mock_run_agent.await_args
+        assert not kwargs["agent_context"].get("attached_target_handles")
+        assert not kwargs["agent_context"].get("target_bindings")
+
+    @pytest.mark.asyncio
     async def test_multi_target_deep_triage_fanout_cancels_pending_children_on_cancellation(
         self,
     ):

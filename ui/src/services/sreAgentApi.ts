@@ -897,9 +897,19 @@ export class SREAgentAPI {
       return;
     }
 
-    // Cancelling an in-flight task by thread is not yet supported by the backend.
-    // No-op for now to avoid accidental deletions on Stop.
-    return;
+    const status = await this.getTaskStatus(threadId);
+    const taskId = status.task_id;
+    if (!taskId) {
+      throw new Error(`No cancellable task found for thread ${threadId}`);
+    }
+
+    const response = await fetch(`${this.tasksBaseUrl}/tasks/${taskId}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
   }
 
   // Polling utility for waiting for task completion

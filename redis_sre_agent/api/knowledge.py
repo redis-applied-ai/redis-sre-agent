@@ -333,6 +333,8 @@ async def ingest_single_document(request: DocumentIngestionRequest):
         return {
             "success": True,
             "document_id": result.get("document_id"),
+            "document_hash": result.get("document_hash"),
+            "chunk_count": result.get("chunk_count"),
             "message": f"Document '{request.title}' ingested successfully",
         }
 
