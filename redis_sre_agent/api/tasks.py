@@ -42,6 +42,42 @@ TERMINAL_TASK_STATUSES = {
 }
 
 
+async def _cancel_docket_task(task_id: str) -> str:
+    cancel_msg = ""
+    try:
+        async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
+            try:
+                await docket.cancel(task_id)
+            except Exception as e:  # pragma: no cover - defensive logging
+                cancel_msg = f"Failed to cancel Docket task {task_id}: {e}"
+                logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
+    except Exception as e:  # pragma: no cover - defensive logging
+        cancel_msg = f"Failed to initialize Docket for cancel of {task_id}: {e}"
+        logger.warning("Failed to initialize Docket for cancel of %s: %s", task_id, e)
+    return cancel_msg
+
+
+async def cancel_task_without_deleting(task_id: str, task_manager: TaskManager) -> bool | None:
+    state = await task_manager.get_task_state(task_id)
+    if not state:
+        return None
+
+    if state.status in TERMINAL_TASK_STATUSES:
+        return False
+
+    cancel_msg = await _cancel_docket_task(task_id)
+    await task_manager.set_pending_approval(task_id, None)
+    await task_manager.set_resume_supported(task_id, False)
+    await task_manager.update_task_status(task_id, TaskStatus.CANCELLED)
+    await task_manager.add_task_update(
+        task_id,
+        "Task cancelled by user request",
+        "cancellation",
+        {"cancel_message": cancel_msg} if cancel_msg else None,
+    )
+    return True
+
+
 async def _build_task_response(task_id: str, task_manager: TaskManager) -> TaskResponse:
     state = await task_manager.get_task_state(task_id)
     if not state:
@@ -211,32 +247,9 @@ async def cancel_task(task_id: str) -> TaskResponse:
 
     redis_client = get_redis_client()
     task_manager = TaskManager(redis_client=redis_client)
-    state = await task_manager.get_task_state(task_id)
-    if not state:
+    cancelled = await cancel_task_without_deleting(task_id, task_manager)
+    if cancelled is None:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    if state.status not in TERMINAL_TASK_STATUSES:
-        cancel_msg = ""
-        try:
-            async with Docket(url=await get_redis_url(), name="sre_docket") as docket:
-                try:
-                    await docket.cancel(task_id)
-                except Exception as e:  # pragma: no cover - defensive logging
-                    cancel_msg = f"Failed to cancel Docket task {task_id}: {e}"
-                    logger.warning("Failed to cancel Docket task %s: %s", task_id, e)
-        except Exception as e:  # pragma: no cover - defensive logging
-            cancel_msg = f"Failed to initialize Docket for cancel of {task_id}: {e}"
-            logger.warning("Failed to initialize Docket for cancel of %s: %s", task_id, e)
-
-        await task_manager.set_pending_approval(task_id, None)
-        await task_manager.set_resume_supported(task_id, False)
-        await task_manager.update_task_status(task_id, TaskStatus.CANCELLED)
-        await task_manager.add_task_update(
-            task_id,
-            "Task cancelled by user request",
-            "cancellation",
-            {"cancel_message": cancel_msg} if cancel_msg else None,
-        )
 
     return await _build_task_response(task_id, task_manager)
 

@@ -111,6 +111,7 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 | `GET` | `/api/v1/threads/{thread_id}` | get_thread |
 | `PATCH` | `/api/v1/threads/{thread_id}` | update_thread |
 | `POST` | `/api/v1/threads/{thread_id}/append-messages` | append_messages |
+| `POST` | `/api/v1/threads/{thread_id}/cancel` | cancel_thread_tasks |
 
 ### OpenAPI & docs
 

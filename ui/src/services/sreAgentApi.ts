@@ -897,14 +897,8 @@ export class SREAgentAPI {
       return;
     }
 
-    const status = await this.getTaskStatus(threadId);
-    const taskId = status.task_id;
-    if (!taskId) {
-      throw new Error(`No cancellable task found for thread ${threadId}`);
-    }
-
     const response = await fetch(
-      `${this.tasksBaseUrl}/tasks/${taskId}/cancel`,
+      `${this.tasksBaseUrl}/threads/${threadId}/cancel`,
       {
         method: "POST",
       },

@@ -72,37 +72,11 @@ describe("SREAgentAPI", () => {
   });
 
   describe("cancelTask", () => {
-    it("cancels the task associated with a thread without deleting it", async () => {
-      (fetch as jest.Mock)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            thread_id: "test-thread-123",
-            task_id: "task-456",
-            status: "in_progress",
-            messages: [],
-            updates: [],
-            metadata: {
-              created_at: "2023-01-01T00:00:00Z",
-              updated_at: "2023-01-01T00:01:00Z",
-              tags: [],
-            },
-            context: {},
-            resume_supported: false,
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            task_id: "task-456",
-            tool_calls: [],
-            citation_groups: [],
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          text: async () => "",
-        });
+    it("cancels active tasks for a thread without deleting it", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: async () => "",
+      });
 
       await expect(
         sreAgentApi.cancelTask("test-thread-123"),
@@ -110,41 +84,23 @@ describe("SREAgentAPI", () => {
 
       expect(fetch).toHaveBeenNthCalledWith(
         1,
-        "http://localhost:8080/api/v1/threads/test-thread-123",
-      );
-      expect(fetch).toHaveBeenNthCalledWith(
-        2,
-        "http://localhost:8080/api/v1/tasks/task-456",
-      );
-      expect(fetch).toHaveBeenNthCalledWith(
-        3,
-        "http://localhost:8080/api/v1/tasks/task-456/cancel",
+        "http://localhost:8080/api/v1/threads/test-thread-123/cancel",
         {
           method: "POST",
         },
       );
+      expect(fetch).toHaveBeenCalledTimes(1);
     });
 
-    it("throws when the thread has no cancellable task", async () => {
+    it("throws when thread cancellation fails", async () => {
       (fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          thread_id: "test-thread-123",
-          status: "in_progress",
-          messages: [],
-          updates: [],
-          metadata: {
-            created_at: "2023-01-01T00:00:00Z",
-            updated_at: "2023-01-01T00:01:00Z",
-            tags: [],
-          },
-          context: {},
-          resume_supported: false,
-        }),
+        ok: false,
+        status: 404,
+        text: async () => "Thread not found",
       });
 
       await expect(sreAgentApi.cancelTask("test-thread-123")).rejects.toThrow(
-        "No cancellable task found for thread test-thread-123",
+        "HTTP 404: Thread not found",
       );
 
       expect(fetch).toHaveBeenCalledTimes(1);
