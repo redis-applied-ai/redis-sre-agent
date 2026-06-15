@@ -412,7 +412,7 @@ class UpdateInstanceRequest(BaseModel):
 @router.get("/instances", response_model=InstanceListResponse)
 async def list_instances(
     environment: Optional[str] = Query(
-        None, description="Filter by environment (development, staging, production)"
+        None, description="Filter by environment (development, staging, production, test)"
     ),
     usage: Optional[str] = Query(
         None, description="Filter by usage type (cache, analytics, session, queue, custom)"

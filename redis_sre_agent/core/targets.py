@@ -1148,10 +1148,17 @@ def _contains_token_sequence(haystack: Sequence[str], needle: Sequence[str]) -> 
     return False
 
 
+def _query_contains_exact_term(normalized_query: str, normalized_term: str) -> bool:
+    """Return True when an exact target term appears on identifier boundaries."""
+    if not normalized_query or not normalized_term:
+        return False
+    pattern = re.compile(rf"(?<![a-z0-9_-]){re.escape(normalized_term)}(?![a-z0-9_-])")
+    return bool(pattern.search(normalized_query))
+
+
 def _query_mentions_exact_target(doc: TargetCatalogDoc, hints: Dict[str, Any]) -> bool:
     """Detect exact target mentions embedded inside a larger user query."""
     normalized = hints["normalized"]
-    query_token_list = hints.get("token_list") or _tokenize(normalized)
     exact_terms = _exact_target_terms(doc)
     if normalized and normalized in exact_terms:
         return True
@@ -1159,7 +1166,7 @@ def _query_mentions_exact_target(doc: TargetCatalogDoc, hints: Dict[str, Any]) -
         term_tokens = _tokenize(term)
         if len(term_tokens) < 2:
             continue
-        if _contains_token_sequence(query_token_list, term_tokens):
+        if _query_contains_exact_term(normalized, term):
             return True
     return False
 

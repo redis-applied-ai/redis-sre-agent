@@ -204,7 +204,7 @@ To resolve it:
 - Raise `LLM_CONTEXT_TOKEN_BUDGET`, or unset it to disable context budget enforcement
 
 ### Max iterations limit
-The agent has a max iterations limit (`MAX_ITERATIONS=25`) to prevent runaway loops. If you see "max iterations reached":
+The agent has a max iterations limit to prevent runaway loops. The built-in default is `MAX_ITERATIONS=50`; local `.env` files can override it. If you see "max iterations reached":
 - The query was too complex or ambiguous
 - Try breaking it into smaller, more specific queries
 - Increase `MAX_ITERATIONS` if needed (but monitor costs)

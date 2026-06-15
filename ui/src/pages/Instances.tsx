@@ -101,6 +101,11 @@ const AddInstanceForm = ({
   onCancel,
   initialData,
 }: AddInstanceFormProps) => {
+  const fieldIdPrefix = initialData
+    ? `edit-instance-${initialData.id}`
+    : "add-instance";
+  const fieldId = (name: string) => `${fieldIdPrefix}-${name}`;
+
   // Check if the initial usage is a custom type (not in predefined list)
   const predefinedUsageTypes = [
     "cache",
@@ -441,10 +446,14 @@ const AddInstanceForm = ({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-redis-sm font-medium mb-1">
+          <label
+            htmlFor={fieldId("name")}
+            className="block text-redis-sm font-medium mb-1"
+          >
             Instance Name *
           </label>
           <input
+            id={fieldId("name")}
             type="text"
             required
             value={formData.name}
@@ -457,10 +466,14 @@ const AddInstanceForm = ({
         </div>
 
         <div>
-          <label className="block text-redis-sm font-medium mb-1">
+          <label
+            htmlFor={fieldId("environment")}
+            className="block text-redis-sm font-medium mb-1"
+          >
             Environment *
           </label>
           <select
+            id={fieldId("environment")}
             required
             value={formData.environment}
             onChange={(e) =>
@@ -471,15 +484,20 @@ const AddInstanceForm = ({
             <option value="development">Development</option>
             <option value="staging">Staging</option>
             <option value="production">Production</option>
+            <option value="test">Test</option>
           </select>
         </div>
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium mb-1">
+        <label
+          htmlFor={fieldId("connection-url")}
+          className="block text-redis-sm font-medium mb-1"
+        >
           Connection URL *
         </label>
         <input
+          id={fieldId("connection-url")}
           type="text"
           required
           value={formData.connectionUrl}
@@ -496,10 +514,14 @@ const AddInstanceForm = ({
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium mb-1">
+        <label
+          htmlFor={fieldId("usage")}
+          className="block text-redis-sm font-medium mb-1"
+        >
           Usage Type *
         </label>
         <select
+          id={fieldId("usage")}
           required
           value={formData.usage}
           onChange={(e) =>
@@ -517,6 +539,7 @@ const AddInstanceForm = ({
         {formData.usage === "custom" && (
           <div className="mt-2">
             <input
+              id={fieldId("custom-usage")}
               type="text"
               required
               value={formData.customUsage}
@@ -534,10 +557,14 @@ const AddInstanceForm = ({
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium mb-1">
+        <label
+          htmlFor={fieldId("instance-type")}
+          className="block text-redis-sm font-medium mb-1"
+        >
           Instance Type
         </label>
         <select
+          id={fieldId("instance-type")}
           value={formData.instanceType}
           onChange={(e) =>
             setFormData((prev) => ({ ...prev, instanceType: e.target.value }))
@@ -568,10 +595,14 @@ const AddInstanceForm = ({
         </p>
 
         <div>
-          <label className="block text-redis-sm font-medium mb-1">
+          <label
+            htmlFor={fieldId("cluster-id")}
+            className="block text-redis-sm font-medium mb-1"
+          >
             Linked Cluster
           </label>
           <select
+            id={fieldId("cluster-id")}
             value={formData.clusterId}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, clusterId: e.target.value }))
@@ -622,10 +653,14 @@ const AddInstanceForm = ({
           <div className="space-y-3 p-3 bg-white border border-redis-dusk-07 rounded-redis-sm">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-redis-sm font-medium mb-1">
+                <label
+                  htmlFor={fieldId("cluster-name")}
+                  className="block text-redis-sm font-medium mb-1"
+                >
                   Cluster Name *
                 </label>
                 <input
+                  id={fieldId("cluster-name")}
                   type="text"
                   value={clusterFormData.name}
                   onChange={(e) =>
@@ -639,10 +674,14 @@ const AddInstanceForm = ({
                 />
               </div>
               <div>
-                <label className="block text-redis-sm font-medium mb-1">
+                <label
+                  htmlFor={fieldId("cluster-type")}
+                  className="block text-redis-sm font-medium mb-1"
+                >
                   Cluster Type *
                 </label>
                 <select
+                  id={fieldId("cluster-type")}
                   value={clusterFormData.clusterType}
                   onChange={(e) =>
                     setClusterFormData((prev) => ({
@@ -666,10 +705,14 @@ const AddInstanceForm = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-redis-sm font-medium mb-1">
+                <label
+                  htmlFor={fieldId("cluster-environment")}
+                  className="block text-redis-sm font-medium mb-1"
+                >
                   Environment *
                 </label>
                 <select
+                  id={fieldId("cluster-environment")}
                   value={clusterFormData.environment}
                   onChange={(e) =>
                     setClusterFormData((prev) => ({
@@ -686,10 +729,14 @@ const AddInstanceForm = ({
                 </select>
               </div>
               <div>
-                <label className="block text-redis-sm font-medium mb-1">
+                <label
+                  htmlFor={fieldId("cluster-description")}
+                  className="block text-redis-sm font-medium mb-1"
+                >
                   Description *
                 </label>
                 <input
+                  id={fieldId("cluster-description")}
                   type="text"
                   value={clusterFormData.description}
                   onChange={(e) =>
@@ -709,43 +756,70 @@ const AddInstanceForm = ({
                 <p className="text-redis-xs text-redis-dusk-04">
                   Redis Enterprise clusters require admin API credentials.
                 </p>
-                <input
-                  type="url"
-                  value={clusterFormData.adminUrl}
-                  onChange={(e) =>
-                    setClusterFormData((prev) => ({
-                      ...prev,
-                      adminUrl: e.target.value,
-                    }))
-                  }
-                  className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-                  placeholder="Admin URL (https://cluster:9443)"
-                />
+                <div>
+                  <label
+                    htmlFor={fieldId("cluster-admin-url")}
+                    className="block text-redis-sm font-medium mb-1"
+                  >
+                    Admin API URL
+                  </label>
+                  <input
+                    id={fieldId("cluster-admin-url")}
+                    type="url"
+                    value={clusterFormData.adminUrl}
+                    onChange={(e) =>
+                      setClusterFormData((prev) => ({
+                        ...prev,
+                        adminUrl: e.target.value,
+                      }))
+                    }
+                    className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                    placeholder="https://cluster:9443"
+                  />
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <input
-                    type="text"
-                    value={clusterFormData.adminUsername}
-                    onChange={(e) =>
-                      setClusterFormData((prev) => ({
-                        ...prev,
-                        adminUsername: e.target.value,
-                      }))
-                    }
-                    className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-                    placeholder="Admin username"
-                  />
-                  <input
-                    type="password"
-                    value={clusterFormData.adminPassword}
-                    onChange={(e) =>
-                      setClusterFormData((prev) => ({
-                        ...prev,
-                        adminPassword: e.target.value,
-                      }))
-                    }
-                    className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
-                    placeholder="Admin password"
-                  />
+                  <div>
+                    <label
+                      htmlFor={fieldId("cluster-admin-username")}
+                      className="block text-redis-sm font-medium mb-1"
+                    >
+                      Admin Username
+                    </label>
+                    <input
+                      id={fieldId("cluster-admin-username")}
+                      type="text"
+                      value={clusterFormData.adminUsername}
+                      onChange={(e) =>
+                        setClusterFormData((prev) => ({
+                          ...prev,
+                          adminUsername: e.target.value,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                      placeholder="admin@redis.com"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={fieldId("cluster-admin-password")}
+                      className="block text-redis-sm font-medium mb-1"
+                    >
+                      Admin Password
+                    </label>
+                    <input
+                      id={fieldId("cluster-admin-password")}
+                      type="password"
+                      value={clusterFormData.adminPassword}
+                      onChange={(e) =>
+                        setClusterFormData((prev) => ({
+                          ...prev,
+                          adminPassword: e.target.value,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03"
+                      placeholder="Password"
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -792,10 +866,14 @@ const AddInstanceForm = ({
           </p>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">
+            <label
+              htmlFor={fieldId("admin-url")}
+              className="block text-redis-sm font-medium mb-1"
+            >
               Admin API URL
             </label>
             <input
+              id={fieldId("admin-url")}
               type="url"
               value={formData.adminUrl}
               onChange={(e) =>
@@ -811,10 +889,14 @@ const AddInstanceForm = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-redis-sm font-medium mb-1">
+              <label
+                htmlFor={fieldId("admin-username")}
+                className="block text-redis-sm font-medium mb-1"
+              >
                 Admin Username
               </label>
               <input
+                id={fieldId("admin-username")}
                 type="text"
                 value={formData.adminUsername}
                 onChange={(e) =>
@@ -829,10 +911,14 @@ const AddInstanceForm = ({
             </div>
 
             <div>
-              <label className="block text-redis-sm font-medium mb-1">
+              <label
+                htmlFor={fieldId("admin-password")}
+                className="block text-redis-sm font-medium mb-1"
+              >
                 Admin Password
               </label>
               <input
+                id={fieldId("admin-password")}
                 type="password"
                 value={formData.adminPassword}
                 onChange={(e) =>
@@ -892,10 +978,14 @@ const AddInstanceForm = ({
           </p>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">
+            <label
+              htmlFor={fieldId("cloud-subscription-type")}
+              className="block text-redis-sm font-medium mb-1"
+            >
               Subscription Type
             </label>
             <select
+              id={fieldId("cloud-subscription-type")}
               value={formData.cloudSubscriptionType}
               onChange={(e) =>
                 setFormData((prev) => ({
@@ -912,10 +1002,14 @@ const AddInstanceForm = ({
           </div>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">
+            <label
+              htmlFor={fieldId("cloud-subscription-id")}
+              className="block text-redis-sm font-medium mb-1"
+            >
               Subscription ID
             </label>
             <input
+              id={fieldId("cloud-subscription-id")}
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
@@ -932,10 +1026,14 @@ const AddInstanceForm = ({
           </div>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">
+            <label
+              htmlFor={fieldId("cloud-database-id")}
+              className="block text-redis-sm font-medium mb-1"
+            >
               Database ID
             </label>
             <input
+              id={fieldId("cloud-database-id")}
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
@@ -956,10 +1054,14 @@ const AddInstanceForm = ({
           </div>
 
           <div>
-            <label className="block text-redis-sm font-medium mb-1">
+            <label
+              htmlFor={fieldId("cloud-database-name")}
+              className="block text-redis-sm font-medium mb-1"
+            >
               Database Name
             </label>
             <input
+              id={fieldId("cloud-database-name")}
               type="text"
               value={formData.cloudDatabaseName}
               onChange={(e) =>
@@ -979,10 +1081,14 @@ const AddInstanceForm = ({
       )}
 
       <div>
-        <label className="block text-redis-sm font-medium text-foreground mb-1">
+        <label
+          htmlFor={fieldId("description")}
+          className="block text-redis-sm font-medium text-foreground mb-1"
+        >
           Description *
         </label>
         <textarea
+          id={fieldId("description")}
           required
           value={formData.description}
           onChange={(e) =>
@@ -995,10 +1101,14 @@ const AddInstanceForm = ({
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-foreground mb-1">
+        <label
+          htmlFor={fieldId("repo-url")}
+          className="block text-redis-sm font-medium text-foreground mb-1"
+        >
           Repository URL (optional)
         </label>
         <input
+          id={fieldId("repo-url")}
           type="url"
           value={formData.repoUrl}
           onChange={(e) =>
@@ -1011,10 +1121,14 @@ const AddInstanceForm = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-redis-sm font-medium text-foreground mb-1">
+          <label
+            htmlFor={fieldId("monitoring-identifier")}
+            className="block text-redis-sm font-medium text-foreground mb-1"
+          >
             Monitoring Identifier (optional)
           </label>
           <input
+            id={fieldId("monitoring-identifier")}
             type="text"
             value={formData.monitoringIdentifier}
             onChange={(e) =>
@@ -1033,10 +1147,14 @@ const AddInstanceForm = ({
         </div>
 
         <div>
-          <label className="block text-redis-sm font-medium text-foreground mb-1">
+          <label
+            htmlFor={fieldId("logging-identifier")}
+            className="block text-redis-sm font-medium text-foreground mb-1"
+          >
             Logging Identifier (optional)
           </label>
           <input
+            id={fieldId("logging-identifier")}
             type="text"
             value={formData.loggingIdentifier}
             onChange={(e) =>
@@ -1055,10 +1173,14 @@ const AddInstanceForm = ({
       </div>
 
       <div>
-        <label className="block text-redis-sm font-medium text-foreground mb-1">
+        <label
+          htmlFor={fieldId("notes")}
+          className="block text-redis-sm font-medium text-foreground mb-1"
+        >
           Notes (optional)
         </label>
         <textarea
+          id={fieldId("notes")}
           value={formData.notes}
           onChange={(e) =>
             setFormData((prev) => ({ ...prev, notes: e.target.value }))

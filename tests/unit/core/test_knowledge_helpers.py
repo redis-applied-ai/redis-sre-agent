@@ -1,5 +1,6 @@
 """Tests for knowledge helper functions."""
 
+import hashlib
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -403,6 +404,52 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results_count"] == 2
         assert result["results"][0]["document_hash"] == "abc123def456"
         assert result["results"][1]["id"] == "doc-semantic"
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_returns_exact_match_when_embedding_unavailable(self):
+        """Exact identifier searches should degrade to exact RediSearch hits."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [],
+                [
+                    {
+                        "id": "doc-exact",
+                        "document_hash": "abc123def456",
+                        "chunk_index": 0,
+                        "title": "Exact doc",
+                        "content": "Exact hash match",
+                        "source": "docs",
+                        "category": "general",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                    }
+                ],
+                [],
+                [],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(side_effect=Exception("OpenAI API error"))
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(query="abc123def456", limit=10)
+
+        assert result["results_count"] == 1
+        assert result["results"][0]["document_hash"] == "abc123def456"
+        assert mock_index.query.call_count == 4
+        assert mock_vectorizer.aembed_many.await_count == 1
 
     @pytest.mark.asyncio
     async def test_search_knowledge_base_identifier_query_runs_literal_text_query(self):
@@ -1263,7 +1310,24 @@ class TestIngestSreDocumentHelper:
         assert result["category"] == "runbook"
         assert result["doc_type"] == "knowledge"
         assert "document_id" in result
+        expected_document_hash = hashlib.sha256(
+            "Test Document||This is test content||test".encode()
+        ).hexdigest()[:16]
+        expected_content_hash = hashlib.sha256("This is test content".encode()).hexdigest()
+        expected_key = f"sre_knowledge:{expected_document_hash}:chunk:0"
+        assert result["document_id"] == expected_key
+        assert result["document_hash"] == expected_document_hash
+        assert result["chunk_count"] == 1
         mock_index.load.assert_called_once()
+        call_args = mock_index.load.call_args
+        doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
+        keys = call_args.kwargs.get("keys") or call_args[1].get("keys")
+        assert keys == [expected_key]
+        assert doc_data[0]["id"] == expected_key
+        assert doc_data[0]["document_hash"] == expected_document_hash
+        assert doc_data[0]["content_hash"] == expected_content_hash
+        assert doc_data[0]["chunk_index"] == 0
+        assert doc_data[0]["version"] == "latest"
 
     @pytest.mark.asyncio
     async def test_ingest_document_with_product_labels(self):
@@ -1302,6 +1366,9 @@ class TestIngestSreDocumentHelper:
         assert doc_data[0]["product_labels"] == "redis-cloud,enterprise"
         assert doc_data[0]["doc_type"] == "skill"
         assert doc_data[0]["pinned"] == "false"
+        assert doc_data[0]["id"].startswith("sre_skills:")
+        assert doc_data[0]["id"].endswith(":chunk:0")
+        assert doc_data[0]["chunk_index"] == 0
 
     @pytest.mark.asyncio
     async def test_ingest_support_ticket_defaults_pinned_false(self):
@@ -1337,6 +1404,9 @@ class TestIngestSreDocumentHelper:
         call_args = mock_index.load.call_args
         doc_data = call_args.kwargs.get("data") or call_args[1].get("data")
         assert doc_data[0]["pinned"] == "false"
+        assert doc_data[0]["id"].startswith("sre_support_tickets:")
+        assert doc_data[0]["id"].endswith(":chunk:0")
+        assert doc_data[0]["document_hash"]
 
 
 class TestGetAllDocumentFragments:

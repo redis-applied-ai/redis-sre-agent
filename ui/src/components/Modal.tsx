@@ -62,13 +62,13 @@ const Modal = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black bg-opacity-50 transition-opacity"
+        className="absolute inset-0 z-0 bg-black bg-opacity-50 transition-opacity"
         onClick={handleOverlayClick}
       />
 
       {/* Modal */}
       <div
-        className={`relative rounded-redis-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}
+        className={`relative z-10 rounded-redis-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}
         style={{
           backgroundColor: "var(--card)",
           color: "var(--card-foreground)",

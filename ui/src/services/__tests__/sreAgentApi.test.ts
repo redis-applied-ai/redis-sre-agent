@@ -72,12 +72,38 @@ describe("SREAgentAPI", () => {
   });
 
   describe("cancelTask", () => {
-    it("does not delete a thread when cancelling an in-flight task", async () => {
+    it("cancels active tasks for a thread without deleting it", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: async () => "",
+      });
+
       await expect(
         sreAgentApi.cancelTask("test-thread-123"),
       ).resolves.toBeUndefined();
 
-      expect(fetch).not.toHaveBeenCalled();
+      expect(fetch).toHaveBeenNthCalledWith(
+        1,
+        "http://localhost:8080/api/v1/threads/test-thread-123/cancel",
+        {
+          method: "POST",
+        },
+      );
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws when thread cancellation fails", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => "Thread not found",
+      });
+
+      await expect(sreAgentApi.cancelTask("test-thread-123")).rejects.toThrow(
+        "HTTP 404: Thread not found",
+      );
+
+      expect(fetch).toHaveBeenCalledTimes(1);
     });
 
     it("should throw error for failed thread deletion", async () => {

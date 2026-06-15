@@ -108,6 +108,7 @@ export SRE_AGENT_CONFIG=/path/to/my-config.toml
 - `PROMETHEUS_URL` / `GRAFANA_URL`: Optional app-level URLs for integrations
 - `TOOLS_PROMETHEUS_URL` / `TOOLS_LOKI_URL`: Tool-specific endpoints
 - `API_KEY`: API auth key (if you enable auth)
+- `MAX_ITERATIONS`: Main-agent reasoning-cycle limit (built-in default: `50`)
 - `LLM_CONTEXT_TOKEN_BUDGET`: Optional positive integer cap for estimated input/context tokens sent in one LLM request
 - `ALLOWED_HOSTS`: CORS origins (default: `["*"]`)
 
@@ -132,6 +133,8 @@ LLM_CONTEXT_TOKEN_BUDGET=120000
 ```
 
 Choose a value below the context window of the model you deploy, leaving room for the model's answer. For example, with a 128k-token model, a value around `120000` gives the request guard space for completion tokens and provider-specific overhead. This setting is separate from `MAX_ITERATIONS`: `MAX_ITERATIONS` limits reasoning cycles, while `LLM_CONTEXT_TOKEN_BUDGET` limits the size of each outbound request.
+
+The built-in `MAX_ITERATIONS` default is `50`. The `.env.example` file shows a commented lower override for local runs, but an unset value uses the settings default.
 
 ### Tool caching
 

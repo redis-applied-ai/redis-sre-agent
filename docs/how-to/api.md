@@ -201,7 +201,7 @@ curl -fsS -X POST http://localhost:8080/api/v1/tasks \
   }' | jq
 ```
 
-For deep triage, the agent can fan out to one triage run per selected target, up to five targets in one request. If target discovery matches more than five Redis targets, the task response asks you to narrow the request instead of triaging a partial set. Continue the same thread with the smaller set:
+For deep triage, the agent can start from a query-only request, run target discovery first, and fan out to one triage run per selected target, up to five targets in one request. Only resolved target matches are attached for live diagnostics; fuzzy or ambiguous matches request clarification instead. If target discovery matches more than five Redis targets, the task response asks you to narrow the request instead of triaging a partial set. Continue the same thread with the smaller set:
 
 ```bash
 curl -fsS -X POST http://localhost:8080/api/v1/tasks \

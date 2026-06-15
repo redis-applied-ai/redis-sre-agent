@@ -6,6 +6,7 @@ They are called by:
 - Tools (in agent.knowledge_agent) for LLM access with custom docstrings
 """
 
+import hashlib
 import logging
 import re
 import time
@@ -1170,17 +1171,6 @@ async def search_knowledge_base_helper(
         category_filter = Tag("category") == category
         filter_expr = category_filter if filter_expr is None else (filter_expr & category_filter)
         logger.debug("Applying category filter: %s", category)
-    # Always use vector search (tests rely on embedding being used)
-    vectorizer = get_vectorizer(config=config)
-
-    # Measure embedding latency and trace it
-    _t0 = time.monotonic()
-    with tracer.start_as_current_span("knowledge.embed") as _span:
-        _span.set_attribute("query.length", len(query))
-        vectors = await vectorizer.aembed_many([query])
-    _t1 = time.monotonic()
-
-    query_vector = vectors[0] if vectors else []
 
     exact_match_search = _looks_like_precise_search_query(query, normalized_index_type)
     precise_search = hybrid_search or exact_match_search
@@ -1212,6 +1202,29 @@ async def search_knowledge_base_helper(
         else []
     )
     effective_hybrid_search = hybrid_search or precise_search
+    query_vector: List[float] = []
+    semantic_search_available = True
+
+    # Measure embedding latency and trace it. Exact-looking queries can still
+    # return identifier/text hits when the embedding provider is unavailable.
+    _t0 = time.monotonic()
+    try:
+        vectorizer = get_vectorizer(config=config)
+        with tracer.start_as_current_span("knowledge.embed") as _span:
+            _span.set_attribute("query.length", len(query))
+            vectors = await vectorizer.aembed_many([query])
+        _t1 = time.monotonic()
+        query_vector = vectors[0] if vectors else []
+    except Exception as exc:
+        _t1 = time.monotonic()
+        if exact_match_search and (exact_matches or precise_text_matches):
+            semantic_search_available = False
+            logger.warning(
+                "Embedding search unavailable for exact knowledge query; returning exact matches: %s",
+                exc,
+            )
+        else:
+            raise
 
     # We need to fetch more results if there's an offset, then slice.
     # This path merges exact/quoted prequery results with semantic results and
@@ -1293,17 +1306,20 @@ async def search_knowledge_base_helper(
 
     # Perform vector search
     _t2 = time.monotonic()
-    with tracer.start_as_current_span("knowledge.index.query") as _span:
-        _span.set_attribute("limit", int(limit))
-        _span.set_attribute("offset", int(offset))
-        _span.set_attribute("hybrid_search", bool(effective_hybrid_search))
-        _span.set_attribute("version", version or "all")
-        _span.set_attribute(
-            "distance_threshold",
-            float(distance_threshold) if distance_threshold is not None else -1.0,
-        )
-        _span.set_attribute("query.filtered", bool(filter_expr is not None))
-        all_results = await _run_query(filter_expr, fetch_limit)
+    if semantic_search_available:
+        with tracer.start_as_current_span("knowledge.index.query") as _span:
+            _span.set_attribute("limit", int(limit))
+            _span.set_attribute("offset", int(offset))
+            _span.set_attribute("hybrid_search", bool(effective_hybrid_search))
+            _span.set_attribute("version", version or "all")
+            _span.set_attribute(
+                "distance_threshold",
+                float(distance_threshold) if distance_threshold is not None else -1.0,
+            )
+            _span.set_attribute("query.filtered", bool(filter_expr is not None))
+            all_results = await _run_query(filter_expr, fetch_limit)
+    else:
+        all_results = []
     _t3 = time.monotonic()
 
     merged_results = _dedupe_docs([*exact_matches, *precise_text_matches, *all_results])
@@ -1324,17 +1340,20 @@ async def search_knowledge_base_helper(
     # while preserving other filters such as version/doc_type.
     if category is not None and len(filtered_results) == 0:
         category_fallback_expr = Tag("version") == version if version is not None else None
-        with tracer.start_as_current_span("knowledge.index.query") as _span:
-            _span.set_attribute("limit", int(limit))
-            _span.set_attribute("offset", int(offset))
-            _span.set_attribute("hybrid_search", bool(effective_hybrid_search))
-            _span.set_attribute("version", version or "all")
-            _span.set_attribute(
-                "distance_threshold",
-                float(distance_threshold) if distance_threshold is not None else -1.0,
-            )
-            _span.set_attribute("query.filtered", bool(category_fallback_expr is not None))
-            category_fallback_results = await _run_query(category_fallback_expr, fetch_limit)
+        if semantic_search_available:
+            with tracer.start_as_current_span("knowledge.index.query") as _span:
+                _span.set_attribute("limit", int(limit))
+                _span.set_attribute("offset", int(offset))
+                _span.set_attribute("hybrid_search", bool(effective_hybrid_search))
+                _span.set_attribute("version", version or "all")
+                _span.set_attribute(
+                    "distance_threshold",
+                    float(distance_threshold) if distance_threshold is not None else -1.0,
+                )
+                _span.set_attribute("query.filtered", bool(category_fallback_expr is not None))
+                category_fallback_results = await _run_query(category_fallback_expr, fetch_limit)
+        else:
+            category_fallback_results = []
 
         fallback_exact_matches = (
             await _find_exact_document_matches(
@@ -1487,15 +1506,18 @@ async def ingest_sre_document_helper(
     # Create document embedding (as_buffer=True for Redis storage)
     content_vector = await vectorizer.aembed(content, as_buffer=True)
 
-    # Prepare document data
-    doc_id = str(ULID())
+    # Prepare document data using the same chunk schema as pipeline ingestion.
+    document_hash = hashlib.sha256(f"{title}||{content}||{source}".encode()).hexdigest()[:16]
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
     key_prefix = _INDEX_TYPE_TO_PREFIX.get(index_type, "sre_knowledge")
-    doc_key = f"{key_prefix}:{doc_id}"
+    doc_key = f"{key_prefix}:{document_hash}:chunk:0"
 
     # Convert product_labels list to comma-separated string for tag field
     product_labels_str = ",".join(product_labels) if product_labels else ""
     document = {
-        "id": doc_id,
+        "id": doc_key,
+        "document_hash": document_hash,
+        "content_hash": content_hash,
         "title": title,
         "content": content,
         "source": source,
@@ -1510,6 +1532,8 @@ async def ingest_sre_document_helper(
         "product_labels": product_labels_str,
         "product_label_tags": product_labels_str,  # Duplicate for tag searching
         "pinned": "false",
+        "version": "latest",
+        "chunk_index": 0,
     }
 
     # Store in vector index
@@ -1517,7 +1541,9 @@ async def ingest_sre_document_helper(
 
     result = {
         "task_id": str(ULID()),
-        "document_id": doc_id,
+        "document_id": doc_key,
+        "document_hash": document_hash,
+        "chunk_count": 1,
         "title": title,
         "source": source,
         "category": category,
@@ -1526,7 +1552,7 @@ async def ingest_sre_document_helper(
         "status": "ingested",
     }
 
-    logger.info(f"Document ingested successfully: {doc_id}")
+    logger.info(f"Document ingested successfully: {doc_key}")
     return result
 
 
