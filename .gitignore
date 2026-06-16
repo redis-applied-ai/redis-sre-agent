@@ -149,3 +149,5 @@ eval_reports
 specs/
 docs/superpowers/
 source_documents/packs
+# Private/generated KB exports.
+source_documents/kb/
