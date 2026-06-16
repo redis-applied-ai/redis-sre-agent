@@ -1,5 +1,6 @@
 """Tests for MCP server tools."""
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -170,6 +171,14 @@ class TestMCPServerSetup:
         assert "redis_sre_backfill_empty_thread_subjects" in tool_names
         assert "redis_sre_purge_threads" in tool_names
 
+    def test_mcp_server_does_not_register_removed_runbook_generation_tools(self):
+        """Test that removed runbook-generation tools are absent from discovery metadata."""
+        tool_names = {t.name for t in mcp._tool_manager._tools.values()}
+
+        assert "redis_sre_generate_pipeline_runbooks" not in tool_names
+        assert "redis_sre_generate_runbook" not in tool_names
+        assert "redis_sre_evaluate_runbooks" not in tool_names
+
 
 class TestCliMcpParityAuditTool:
     """Test the redis_sre_audit_cli_mcp_parity MCP tool."""
@@ -333,9 +342,14 @@ class TestDeepTriageTool:
         }
 
         with (
+            patch(
+                "redis_sre_agent.core.instances.get_instance_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get_instance,
             patch("redis_sre_agent.core.redis.get_redis_client"),
             patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
         ):
+            mock_get_instance.return_value = MagicMock()
             mock_create.return_value = mock_result
 
             result = await redis_sre_deep_triage(
@@ -383,9 +397,14 @@ class TestDeepTriageTool:
         }
 
         with (
+            patch(
+                "redis_sre_agent.core.clusters.get_cluster_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get_cluster,
             patch("redis_sre_agent.core.redis.get_redis_client"),
             patch("redis_sre_agent.core.tasks.create_task", new_callable=AsyncMock) as mock_create,
         ):
+            mock_get_cluster.return_value = MagicMock()
             mock_create.return_value = mock_result
 
             result = await redis_sre_deep_triage(
@@ -408,6 +427,56 @@ class TestDeepTriageTool:
 
         assert result["status"] == "failed"
         assert "only one of instance_id or cluster_id" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_deep_triage_rejects_missing_instance_id(self):
+        """Test deep triage rejects stale explicit instance IDs before task creation."""
+        with (
+            patch(
+                "redis_sre_agent.core.instances.get_instance_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get_instance,
+            patch(
+                "redis_sre_agent.core.tasks.create_task",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            mock_get_instance.return_value = None
+
+            result = await redis_sre_deep_triage(
+                query="High memory usage",
+                instance_id="missing-instance",
+            )
+
+            assert result["status"] == "failed"
+            assert result["instance_id"] == "missing-instance"
+            assert "redis_sre_list_instances" in result["message"]
+            mock_create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deep_triage_rejects_missing_cluster_id(self):
+        """Test deep triage rejects stale explicit cluster IDs before task creation."""
+        with (
+            patch(
+                "redis_sre_agent.core.clusters.get_cluster_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get_cluster,
+            patch(
+                "redis_sre_agent.core.tasks.create_task",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            mock_get_cluster.return_value = None
+
+            result = await redis_sre_deep_triage(
+                query="Cluster check",
+                cluster_id="missing-cluster",
+            )
+
+            assert result["status"] == "failed"
+            assert result["cluster_id"] == "missing-cluster"
+            assert "redis_sre_list_clusters" in result["message"]
+            mock_create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_deep_triage_error_handling(self):
@@ -2944,6 +3013,34 @@ class TestGetTaskStatusTool:
             assert result["pending_approval"] == {"approval_id": "approval-1"}
             assert result["resume_supported"] is True
             assert "tool_calls" not in result
+
+    @pytest.mark.asyncio
+    async def test_get_task_status_callable_through_fastmcp(self):
+        """Task status polling should work through the advertised MCP tool path."""
+        mock_task = {
+            "task_id": "task-123",
+            "thread_id": "thread-456",
+            "status": "done",
+            "updates": [],
+            "result": {"response": "Complete"},
+            "metadata": {"subject": "Health check"},
+        }
+
+        with patch(
+            "redis_sre_agent.core.tasks.get_task_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_task,
+        ):
+            content, structured = await mcp.call_tool(
+                "redis_sre_get_task_status",
+                {"task_id": "task-123"},
+            )
+
+        payload = json.loads(content[0].text)
+        assert payload["task_id"] == "task-123"
+        assert payload["status"] == "done"
+        assert structured["result"]["task_id"] == "task-123"
+        assert structured["result"]["result"] == {"response": "Complete"}
 
     @pytest.mark.asyncio
     async def test_get_task_status_not_found(self):

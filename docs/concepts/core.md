@@ -88,7 +88,7 @@ The system uses **three specialized agents** selected automatically based on you
 |-------|-----------|-----------------|----------|
 | **Knowledge Agent** | No Redis instance linked | Knowledge base search only | General Redis questions, best practices, documentation lookup |
 | **Chat Agent** | Instance linked (default) | All tools (Redis CLI, Prometheus, Loki, MCP servers, etc.) | Most queries: health checks, diagnostics, troubleshooting, status checks |
-| **Deep Triage Agent** | Instance linked + explicit "deep" request | All tools + parallel multi-topic research | Deep investigation with trigger phrases: "deep triage", "deep research", "go deep", "deep dive" |
+| **Deep Triage Agent** | Explicit "deep" request with linked scope or resolvable target text | All tools + parallel multi-topic research | Deep investigation with trigger phrases: "deep triage", "deep research", "go deep", "deep dive" |
 
 ### Automatic Routing
 
@@ -97,9 +97,12 @@ The router (`redis_sre_agent/agent/router.py`) uses a fast LLM (nano model) to c
 ```
 Query received
     │
-    ├── No instance_id? ──────────────────► Knowledge Agent
+    ├── No target scope?
+    │       │
+    │       ├── Explicit deep triage request? ──► Target discovery ──► Deep Triage Agent or clarification
+    │       └── General Redis question? ────────► Knowledge Agent
     │
-    └── Has instance_id?
+    └── Has target scope?
             │
             ├── Deep keywords (deep triage, go deep, deep dive)? ──► Deep Triage Agent
             │
@@ -110,10 +113,22 @@ Query received
 
 You can override routing via CLI (`--agent triage|chat|knowledge`) or API (`preferred_agent` in user preferences).
 
+### Zero-Scope Deep Triage
+
+A deep-triage request can start without `instance_id`, `cluster_id`, or existing target bindings. In that zero-scope case the task tries natural-language target discovery before running live diagnostics:
+
+- If discovery resolves one exact target, the task binds that target and runs deep triage against it.
+- If discovery resolves two to five exact targets, the task can fan out to one child deep-triage task per target.
+- If discovery finds more than five targets, the task asks you to narrow the scope instead of triaging a partial set.
+- If discovery is fuzzy or ambiguous, the task requests clarification and does not attach those matches as live targets.
+- If discovery finds no target, the request remains zero-scope; the agent can still answer with general knowledge and available non-target tools, but target-specific Redis diagnostics are not attached.
+
+Continue the same thread with exact instance names, cluster IDs, environment, region, or other stable identifiers to narrow the scope.
+
 ### Agent Details
 
 **Knowledge Agent** (`knowledge_agent.py`)
-- Searches the vector knowledge base (runbooks, docs, KB articles)
+- Searches the vector knowledge base (runbooks, Redis docs, source documents)
 - No live system access - safe for general questions
 - Fast response, single-turn conversation
 
@@ -173,7 +188,10 @@ redis-sre-agent mcp serve --transport stdio
 ```
 
 **Available MCP tools exposed:**
-- `redis_sre_deep_triage` - Start a comprehensive triage session
+- `redis_sre_deep_triage` - Start a comprehensive triage session. Natural-language target
+  discovery can fan out to one child task per matched Redis target, up to five targets. If more
+  than five targets match, narrow the request by exact instance names, cluster IDs, environment,
+  or region and continue the same thread.
 - `redis_sre_general_chat` - Quick Q&A with a Redis instance
 - `redis_sre_database_chat` - Chat about a specific database
 - `redis_sre_knowledge_query` - Query the knowledge base

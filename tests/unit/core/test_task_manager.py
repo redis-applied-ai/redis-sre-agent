@@ -305,6 +305,45 @@ class TestTaskManagerSetResult:
             result = await task_manager.set_task_result("task-123", complex_result)
             assert result is True
 
+    @pytest.mark.asyncio
+    async def test_complete_task_if_open_success(self):
+        """Successful completion should atomically write result and done status."""
+        mock_redis = AsyncMock()
+        mock_redis.eval = AsyncMock(return_value=1)
+        task_manager = TaskManager(redis_client=mock_redis)
+
+        with patch.object(
+            task_manager, "_upsert_task_search_doc", new_callable=AsyncMock
+        ) as mock_upsert:
+            result = await task_manager.complete_task_if_open("task-123", {"response": "Done"})
+
+        assert result is True
+        mock_redis.eval.assert_awaited_once()
+        eval_args = mock_redis.eval.await_args.args
+        assert eval_args[1] == 3
+        assert eval_args[5:8] == (
+            TaskStatus.DONE.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.CANCELLED.value,
+        )
+        assert json.loads(eval_args[8]) == {"response": "Done"}
+        mock_upsert.assert_awaited_once_with("task-123")
+
+    @pytest.mark.asyncio
+    async def test_complete_task_if_open_skips_terminal_task(self):
+        """Completion should not reindex when Redis reports a terminal task."""
+        mock_redis = AsyncMock()
+        mock_redis.eval = AsyncMock(return_value=0)
+        task_manager = TaskManager(redis_client=mock_redis)
+
+        with patch.object(
+            task_manager, "_upsert_task_search_doc", new_callable=AsyncMock
+        ) as mock_upsert:
+            result = await task_manager.complete_task_if_open("task-123", {"response": "Done"})
+
+        assert result is False
+        mock_upsert.assert_not_awaited()
+
 
 class TestTaskManagerSetError:
     """Test TaskManager.set_task_error method."""

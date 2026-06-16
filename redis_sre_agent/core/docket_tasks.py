@@ -766,6 +766,51 @@ def _format_target_limit_response(
     return "\n".join(lines)
 
 
+def _build_terminal_task_result(task_id: str, thread_id: str, status: TaskStatus) -> Dict[str, Any]:
+    return {
+        "status": status.value,
+        "thread_id": thread_id,
+        "task_id": task_id,
+    }
+
+
+async def _complete_task_if_open(
+    *,
+    task_manager: TaskManager,
+    task_id: str,
+    thread_id: str,
+    result: Dict[str, Any],
+) -> bool:
+    complete_task = getattr(task_manager, "complete_task_if_open", None)
+    if complete_task is None:
+        task_state = await task_manager.get_task_state(task_id)
+        if task_state and task_state.status in {
+            TaskStatus.DONE,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }:
+            return False
+        await task_manager.set_task_result(task_id, result)
+        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+        return True
+
+    completed = await complete_task(task_id, result)
+    if completed:
+        return True
+
+    try:
+        task_state = await task_manager.get_task_state(task_id)
+    except Exception:
+        task_state = None
+    status = task_state.status.value if task_state else "missing"
+    logger.info(
+        "Skipped successful completion for task %s because current status is %s",
+        task_id,
+        status,
+    )
+    return False
+
+
 async def _complete_deep_triage_target_limit_response(
     *,
     task_manager: TaskManager,
@@ -834,8 +879,14 @@ async def _complete_deep_triage_target_limit_response(
         ),
         "turn_completed_at": datetime.now(timezone.utc).isoformat(),
     }
-    await task_manager.set_task_result(task_id, result)
-    await task_manager.update_task_status(task_id, TaskStatus.DONE)
+    completed = await _complete_task_if_open(
+        task_manager=task_manager,
+        task_id=task_id,
+        thread_id=thread_id,
+        result=result,
+    )
+    if not completed:
+        return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
     await task_manager._publish_stream_update(
         thread_id,
         "turn_complete",
@@ -974,6 +1025,19 @@ async def _run_single_target_triage_child(
         "turn_completed_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    completed = await _complete_task_if_open(
+        task_manager=task_manager,
+        task_id=child_task_id,
+        thread_id=thread_id,
+        result=result,
+    )
+    if not completed:
+        return {
+            **_build_terminal_task_result(child_task_id, thread_id, TaskStatus.CANCELLED),
+            "parent_task_id": parent_task_id,
+            "target": target_metadata,
+        }
+
     await thread_manager.append_messages(
         thread_id,
         [
@@ -988,8 +1052,6 @@ async def _run_single_target_triage_child(
             }
         ],
     )
-    await task_manager.set_task_result(child_task_id, result)
-    await task_manager.update_task_status(child_task_id, TaskStatus.DONE)
 
     tool_envelopes = agent_response.get("tool_envelopes", [])
     if tool_envelopes:
@@ -1146,8 +1208,14 @@ async def _run_multi_target_deep_triage_fanout(
         ],
         "turn_completed_at": datetime.now(timezone.utc).isoformat(),
     }
-    await task_manager.set_task_result(task_id, result)
-    await task_manager.update_task_status(task_id, TaskStatus.DONE)
+    completed = await _complete_task_if_open(
+        task_manager=task_manager,
+        task_id=task_id,
+        thread_id=thread_id,
+        result=result,
+    )
+    if not completed:
+        return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
     await task_manager._publish_stream_update(
         thread_id,
         "turn_complete",
@@ -2210,7 +2278,11 @@ async def _process_agent_turn_impl(
                     except Exception:
                         pass
                     return result
-                if resolution.selected_matches:
+                if (
+                    resolution.status == "resolved"
+                    and not resolution.clarification_required
+                    and resolution.selected_matches
+                ):
                     bound_scope = await materialize_bound_target_scope(
                         matches=resolution.selected_matches,
                         thread_id=thread_id,
@@ -2442,6 +2514,9 @@ async def _process_agent_turn_impl(
         except Exception:
             logger.debug("Unable to read task state for %s after agent execution", task_id)
             current_task_state = None
+        if current_task_state and current_task_state.status == TaskStatus.CANCELLED:
+            logger.info("Task %s was cancelled before completion", task_id)
+            return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
         if pending_approval or (
             current_task_state and current_task_state.status == TaskStatus.AWAITING_APPROVAL
         ):
@@ -2562,8 +2637,14 @@ async def _process_agent_turn_impl(
             "citation_groups": citation_groups,
         }
 
-        await task_manager.set_task_result(task_id, result)
-        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+        completed = await _complete_task_if_open(
+            task_manager=task_manager,
+            task_id=task_id,
+            thread_id=thread_id,
+            result=result,
+        )
+        if not completed:
+            return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
 
         # Store decision trace for this message (tool calls + citations)
         tool_envelopes = agent_response.get("tool_envelopes", [])
@@ -2853,6 +2934,9 @@ async def resume_task_after_approval(
             raise
 
         current_task_state = await task_manager.get_task_state(task_id)
+        if current_task_state and current_task_state.status == TaskStatus.CANCELLED:
+            await approval_manager.delete_resume_state(task_id)
+            return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
         if current_task_state and current_task_state.status == TaskStatus.AWAITING_APPROVAL:
             result = _build_awaiting_approval_result(
                 task_id=task_id,
@@ -2871,8 +2955,15 @@ async def resume_task_after_approval(
             "instance_id": instance_id,
             "cluster_id": cluster_id,
         }
-        await task_manager.set_task_result(task_id, result)
-        await task_manager.update_task_status(task_id, TaskStatus.DONE)
+        completed = await _complete_task_if_open(
+            task_manager=task_manager,
+            task_id=task_id,
+            thread_id=thread_id,
+            result=result,
+        )
+        if not completed:
+            await approval_manager.delete_resume_state(task_id)
+            return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
         await approval_manager.delete_resume_state(task_id)
 
         message_id = str(ULID())
@@ -2961,6 +3052,9 @@ async def resume_task_after_approval(
     }
 
     current_task_state = await task_manager.get_task_state(task_id)
+    if current_task_state and current_task_state.status == TaskStatus.CANCELLED:
+        await approval_manager.delete_resume_state(task_id)
+        return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
     if current_task_state and current_task_state.status == TaskStatus.AWAITING_APPROVAL:
         result = _build_awaiting_approval_result(
             task_id=task_id,
@@ -3029,8 +3123,15 @@ async def resume_task_after_approval(
         "turn_completed_at": datetime.now(timezone.utc).isoformat(),
         "citation_groups": citation_groups,
     }
-    await task_manager.set_task_result(task_id, result)
-    await task_manager.update_task_status(task_id, TaskStatus.DONE)
+    completed = await _complete_task_if_open(
+        task_manager=task_manager,
+        task_id=task_id,
+        thread_id=thread_id,
+        result=result,
+    )
+    if not completed:
+        await approval_manager.delete_resume_state(task_id)
+        return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
     await approval_manager.delete_resume_state(task_id)
 
     tool_envelopes = agent_response.get("tool_envelopes", [])

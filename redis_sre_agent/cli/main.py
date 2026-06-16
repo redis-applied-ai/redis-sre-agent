@@ -72,7 +72,7 @@ class LazyGroup(click.MultiCommand):
     def invoke(self, ctx):
         try:
             return super().invoke(ctx)
-        except (click.ClickException, click.Abort, SystemExit):
+        except (click.exceptions.Exit, click.ClickException, click.Abort, SystemExit):
             raise
         except Exception as exc:
             if not was_cli_exception_logged(exc):

@@ -298,7 +298,11 @@ class TestKnowledgeIngestion:
             "severity": "info",
         }
 
-        mock_result = {"document_id": "test_doc_123"}
+        mock_result = {
+            "document_id": "sre_knowledge:test_doc_123:chunk:0",
+            "document_hash": "test_doc_123",
+            "chunk_count": 1,
+        }
 
         with patch(
             "redis_sre_agent.core.docket_tasks.ingest_sre_document", new_callable=AsyncMock
@@ -311,7 +315,9 @@ class TestKnowledgeIngestion:
             data = response.json()
 
             assert data["success"] is True
-            assert data["document_id"] == "test_doc_123"
+            assert data["document_id"] == "sre_knowledge:test_doc_123:chunk:0"
+            assert data["document_hash"] == "test_doc_123"
+            assert data["chunk_count"] == 1
             assert "message" in data
 
             # Verify the ingest function was called with correct parameters

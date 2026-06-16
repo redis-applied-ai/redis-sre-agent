@@ -17,8 +17,11 @@ from redis_sre_agent.api.schemas import (
     ThreadResponse,
     ThreadUpdateRequest,
 )
+from redis_sre_agent.api.tasks import cancel_task_without_deleting
 from redis_sre_agent.core.citation_message import extract_citation_groups_from_task_result
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
+from redis_sre_agent.core.tasks import TaskManager
 from redis_sre_agent.core.threads import ThreadManager
 from redis_sre_agent.core.threads import delete_thread as delete_thread_model
 
@@ -243,6 +246,38 @@ async def append_messages(thread_id: str, req: ThreadAppendMessagesRequest):
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to append messages")
     return None
+
+
+@router.post("/threads/{thread_id}/cancel")
+async def cancel_thread_tasks(thread_id: str) -> Dict[str, Any]:
+    rc = get_redis_client()
+    tm = ThreadManager(redis_client=rc)
+    state = await tm.get_thread(thread_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    raw_task_ids = await rc.zrange(RedisKeys.thread_tasks_index(thread_id), 0, -1)
+    task_manager = TaskManager(redis_client=rc)
+    cancelled_task_ids: List[str] = []
+    terminal_task_ids: List[str] = []
+    missing_task_ids: List[str] = []
+
+    for raw_task_id in raw_task_ids or []:
+        task_id = raw_task_id.decode() if isinstance(raw_task_id, bytes) else raw_task_id
+        result = await cancel_task_without_deleting(task_id, task_manager)
+        if result is None:
+            missing_task_ids.append(task_id)
+        elif result:
+            cancelled_task_ids.append(task_id)
+        else:
+            terminal_task_ids.append(task_id)
+
+    return {
+        "thread_id": thread_id,
+        "cancelled_task_ids": cancelled_task_ids,
+        "terminal_task_ids": terminal_task_ids,
+        "missing_task_ids": missing_task_ids,
+    }
 
 
 @router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
