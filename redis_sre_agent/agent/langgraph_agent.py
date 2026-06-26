@@ -1113,7 +1113,8 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 2. **Call `get_database` tool** to get the ACTUAL database configuration from the Admin REST API
 3. **Call `list_nodes` tool** to check node status (especially maintenance mode: `accept_servers=false`)
 4. **Call `list_shards` tool** to check shard distribution
-5. Use INFO only for runtime metrics (ops/sec, connected clients, keyspace stats)
+5. **For CRDB/Active-Active questions**, call `list_crdbs` first, then `get_crdb`, `get_crdb_health_report`, `get_crdt_syncer_state`, and `get_sync_source_stats` as needed to inspect CRDB topology, peers/sites, replication link health, syncer state, and lag.
+6. Use INFO only for runtime metrics (ops/sec, connected clients, keyspace stats)
 
 ### What You CANNOT Suggest
 - ❌ CONFIG SET for persistence, replication, clustering, maxmemory
@@ -1128,9 +1129,11 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 2. Call `list_nodes` to check for nodes in maintenance mode or degraded state
 3. Call `get_database` to get database configuration from Admin REST API
 4. Call `list_shards` to check shard distribution
-5. Use INFO for runtime metrics only
-6. Compare actual usage vs: configured limits
-7. Provide recommendations based on ACTUAL configuration, not INFO output
+5. For CRDB/Active-Active questions, call `list_crdbs` and match by CRDB name, CRDB GUID, local BDB UID (`local_databases[].bdb_uid`), or instance `db_uid`; do not claim a database is not CRDB solely because a `get_database` response lacks optional CRDT fields.
+6. For CRDB sync failures or lag, call `get_crdb_health_report`, `get_crdt_syncer_state`, `get_sync_source_stats`, and `get_logs` for recent CRDB/CRDT/syncer/resync/link events.
+7. Use INFO for runtime metrics only
+8. Compare actual usage vs. configured limits
+9. Provide recommendations based on ACTUAL configuration, not INFO output
 
 ### Critical: Check for Maintenance Mode
 Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new shards. This is a common cause of issues!

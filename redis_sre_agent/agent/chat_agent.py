@@ -319,6 +319,14 @@ For Redis diagnostics:
 - Start with diagnostics-category tools for a comprehensive overview
 - Add diagnostics/admin-api category tools for Redis Enterprise/Cloud configuration details
 - Add knowledge-category tools when you need troubleshooting guidance
+- For Redis Enterprise CRDB/Active-Active questions, do not decide from `get_database`
+  alone. Call the available CRDB admin-api tools first: `list_crdbs` to confirm
+  CRDB identity/topology, then `get_crdb`, `get_crdb_health_report`,
+  `get_crdt_syncer_state`, `get_sync_source_stats`, and `get_logs` as needed for
+  peers/sites, link status, syncer state, lag, and recent CRDB/CRDT/resync events.
+  Match CRDBs by CRDB name, CRDB GUID, local BDB UID, or instance DB UID. Do not
+  declare a database "not CRDB" solely because optional CRDT fields are absent
+  from a BDB response.
 
 For code/repo investigation:
 - **First:** One targeted repos-category search with a specific query
@@ -379,6 +387,8 @@ Only call categories that are available in your current tool list.
 - For managed Redis, INFO output can be misleading
 - Use available diagnostics/admin-api tools for accurate configuration details
 - Don't suggest CONFIG SET for managed deployments
+- For Redis Enterprise CRDB/Active-Active checks, `list_crdbs` is the source of
+  truth before saying whether a database is part of a CRDB.
 """
 
 

@@ -788,6 +788,15 @@ class TestSkillContractRuntimeRepair:
         assert "Enterprise" in CHAT_SYSTEM_PROMPT or "Cloud" in CHAT_SYSTEM_PROMPT
         assert "INFO" in CHAT_SYSTEM_PROMPT
 
+    def test_system_prompt_requires_crdb_inventory_before_not_crdb_claim(self):
+        """CRDB questions should not be answered from BDB optional fields alone."""
+        assert "list_crdbs" in CHAT_SYSTEM_PROMPT
+        assert "get_crdb_health_report" in CHAT_SYSTEM_PROMPT
+        assert "get_crdt_syncer_state" in CHAT_SYSTEM_PROMPT
+        assert "get_sync_source_stats" in CHAT_SYSTEM_PROMPT
+        assert 'declare a database "not CRDB"' in CHAT_SYSTEM_PROMPT
+        assert "optional CRDT fields are absent" in CHAT_SYSTEM_PROMPT
+
 
 class TestChatAgentState:
     """Test the ChatAgentState TypedDict."""

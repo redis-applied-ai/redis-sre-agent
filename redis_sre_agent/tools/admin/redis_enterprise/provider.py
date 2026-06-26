@@ -31,6 +31,196 @@ from redis_sre_agent.tools.protocols import ToolProvider
 
 logger = logging.getLogger(__name__)
 _API_ERROR_CODE_RE = re.compile(r"\(code:\s*(\d+)\)")
+# BDB field names are seeded from the Redis Enterprise REST API BDB object docs
+# and supplemented with fields observed in live Redis Enterprise BDB responses.
+# Docs: https://redis.io/docs/latest/operate/rs/references/rest-api/objects/bdb/
+BDB_FIELD_NAMES: Tuple[str, ...] = (
+    "acl",
+    "account_id",
+    "action_uid",
+    "active_defrag_cycle_max",
+    "active_defrag_cycle_min",
+    "active_defrag_ignore_bytes",
+    "active_defrag_max_scan_fields",
+    "active_defrag_threshold_lower",
+    "active_defrag_threshold_upper",
+    "activedefrag",
+    "aof_policy",
+    "authentication_admin_pass",
+    "authentication_redis_pass",
+    "authentication_sasl_pass",
+    "authentication_sasl_uname",
+    "authentication_ssl_client_certs",
+    "authentication_ssl_crdt_certs",
+    "authorized_names",
+    "authorized_subjects",
+    "auto_shards_balancing",
+    "auto_shards_balancing_grace_period",
+    "auto_upgrade",
+    "avoid_nodes",
+    "background_op",
+    "backup",
+    "backup_failure_reason",
+    "backup_history",
+    "backup_interval",
+    "backup_interval_offset",
+    "backup_location",
+    "backup_progress",
+    "backup_status",
+    "bigstore",
+    "bigstore_max_ram_ratio",
+    "bigstore_ram_size",
+    "bigstore_ram_weights",
+    "bigstore_version",
+    "client_cert_subject_validation_type",
+    "compare_key_hslot",
+    "conns",
+    "conns_global_maximum_dedicated",
+    "conns_minimum_dedicated",
+    "conns_type",
+    "crdt",
+    "crdt_causal_consistency",
+    "crdt_config_version",
+    "crdt_featureset_version",
+    "crdt_ghost_replica_ids",
+    "crdt_guid",
+    "crdt_modules",
+    "crdt_protocol_version",
+    "crdt_repl_backlog_size",
+    "crdt_replica_id",
+    "crdt_replicas",
+    "crdt_sources",
+    "crdt_sync",
+    "crdt_sync_connection_alarm_timeout_seconds",
+    "crdt_sync_dist",
+    "crdt_syncer_auto_oom_unlatch",
+    "crdt_xadd_id_uniqueness_mode",
+    "created_time",
+    "data_internode_encryption",
+    "data_persistence",
+    "dataset_import_sources",
+    "db_conns_auditing",
+    "default_user",
+    "disabled_commands",
+    "disconnect_clients_on_password_removal",
+    "dns_address_master",
+    "dns_suffixes",
+    "email_alerts",
+    "endpoint",
+    "endpoint_ip",
+    "endpoint_node",
+    "endpoints",
+    "enforce_client_authentication",
+    "eviction_policy",
+    "export_failure_reason",
+    "export_progress",
+    "export_status",
+    "flush_on_fullsync",
+    "generate_text_monitor",
+    "gradual_src_max_sources",
+    "gradual_src_mode",
+    "gradual_sync_max_shards_per_source",
+    "gradual_sync_mode",
+    "group_uid",
+    "hash_slots_policy",
+    "implicit_shard_key",
+    "import_failure_reason",
+    "import_progress",
+    "import_status",
+    "internal",
+    "last_backup_time",
+    "last_changed_time",
+    "last_export_time",
+    "link_sconn_on_full_request",
+    "master_persistence",
+    "max_aof_file_size",
+    "max_aof_load_time",
+    "max_client_pipeline",
+    "max_connections",
+    "max_pipelined",
+    "maxclients",
+    "memory_size",
+    "metrics_export_all",
+    "mkms",
+    "module_list",
+    "mtls_allow_outdated_certs",
+    "mtls_allow_weak_hashing",
+    "multi_commands_opt",
+    "name",
+    "oss_cluster",
+    "oss_cluster_api_preferred_endpoint_type",
+    "oss_cluster_api_preferred_ip_type",
+    "oss_sharding",
+    "partial_request_timeout_seconds",
+    "port",
+    "preemptive_drain_timeout_seconds",
+    "probabilistic",
+    "proxy_policy",
+    "query_performance_factor",
+    "rack_aware",
+    "recovery_wait_time",
+    "redis_cluster_enabled",
+    "redis_version",
+    "repl_backlog_size",
+    "replica_read_only",
+    "replica_sconns_on_demand",
+    "replica_sources",
+    "replica_sync",
+    "replica_sync_connection_alarm_timeout_seconds",
+    "replica_sync_dist",
+    "replication",
+    "replication_oom_threshold_percent",
+    "resp3",
+    "roles_permissions",
+    "sched_policy",
+    "search",
+    "search_on_bigstore",
+    "shard_block_crossslot_keys",
+    "shard_block_foreign_keys",
+    "shard_imbalance_threshold",
+    "shard_imbalance_threshold_percentage",
+    "shard_key_regex",
+    "shard_list",
+    "sharding",
+    "shards_count",
+    "shards_placement",
+    "skip_import_analyze",
+    "slave_buffer",
+    "slave_ha",
+    "slave_ha_priority",
+    "snapshot_policy",
+    "ssl",
+    "status",
+    "support_syncer_reconf",
+    "sync",
+    "sync_dedicated_threads",
+    "sync_sources",
+    "syncer_log_level",
+    "syncer_mode",
+    "tags",
+    "throughput_ingress",
+    "timeseries",
+    "tls_mode",
+    "topology_epoch",
+    "tracking_table_max_keys",
+    "traffic_manually_disabled",
+    "type",
+    "uid",
+    "use_nodes",
+    "use_selective_flush",
+    "version",
+    "wait_command",
+)
+BDB_FIELD_NAMES_TEXT = ", ".join(BDB_FIELD_NAMES)
+_BDB_FIELDS_PARAMETER_DESCRIPTION = (
+    "Comma-separated list of BDB field names to return. Documented and observed "
+    "BDB fields are: "
+    f"{BDB_FIELD_NAMES_TEXT}. Leave empty to return all fields. This is a projection: "
+    "omitted fields are unknown, not false. For CRDB checks, leave empty or include "
+    "crdt,crdt_guid, and verify topology with list_crdbs before declaring a database "
+    "not CRDB. Some fields can include credentials or certificates; request "
+    "authentication_* and *_cert* fields only when specifically needed."
+)
 
 
 class RedisEnterpriseAdminConfig(BaseSettings):
@@ -289,7 +479,9 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 description=(
                     "List all databases (BDBs) in the Redis Enterprise cluster. "
                     "Returns database UIDs, names, and optionally other fields. "
-                    "Use this to discover what databases exist in the cluster."
+                    "Use this to discover what databases exist in the cluster. "
+                    "For CRDB/Active-Active checks, local BDB payloads may expose "
+                    "membership as crdt=true and crdt_guid."
                 ),
                 capability=ToolCapability.DIAGNOSTICS,
                 parameters={
@@ -297,11 +489,7 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                     "properties": {
                         "fields": {
                             "type": "string",
-                            "description": (
-                                "Comma-separated list of field names to return. "
-                                "Examples: 'uid,name,memory_size,status'. "
-                                "Leave empty to return all fields."
-                            ),
+                            "description": _BDB_FIELDS_PARAMETER_DESCRIPTION,
                         }
                     },
                     "required": [],
@@ -312,7 +500,12 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                 description=(
                     "Get detailed information about a specific database (BDB) by its UID. "
                     "Returns configuration, status, memory usage, replication settings, "
-                    "persistence configuration, and more. Use this to inspect a specific database."
+                    "persistence configuration, and more. Use this to inspect a specific database. "
+                    "Redis Enterprise can identify local CRDB membership with crdt=true and "
+                    "crdt_guid. "
+                    "For CRDB/Active-Active questions, also call the CRDB tools such as "
+                    "list_crdbs, get_crdb, get_crdb_health_report, get_crdt_syncer_state, "
+                    "and get_sync_source_stats before concluding a database is not CRDB."
                 ),
                 capability=ToolCapability.DIAGNOSTICS,
                 parameters={
@@ -324,10 +517,127 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
                         },
                         "fields": {
                             "type": "string",
+                            "description": _BDB_FIELDS_PARAMETER_DESCRIPTION,
+                        },
+                    },
+                    "required": ["uid"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("list_crdbs"),
+                description=(
+                    "List all CRDB/Active-Active databases in the Redis Enterprise cluster "
+                    "from /v1/crdbs. Use this for CRDB or active-active questions to confirm "
+                    "database identity, CRDB GUID, local database mapping, and participating "
+                    "instances/sites before deciding whether a local BDB is part of a CRDB."
+                ),
+                capability=ToolCapability.DIAGNOSTICS,
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_crdb"),
+                description=(
+                    "Get a CRDB/Active-Active database by GUID from /v1/crdbs/{crdb_guid}. "
+                    "Returns the CRDB object, including name, instances/sites, local database "
+                    "mapping, and default database configuration. Use this after list_crdbs "
+                    "or when a CRDB GUID is known."
+                ),
+                capability=ToolCapability.DIAGNOSTICS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "crdb_guid": {
+                            "type": "string",
+                            "description": "The globally unique CRDB/Active-Active database GUID",
+                        },
+                        "instance_id": {
+                            "type": "integer",
                             "description": (
-                                "Comma-separated list of field names to return. "
-                                "Leave empty to return all fields."
+                                "Optional CRDB instance ID from which to retrieve information"
                             ),
+                        },
+                    },
+                    "required": ["crdb_guid"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_crdb_health_report"),
+                description=(
+                    "Get the CRDB/Active-Active health report from "
+                    "/v1/crdbs/{crdb_guid}/health_report. Use this to inspect inter-cluster "
+                    "connection status, replication link status, configuration versions, and "
+                    "connection errors for CRDB synchronization failures."
+                ),
+                capability=ToolCapability.DIAGNOSTICS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "crdb_guid": {
+                            "type": "string",
+                            "description": "The globally unique CRDB/Active-Active database GUID",
+                        },
+                        "instance_id": {
+                            "type": "integer",
+                            "description": (
+                                "Optional CRDB instance ID from which to retrieve the report"
+                            ),
+                        },
+                    },
+                    "required": ["crdb_guid"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_crdt_syncer_state"),
+                description=(
+                    "Get a local CRDB BDB's CRDT syncer state from "
+                    "/v1/bdbs/{uid}/syncer_state/crdt. Use this to troubleshoot Active-Active "
+                    "syncer state after confirming the local BDB UID belongs to a CRDB."
+                ),
+                capability=ToolCapability.DIAGNOSTICS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "uid": {
+                            "type": "integer",
+                            "description": "The local database (BDB) UID",
+                        },
+                    },
+                    "required": ["uid"],
+                },
+            ),
+            ToolDefinition(
+                name=self._make_tool_name("get_sync_source_stats"),
+                description=(
+                    "Get syncer source statistics for a local database from "
+                    "/v1/bdbs/{uid}/sync_source_stats. Use this for CRDB or Replica Of lag "
+                    "analysis, including local_ingress_lag_time and ingress byte counters."
+                ),
+                capability=ToolCapability.DIAGNOSTICS,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "uid": {
+                            "type": "integer",
+                            "description": "The local database (BDB) UID",
+                        },
+                        "interval": {
+                            "type": "string",
+                            "description": (
+                                "Stats interval: '1sec', '10sec', '5min', '15min', "
+                                "'1hour', '12hour', or '1week'. Default: '1sec'"
+                            ),
+                        },
+                        "stime": {
+                            "type": "string",
+                            "description": "Optional start time (RFC3339 or epoch seconds)",
+                        },
+                        "etime": {
+                            "type": "string",
+                            "description": "Optional end time (RFC3339 or epoch seconds)",
                         },
                     },
                     "required": ["uid"],
@@ -765,6 +1075,177 @@ class RedisEnterpriseAdminToolProvider(ToolProvider):
             }
         except Exception as e:
             logger.error(f"Failed to get database {uid}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "uid": uid,
+            }
+
+    @status_update("I'm listing CRDBs via the Redis Enterprise Admin API.")
+    async def list_crdbs(self) -> Dict[str, Any]:
+        """List all CRDB/Active-Active databases in the cluster."""
+        logger.info("Listing CRDBs")
+        try:
+            crdbs = await self._get_json("/v1/crdbs")
+            if isinstance(crdbs, dict) and isinstance(crdbs.get("crdbs"), list):
+                count = len(crdbs["crdbs"])
+            elif isinstance(crdbs, list):
+                count = len(crdbs)
+            else:
+                count = 1
+
+            return {
+                "status": "success",
+                "count": count,
+                "crdbs": crdbs,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error listing CRDBs: {e}")
+            return {
+                "status": "error",
+                "error": f"HTTP {e.response.status_code}: {e.response.text}",
+            }
+        except Exception as e:
+            logger.error(f"Failed to list CRDBs: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+            }
+
+    @status_update(
+        "I'm retrieving CRDB details from the Redis Enterprise Admin API for {crdb_guid}."
+    )
+    async def get_crdb(self, crdb_guid: str, instance_id: Optional[int] = None) -> Dict[str, Any]:
+        """Get a specific CRDB/Active-Active database by GUID."""
+        logger.info(f"Getting CRDB {crdb_guid} (instance_id={instance_id})")
+        try:
+            params: Dict[str, Any] = {}
+            if instance_id is not None:
+                params["instance_id"] = int(instance_id)
+
+            return {
+                "status": "success",
+                "crdb_guid": crdb_guid,
+                "crdb": await self._get_json(f"/v1/crdbs/{crdb_guid}", params=params),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error getting CRDB {crdb_guid}: {e}")
+            return {
+                "status": "error",
+                "error": f"HTTP {e.response.status_code}: {e.response.text}",
+                "crdb_guid": crdb_guid,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get CRDB {crdb_guid}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "crdb_guid": crdb_guid,
+            }
+
+    @status_update(
+        "I'm retrieving the CRDB health report from the Redis Enterprise Admin API for {crdb_guid}."
+    )
+    async def get_crdb_health_report(
+        self, crdb_guid: str, instance_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Get a CRDB/Active-Active health report by GUID."""
+        logger.info(f"Getting CRDB health report {crdb_guid} (instance_id={instance_id})")
+        try:
+            params: Dict[str, Any] = {}
+            if instance_id is not None:
+                params["instance_id"] = int(instance_id)
+
+            return {
+                "status": "success",
+                "crdb_guid": crdb_guid,
+                "health_report": await self._get_json(
+                    f"/v1/crdbs/{crdb_guid}/health_report", params=params
+                ),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error getting CRDB health report {crdb_guid}: {e}")
+            return {
+                "status": "error",
+                "error": f"HTTP {e.response.status_code}: {e.response.text}",
+                "crdb_guid": crdb_guid,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get CRDB health report {crdb_guid}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "crdb_guid": crdb_guid,
+            }
+
+    @status_update(
+        "I'm retrieving CRDT syncer state from the Redis Enterprise Admin API for database {uid}."
+    )
+    async def get_crdt_syncer_state(self, uid: int) -> Dict[str, Any]:
+        """Get CRDT syncer state for a local CRDB BDB."""
+        logger.info(f"Getting CRDT syncer state for database {uid}")
+        try:
+            return {
+                "status": "success",
+                "uid": uid,
+                "syncer_state": await self._get_json(f"/v1/bdbs/{uid}/syncer_state/crdt"),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error getting CRDT syncer state for database {uid}: {e}")
+            return {
+                "status": "error",
+                "error": f"HTTP {e.response.status_code}: {e.response.text}",
+                "uid": uid,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get CRDT syncer state for database {uid}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "uid": uid,
+            }
+
+    @status_update(
+        "I'm fetching syncer source stats via the Admin API for database {uid} (interval={interval})."
+    )
+    async def get_sync_source_stats(
+        self,
+        uid: int,
+        interval: str = "1sec",
+        stime: Optional[str] = None,
+        etime: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get syncer source stats for a local database."""
+        logger.info(f"Getting sync source stats for database {uid} (interval={interval})")
+        try:
+            params: Dict[str, Any] = {"interval": interval}
+            st = self._normalize_time_param(stime)
+            et = self._normalize_time_param(etime)
+            if st:
+                params["stime"] = st
+            if et:
+                params["etime"] = et
+
+            return {
+                "status": "success",
+                "uid": uid,
+                "interval": interval,
+                "stats": await self._get_json(f"/v1/bdbs/{uid}/sync_source_stats", params=params),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error getting sync source stats for database {uid}: {e}")
+            return {
+                "status": "error",
+                "error": f"HTTP {e.response.status_code}: {e.response.text}",
+                "uid": uid,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get sync source stats for database {uid}: {e}")
             return {
                 "status": "error",
                 "error": str(e),
