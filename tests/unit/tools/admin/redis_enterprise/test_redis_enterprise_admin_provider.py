@@ -12,6 +12,8 @@ from aiohttp import web
 
 from redis_sre_agent.core.instances import RedisInstance
 from redis_sre_agent.tools.admin.redis_enterprise.provider import (
+    BDB_FIELD_NAMES,
+    BDB_FIELD_NAMES_TEXT,
     RedisEnterpriseAdminConfig,
     RedisEnterpriseAdminToolProvider,
 )
@@ -222,6 +224,58 @@ async def test_create_tool_schemas(provider):
     assert any("modules" in name for name in tool_names)
     assert any("actions" in name for name in tool_names)
     assert any("shards" in name for name in tool_names)
+    assert any("list_crdbs" in name for name in tool_names)
+    assert any("get_crdb" in name for name in tool_names)
+    assert any("get_crdb_health_report" in name for name in tool_names)
+    assert any("get_crdt_syncer_state" in name for name in tool_names)
+    assert any("get_sync_source_stats" in name for name in tool_names)
+
+
+@pytest.mark.asyncio
+async def test_database_tool_descriptions_warn_about_crdb_field_projection(provider):
+    """Database schemas should prevent projected BDB payloads from negating CRDB identity."""
+    schemas = provider.create_tool_schemas()
+    get_database_schema = next(
+        schema for schema in schemas if schema.name.endswith("_get_database")
+    )
+    list_database_schema = next(
+        schema for schema in schemas if schema.name.endswith("_list_databases")
+    )
+
+    get_database_description = get_database_schema.description
+    get_database_fields_description = get_database_schema.parameters["properties"]["fields"][
+        "description"
+    ]
+    list_database_fields_description = list_database_schema.parameters["properties"]["fields"][
+        "description"
+    ]
+
+    assert "crdt" in get_database_description
+    assert "crdt_guid" in get_database_description
+    assert "omitted fields are unknown, not false" in get_database_fields_description
+    assert "crdt,crdt_guid" in get_database_fields_description
+    assert "list_crdbs" in get_database_fields_description
+    assert "omitted fields are unknown, not false" in list_database_fields_description
+    assert "crdt,crdt_guid" in list_database_fields_description
+    assert BDB_FIELD_NAMES_TEXT in get_database_fields_description
+    assert BDB_FIELD_NAMES_TEXT in list_database_fields_description
+    for documented_field_name in (
+        "account_id",
+        "action_uid",
+        "avoid_nodes",
+        "backup_location",
+        "endpoint",
+        "replication_oom_threshold_percent",
+        "search",
+        "traffic_manually_disabled",
+        "use_nodes",
+    ):
+        assert documented_field_name in BDB_FIELD_NAMES
+        assert documented_field_name in get_database_fields_description
+        assert documented_field_name in list_database_fields_description
+    for field_name in BDB_FIELD_NAMES:
+        assert field_name in get_database_fields_description
+        assert field_name in list_database_fields_description
 
 
 @pytest.mark.asyncio
@@ -413,6 +467,188 @@ async def test_get_database_preserves_crdt_guid_field_name(provider):
         assert result["database"]["crdt_guid"] == "crdt-123"
         mock_client.get.assert_called_once_with(
             "/v1/bdbs/1", params={"fields": "uid,name,crdt_guid"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_crdbs_success(provider):
+    """Test CRDB listing."""
+    crdbs = [
+        {
+            "guid": "crdb-guid-1",
+            "name": "large-key",
+            "local_databases": [{"bdb_uid": "14", "id": 1}],
+            "instances": [
+                {"id": 1, "db_uid": "14", "cluster": {"name": "lab7"}},
+                {"id": 2, "cluster": {"name": "lab8"}},
+            ],
+        }
+    ]
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = crdbs
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.list_crdbs()
+
+        assert result["status"] == "success"
+        assert result["count"] == 1
+        assert result["crdbs"] == crdbs
+        mock_client.get.assert_called_once_with("/v1/crdbs", params={})
+
+
+@pytest.mark.asyncio
+async def test_list_crdbs_counts_wrapped_payload(provider):
+    """Some Admin API wrappers return {'crdbs': [...]} instead of a bare list."""
+    payload = {"crdbs": [{"guid": "crdb-guid-1"}, {"guid": "crdb-guid-2"}]}
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.list_crdbs()
+
+        assert result["status"] == "success"
+        assert result["count"] == 2
+        assert result["crdbs"] == payload
+
+
+@pytest.mark.asyncio
+async def test_get_crdb_with_instance_id(provider):
+    """Test CRDB detail retrieval by GUID."""
+    payload = {
+        "guid": "crdb-guid-1",
+        "name": "large-key",
+        "local_databases": [{"bdb_uid": "14", "id": 1}],
+    }
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_crdb("crdb-guid-1", instance_id=2)
+
+        assert result["status"] == "success"
+        assert result["crdb_guid"] == "crdb-guid-1"
+        assert result["crdb"] == payload
+        mock_client.get.assert_called_once_with("/v1/crdbs/crdb-guid-1", params={"instance_id": 2})
+
+
+@pytest.mark.asyncio
+async def test_get_crdb_health_report(provider):
+    """Test CRDB health report retrieval."""
+    payload = [
+        {
+            "name": "large-key",
+            "cluster_name": "lab7",
+            "connections": [
+                {
+                    "name": "lab8",
+                    "status": "down",
+                    "replication_links": [
+                        {"link_uid": "14:2", "status": "down"},
+                    ],
+                }
+            ],
+        }
+    ]
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_crdb_health_report("crdb-guid-1")
+
+        assert result["status"] == "success"
+        assert result["health_report"] == payload
+        mock_client.get.assert_called_once_with("/v1/crdbs/crdb-guid-1/health_report", params={})
+
+
+@pytest.mark.asyncio
+async def test_get_crdt_syncer_state(provider):
+    """Test CRDT syncer state retrieval for a local BDB."""
+    payload = {"DB": 14, "RunID": 1584086516, "State": "syncing"}
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_crdt_syncer_state(uid=14)
+
+        assert result["status"] == "success"
+        assert result["uid"] == 14
+        assert result["syncer_state"] == payload
+        mock_client.get.assert_called_once_with("/v1/bdbs/14/syncer_state/crdt", params={})
+
+
+@pytest.mark.asyncio
+async def test_get_sync_source_stats_with_time_range(provider):
+    """Test syncer lag stats retrieval for a local BDB."""
+    payload = {
+        "sync_source_stats": [
+            {
+                "uid": "1",
+                "intervals": [
+                    {
+                        "interval": "5min",
+                        "local_ingress_lag_time": 12.5,
+                    }
+                ],
+            }
+        ]
+    }
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_sync_source_stats(
+            uid=14,
+            interval="5min",
+            stime="2026-06-25T10:00:00Z",
+            etime="2026-06-25T10:05:00Z",
+        )
+
+        assert result["status"] == "success"
+        assert result["uid"] == 14
+        assert result["stats"] == payload
+        mock_client.get.assert_called_once_with(
+            "/v1/bdbs/14/sync_source_stats",
+            params={
+                "interval": "5min",
+                "stime": "2026-06-25T10:00:00Z",
+                "etime": "2026-06-25T10:05:00Z",
+            },
         )
 
 

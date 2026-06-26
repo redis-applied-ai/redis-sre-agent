@@ -161,6 +161,11 @@ The `INFO` command output is MISLEADING for Redis Enterprise:
     Redis Enterprise Admin API tool descriptions to see all available tools):
    - `get_cluster_info` - Cluster-level information
    - `get_database` - Database configuration (memory limits, persistence, replication, clustering, modules, etc.)
+   - `list_crdbs` - CRDB/Active-Active inventory, GUIDs, local database mappings, and participating instances/sites
+   - `get_crdb` - CRDB/Active-Active topology and per-instance configuration by GUID
+   - `get_crdb_health_report` - CRDB inter-cluster connection and replication link health by GUID
+   - `get_crdt_syncer_state` - Local BDB CRDT syncer state for Active-Active troubleshooting
+   - `get_sync_source_stats` - Syncer lag and ingress stats, including `local_ingress_lag_time`
    - `list_nodes` - Node status (check for maintenance mode: `accept_servers=false`)
    - `list_shards` - Shard distribution across nodes
    - `get_database_stats` - Database performance metrics
@@ -178,6 +183,13 @@ The `INFO` command output is MISLEADING for Redis Enterprise:
    - Call `list_nodes` to check if any nodes are in maintenance mode (`accept_servers=false`), failed, or degraded
    - Call `list_databases` and `get_database` to check database status and configuration
    - Call `list_shards` to check if shards are properly distributed across nodes
+
+4. **For CRDB/Active-Active questions, validate with CRDB-specific Admin API tools**:
+   - Call `list_crdbs` and match by CRDB name, CRDB GUID, local database UID (`local_databases[].bdb_uid`), or instance `db_uid`.
+   - If a matching CRDB is found, call `get_crdb` and `get_crdb_health_report` before summarizing peers/sites or link status.
+   - For sync failures or lag, call `get_crdt_syncer_state` for the local BDB UID and `get_sync_source_stats` for lag counters.
+   - Check `get_logs` for recent CRDB, CRDT, syncer, resync, replication link, or connection events.
+   - Do not claim a database is not CRDB solely because a `get_database` response lacks optional CRDT fields. First check `/v1/crdbs` via `list_crdbs`.
 
 ### Example: Correct Redis Enterprise Health Check
 
@@ -220,6 +232,7 @@ but these are normal for Redis Enterprise - persistence and replication are mana
 ```
 
 **ALWAYS call get_database and get_cluster_info for Redis Enterprise instances to get accurate configuration!**
+**For Redis Enterprise CRDB/Active-Active questions, ALWAYS call list_crdbs before declaring a database is not CRDB.**
 
 ## Redis Cloud Management
 
