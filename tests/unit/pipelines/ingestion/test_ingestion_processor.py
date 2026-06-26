@@ -1052,7 +1052,9 @@ class TestIngestionPipeline:
                                     }
                                 ],
                                 "source_document_paths": ["shared/current.md"],
-                                "source_document_scopes": [""],
+                                # Real bounded scope authorizes deletion within shared/;
+                                # an empty scope must never authorize the sweep.
+                                "source_document_scopes": ["shared/"],
                                 "errors": [],
                             },
                         ):

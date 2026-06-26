@@ -246,7 +246,7 @@ async def test_build_deduplicators_and_tracking_helpers(pipeline):
         {"deduplicator_key": "skill", "document_hash": "s-hash"},
     ]
     assert IngestionPipeline._path_in_scope("shared/doc.md", set()) is False
-    assert IngestionPipeline._path_in_scope("shared/doc.md", {""}) is True
+    assert IngestionPipeline._path_in_scope("shared/doc.md", {""}) is False
     assert IngestionPipeline._path_in_scope("shared/doc.md", {"enterprise/"}) is False
     assert IngestionPipeline._path_in_scope("shared/doc.md", {"shared/"}) is True
 
@@ -646,7 +646,11 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
             side_effect=chunk_document_side_effect,
         ),
     ):
-        results = await pipeline.ingest_source_documents(source_dir.parent)
+        # Ingest the bounded "shared/" subtree so the run declares a real,
+        # non-empty scope. (Ingesting the source_documents root yields an empty
+        # scope, which no longer authorizes deletion — empty scope must never
+        # match-everything, or a partial/cross-source run would wipe the corpus.)
+        results = await pipeline.ingest_source_documents(source_dir)
 
     skill.delete_tracked_source_document.assert_awaited_once_with(
         "old-skill-hash", "shared/tracked.md"

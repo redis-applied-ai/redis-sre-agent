@@ -131,12 +131,18 @@ class IngestionPipeline(PipelineWorkflowMixin):
 
     @staticmethod
     def _path_in_scope(source_document_path: str, scope_prefixes: set[str]) -> bool:
-        """Return True when a tracked source file belongs to the active ingest scope."""
-        if not scope_prefixes:
+        """Return True when a tracked source file belongs to the active ingest scope.
+
+        An empty/blank scope NEVER authorizes deletion. A source must declare a
+        bounded, non-empty scope prefix for the stale sweep to delete within it;
+        with no declared scope, nothing is swept. (A "" scope was previously
+        treated as match-everything — once documents are tracked, that let a
+        partial ingest hard-delete every tracked doc it did not re-emit.)
+        """
+        real_prefixes = {prefix for prefix in scope_prefixes if prefix and prefix.strip()}
+        if not real_prefixes:
             return False
-        if "" in scope_prefixes:
-            return True
-        return any(source_document_path.startswith(prefix) for prefix in scope_prefixes if prefix)
+        return any(source_document_path.startswith(prefix) for prefix in real_prefixes)
 
     @staticmethod
     def _empty_source_change_summary() -> Dict[str, Any]:
