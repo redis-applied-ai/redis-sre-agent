@@ -393,7 +393,12 @@ async def test_process_category_latest_only_and_error_paths(pipeline, tmp_path):
             path.write_text(content, encoding="utf-8")
 
     deduplicator = AsyncMock()
-    deduplicator.replace_document_chunks.return_value = 1
+    # The surviving 'keep.json' has an http source_url, so it routes through the
+    # tracked branch (source_document_path defaulted from the URL).
+    deduplicator.replace_source_document_chunks.return_value = {
+        "action": "add",
+        "indexed_count": 1,
+    }
     latest_only_pipeline = IngestionPipeline(pipeline.storage, {"latest_only": True})
 
     result = await latest_only_pipeline._process_category(
@@ -403,7 +408,7 @@ async def test_process_category_latest_only_and_error_paths(pipeline, tmp_path):
         {"knowledge": deduplicator},
     )
 
-    deduplicator.replace_document_chunks.assert_awaited_once()
+    deduplicator.replace_source_document_chunks.assert_awaited_once()
     assert result["documents_processed"] == 1
     assert len(result["errors"]) == 1
     assert "broken.json" in result["errors"][0]

@@ -8,13 +8,71 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Avoid importing Redis/vectorizer at module import time to keep optional deps lazy
-from ...pipelines.scraper.base import ArtifactStorage, ScrapedDocument
+from ...pipelines.scraper.base import ArtifactStorage, ScrapedDocument, derive_stable_path
 from .deduplication import DocumentDeduplicator
 from .document_processor import DocumentProcessor
 from .pipeline_workflow_mixin import PipelineWorkflowMixin
 from .processor_indexing_helpers import index_processed_document
 
 logger = logging.getLogger(__name__)
+
+
+def _effective_source_document_path(doc_data: Dict[str, Any]) -> str:
+    """Return the source_document_path a document will index under.
+
+    Mirrors the identity resolution in ``ScrapedDocument.__init__`` /
+    ``from_dict``: an explicit ``metadata['source_document_path']`` wins,
+    otherwise it is derived from ``source_url`` (empty for non-http(s)).
+    """
+    metadata = doc_data.get("metadata") or {}
+    explicit = str(metadata.get("source_document_path") or "").strip()
+    if explicit:
+        return explicit
+    return derive_stable_path(str(doc_data.get("source_url") or ""))
+
+
+def detect_source_path_collisions(
+    json_files: List[Path],
+) -> tuple[List[Path], Dict[str, List[Path]]]:
+    """Detect distinct documents that resolve to the same source_document_path.
+
+    Runs BEFORE any indexing. Two documents sharing one identity would clobber
+    each other on the tracked dedup branch (delete-prior-then-write on a shared
+    tracking key), silently dropping one every run — and under the parallel
+    ingest batch they would also race on that key. Detecting here lets us keep
+    the first occurrence and skip the rest before a single chunk is written.
+
+    Returns ``(files_to_process, collisions)`` where ``collisions`` maps a
+    colliding path to every file that resolved to it (first kept, rest skipped).
+    Files with an empty effective path (untracked branch) are never collided.
+    """
+    by_path: Dict[str, List[Path]] = {}
+    files_to_process: List[Path] = []
+    # Sort for a deterministic "keep first" across runs, so the collision
+    # skip-list is reproducible in audit logs regardless of directory order.
+    for json_file in sorted(json_files):
+        try:
+            with open(json_file, "r", encoding="utf-8") as f:
+                doc_data = json.load(f)
+            path = _effective_source_document_path(doc_data)
+        except Exception as e:  # unreadable/invalid file: defer the error to processing
+            logger.warning("Collision scan could not read %s: %s", json_file.name, e)
+            files_to_process.append(json_file)
+            continue
+
+        if not path:
+            # Untracked branch (e.g. file:// or non-http source): cannot collide.
+            files_to_process.append(json_file)
+            continue
+
+        if path in by_path:
+            by_path[path].append(json_file)  # duplicate: skip (do not index)
+        else:
+            by_path[path] = [json_file]
+            files_to_process.append(json_file)
+
+    collisions = {path: files for path, files in by_path.items() if len(files) > 1}
+    return files_to_process, collisions
 
 
 # Expose patchable wrappers so tests can monkeypatch these names
@@ -328,6 +386,22 @@ class IngestionPipeline(PipelineWorkflowMixin):
             )
 
         logger.info(f"Found {len(json_files)} documents in {category}")
+
+        # Pre-indexing collision guard (runs before any index_processed_document
+        # call): two distinct docs sharing one source_document_path would clobber
+        # each other on the tracked dedup branch. Keep the first, skip the rest,
+        # and surface the collision instead of silently dropping a document.
+        json_files, collisions = detect_source_path_collisions(json_files)
+        for path, files in collisions.items():
+            kept = files[0].name
+            skipped = ", ".join(f.name for f in files[1:])
+            message = (
+                f"source_document_path collision in {category}: "
+                f"{len(files)} documents resolve to '{path}'. "
+                f"Indexing '{kept}'; skipping {skipped}."
+            )
+            logger.error(message)
+            stats["errors"].append(message)
 
         # Process documents in parallel batches
         async def process_document(json_file: Path) -> Dict[str, Any]:

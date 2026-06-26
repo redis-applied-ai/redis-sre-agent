@@ -110,6 +110,10 @@ class RedisCloudAPIScraper(BaseScraper):
                 "api_version": api_version,
                 "doc_type": "api_overview",
                 "scraped_from": "redis_cloud_api_scraper",
+                # Explicit identity: every endpoint shares the swagger source_url
+                # (differing only by #fragment, which derive_stable_path drops),
+                # so the URL-derived default would collide. Set it per document.
+                "source_document_path": "redis-cloud-api/overview",
             },
         )
         documents.append(overview_doc)
@@ -205,6 +209,10 @@ class RedisCloudAPIScraper(BaseScraper):
                     "operation_id": operation_id,
                     "doc_type": "api_endpoint",
                     "scraped_from": "redis_cloud_api_scraper",
+                    # Explicit, content-independent identity per endpoint. The
+                    # shared swagger source_url cannot disambiguate endpoints, so
+                    # key on METHOD + templated path instead.
+                    "source_document_path": f"redis-cloud-api/{method.upper()} {path}",
                 },
             )
 

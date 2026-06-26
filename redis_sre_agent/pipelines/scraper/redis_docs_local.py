@@ -190,6 +190,11 @@ class RedisDocsLocalScraper(BaseScraper):
                 "file_size": md_file.stat().st_size,
                 "version": version,
                 **metadata,
+                # Explicit relative-path identity (not the github-URL default):
+                # stable, content-independent, and consistent with how local
+                # documents are keyed elsewhere. Set after the frontmatter
+                # spread so it cannot be overridden by document metadata.
+                "source_document_path": str(rel_path),
             },
         )
 

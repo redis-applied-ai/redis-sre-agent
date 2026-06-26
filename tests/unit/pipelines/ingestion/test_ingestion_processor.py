@@ -604,9 +604,12 @@ class TestIngestionPipeline:
                 json.dump(doc_data, f)
 
         mock_deduplicator = AsyncMock()
-        mock_deduplicator.replace_document_chunks.return_value = (
-            3  # Return number of chunks indexed
-        )
+        # These docs carry http source_urls, so they now route through the
+        # tracked branch (source_document_path defaulted from the URL).
+        mock_deduplicator.replace_source_document_chunks.return_value = {
+            "action": "add",
+            "indexed_count": 3,
+        }
 
         result = await pipeline._process_category(
             category_path,
@@ -748,9 +751,12 @@ class TestIngestionPipeline:
             json.dump({"incomplete": "data"}, f)
 
         mock_deduplicator = AsyncMock()
-        mock_deduplicator.replace_document_chunks.return_value = (
-            1  # Return number of chunks indexed
-        )
+        # The valid doc has an http source_url, so it routes through the tracked
+        # branch; the invalid doc fails before indexing regardless of branch.
+        mock_deduplicator.replace_source_document_chunks.return_value = {
+            "action": "add",
+            "indexed_count": 1,
+        }
 
         result = await pipeline._process_category(
             category_path,

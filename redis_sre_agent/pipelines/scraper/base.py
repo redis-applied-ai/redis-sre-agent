@@ -8,8 +8,47 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def derive_stable_path(source_url: str) -> str:
+    """Derive a stable, content-independent logical identity from a source URL.
+
+    This is the document's logical identity used to route scraped documents
+    through the tracked dedup branch (replace-on-change). It is derived from
+    *where* a document lives, never from *what* it says.
+
+    Frozen contract (changing it re-keys the entire corpus — every path becomes
+    "new", old chunks orphan en masse on the next run):
+
+    - Only ``http`` / ``https`` URLs produce a path. Any other scheme
+      (``file://``, ``mailto:`` …), an empty string, or a relative/unparseable
+      input returns ``""`` so the document falls through to the untracked
+      branch rather than being assigned a machine-specific or garbage identity.
+    - Strip the scheme; lowercase the host; drop ``?query`` and ``#fragment``;
+      strip a single trailing slash.
+    - Do NOT fold ``index.html`` and do NOT collapse duplicate slashes — those
+      can merge legitimately distinct pages into one identity.
+
+    Idempotent: the same logical page maps to the same string on every run, so
+    the prior-version lookup in ``replace_source_document_chunks`` can find and
+    delete stale chunks before writing the new ones.
+    """
+    if not source_url:
+        return ""
+    try:
+        parsed = urlparse(source_url.strip())
+    except (ValueError, AttributeError):
+        return ""
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    host = parsed.netloc.lower()
+    if not host:
+        return ""
+    path = parsed.path.rstrip("/")
+    return f"{host}{path}"
 
 
 class DocumentCategory(str, Enum):
@@ -76,6 +115,17 @@ class ScrapedDocument:
         self.doc_type = doc_type
         self.severity = severity
         self.metadata = metadata or {}
+        # Default a stable, content-independent source_document_path from the
+        # source URL when a scraper has not set one explicitly. This routes the
+        # document through the tracked dedup branch (replace-on-change). Only
+        # fires for http(s) URLs; file://, relative, and other schemes yield ""
+        # (derive_stable_path) and fall through to the untracked branch. Note:
+        # __init__ also runs via from_dict, so reingesting a legacy artifact
+        # that predates this field auto-migrates http(s) docs onto tracking.
+        if not str(self.metadata.get("source_document_path") or "").strip():
+            derived = derive_stable_path(source_url)
+            if derived:
+                self.metadata["source_document_path"] = derived
         self.scraped_at = datetime.now(timezone.utc)
         self.content_hash = self._generate_content_hash()
 
