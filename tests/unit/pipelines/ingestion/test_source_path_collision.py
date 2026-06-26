@@ -30,9 +30,15 @@ def _write_doc(path: Path, source_url: str, source_document_path=None) -> Path:
 
 
 def test_explicit_path_collision_is_detected_and_deduped(tmp_path):
-    a = _write_doc(tmp_path / "a.json", "https://x/a#one", source_document_path="redis-cloud-api/GET /foo")
-    b = _write_doc(tmp_path / "b.json", "https://x/b#two", source_document_path="redis-cloud-api/GET /foo")
-    c = _write_doc(tmp_path / "c.json", "https://x/c", source_document_path="redis-cloud-api/GET /bar")
+    a = _write_doc(
+        tmp_path / "a.json", "https://x/a#one", source_document_path="redis-cloud-api/GET /foo"
+    )
+    b = _write_doc(
+        tmp_path / "b.json", "https://x/b#two", source_document_path="redis-cloud-api/GET /foo"
+    )
+    c = _write_doc(
+        tmp_path / "c.json", "https://x/c", source_document_path="redis-cloud-api/GET /bar"
+    )
 
     files_to_process, collisions = detect_source_path_collisions([a, b, c])
 
