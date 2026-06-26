@@ -72,6 +72,21 @@ def test_untracked_docs_never_collide(tmp_path):
     assert collisions == {}
 
 
+def test_whitespace_only_difference_is_a_collision(tmp_path):
+    """Paths differing only by surrounding whitespace collide (tracking strips them)."""
+    a = _write_doc(
+        tmp_path / "a.json", "https://x/a", source_document_path="redis-cloud-api/GET /foo"
+    )
+    b = _write_doc(
+        tmp_path / "b.json", "https://x/b", source_document_path="  redis-cloud-api/GET /foo  "
+    )
+
+    files_to_process, collisions = detect_source_path_collisions([a, b])
+
+    assert len(files_to_process) == 1
+    assert "redis-cloud-api/GET /foo" in collisions
+
+
 def test_no_collision_passes_all_through(tmp_path):
     a = _write_doc(tmp_path / "a.json", "https://redis.io/docs/a")
     b = _write_doc(tmp_path / "b.json", "https://redis.io/docs/b")

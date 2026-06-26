@@ -41,8 +41,12 @@ def detect_source_path_collisions(
             with open(json_file, "r", encoding="utf-8") as f:
                 doc_data = json.load(f)
             # Resolve the identity exactly as indexing will: ScrapedDocument
-            # construction applies the explicit-path-or-derive_stable_path rule.
-            path = ScrapedDocument.from_dict(doc_data).metadata.get("source_document_path", "")
+            # construction applies the explicit-path-or-derive_stable_path rule,
+            # and the tracking side strips the value (get_source_tracking_fields),
+            # so strip here too — otherwise paths differing only by surrounding
+            # whitespace would slip the guard yet share one tracking key.
+            resolved = ScrapedDocument.from_dict(doc_data)
+            path = str(resolved.metadata.get("source_document_path") or "").strip()
         except Exception as e:  # unreadable/invalid file: defer the error to processing
             logger.warning("Collision scan could not read %s: %s", json_file.name, e)
             files_to_process.append(json_file)
