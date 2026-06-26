@@ -8,27 +8,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Avoid importing Redis/vectorizer at module import time to keep optional deps lazy
-from ...pipelines.scraper.base import ArtifactStorage, ScrapedDocument, derive_stable_path
+from ...pipelines.scraper.base import ArtifactStorage, ScrapedDocument
 from .deduplication import DocumentDeduplicator
 from .document_processor import DocumentProcessor
 from .pipeline_workflow_mixin import PipelineWorkflowMixin
 from .processor_indexing_helpers import index_processed_document
 
 logger = logging.getLogger(__name__)
-
-
-def _effective_source_document_path(doc_data: Dict[str, Any]) -> str:
-    """Return the source_document_path a document will index under.
-
-    Mirrors the identity resolution in ``ScrapedDocument.__init__`` /
-    ``from_dict``: an explicit ``metadata['source_document_path']`` wins,
-    otherwise it is derived from ``source_url`` (empty for non-http(s)).
-    """
-    metadata = doc_data.get("metadata") or {}
-    explicit = str(metadata.get("source_document_path") or "").strip()
-    if explicit:
-        return explicit
-    return derive_stable_path(str(doc_data.get("source_url") or ""))
 
 
 def detect_source_path_collisions(
@@ -54,7 +40,9 @@ def detect_source_path_collisions(
         try:
             with open(json_file, "r", encoding="utf-8") as f:
                 doc_data = json.load(f)
-            path = _effective_source_document_path(doc_data)
+            # Resolve the identity exactly as indexing will: ScrapedDocument
+            # construction applies the explicit-path-or-derive_stable_path rule.
+            path = ScrapedDocument.from_dict(doc_data).metadata.get("source_document_path", "")
         except Exception as e:  # unreadable/invalid file: defer the error to processing
             logger.warning("Collision scan could not read %s: %s", json_file.name, e)
             files_to_process.append(json_file)
