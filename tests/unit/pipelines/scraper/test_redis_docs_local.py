@@ -28,6 +28,24 @@ def test_extract_version_from_rel_path(tmp_path):
     )
 
 
+def test_source_document_path_is_relative_not_github_url(tmp_path):
+    """Local mirror keys docs by their relative path, not the github-URL default."""
+    docs_repo = tmp_path / "redis-docs"
+    content_dir = docs_repo / "content"
+    md = content_dir / "operate/rs/clustering.md"
+    _write_markdown(md, "Clustering")
+
+    storage = ArtifactStorage(tmp_path / "artifacts")
+    scraper = RedisDocsLocalScraper(storage, config={"docs_repo_path": str(docs_repo)})
+
+    doc = scraper._process_markdown_file(md, content_dir)
+
+    assert doc.metadata["source_document_path"] == "operate/rs/clustering.md"
+    # The github blob URL remains the human-facing source, but is NOT the identity.
+    assert doc.source_url.startswith("https://github.com/redis/docs/blob/")
+    assert "github.com" not in doc.metadata["source_document_path"]
+
+
 @pytest.mark.asyncio
 async def test_scrape_sets_version_metadata_from_path(tmp_path):
     """Test scraped docs include normalized version metadata."""

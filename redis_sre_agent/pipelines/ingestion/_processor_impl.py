@@ -17,6 +17,56 @@ from .processor_indexing_helpers import index_processed_document
 logger = logging.getLogger(__name__)
 
 
+def detect_source_path_collisions(
+    json_files: List[Path],
+) -> tuple[List[Path], Dict[str, List[Path]]]:
+    """Detect distinct documents that resolve to the same source_document_path.
+
+    Runs BEFORE any indexing. Two documents sharing one identity would clobber
+    each other on the tracked dedup branch (delete-prior-then-write on a shared
+    tracking key), silently dropping one every run — and under the parallel
+    ingest batch they would also race on that key. Detecting here lets us keep
+    the first occurrence and skip the rest before a single chunk is written.
+
+    Returns ``(files_to_process, collisions)`` where ``collisions`` maps a
+    colliding path to every file that resolved to it (first kept, rest skipped).
+    Files with an empty effective path (untracked branch) are never collided.
+    """
+    by_path: Dict[str, List[Path]] = {}
+    files_to_process: List[Path] = []
+    # Sort for a deterministic "keep first" across runs, so the collision
+    # skip-list is reproducible in audit logs regardless of directory order.
+    for json_file in sorted(json_files):
+        try:
+            with open(json_file, "r", encoding="utf-8") as f:
+                doc_data = json.load(f)
+            # Resolve the identity exactly as indexing will: ScrapedDocument
+            # construction applies the explicit-path-or-derive_stable_path rule,
+            # and the tracking side strips the value (get_source_tracking_fields),
+            # so strip here too — otherwise paths differing only by surrounding
+            # whitespace would slip the guard yet share one tracking key.
+            resolved = ScrapedDocument.from_dict(doc_data)
+            path = str(resolved.metadata.get("source_document_path") or "").strip()
+        except Exception as e:  # unreadable/invalid file: defer the error to processing
+            logger.warning("Collision scan could not read %s: %s", json_file.name, e)
+            files_to_process.append(json_file)
+            continue
+
+        if not path:
+            # Untracked branch (e.g. file:// or non-http source): cannot collide.
+            files_to_process.append(json_file)
+            continue
+
+        if path in by_path:
+            by_path[path].append(json_file)  # duplicate: skip (do not index)
+        else:
+            by_path[path] = [json_file]
+            files_to_process.append(json_file)
+
+    collisions = {path: files for path, files in by_path.items() if len(files) > 1}
+    return files_to_process, collisions
+
+
 # Expose patchable wrappers so tests can monkeypatch these names
 async def get_knowledge_index():
     from ...core.redis import get_knowledge_index as _get_knowledge_index
@@ -85,12 +135,18 @@ class IngestionPipeline(PipelineWorkflowMixin):
 
     @staticmethod
     def _path_in_scope(source_document_path: str, scope_prefixes: set[str]) -> bool:
-        """Return True when a tracked source file belongs to the active ingest scope."""
-        if not scope_prefixes:
+        """Return True when a tracked source file belongs to the active ingest scope.
+
+        An empty/blank scope NEVER authorizes deletion. A source must declare a
+        bounded, non-empty scope prefix for the stale sweep to delete within it;
+        with no declared scope, nothing is swept. (A "" scope was previously
+        treated as match-everything — once documents are tracked, that let a
+        partial ingest hard-delete every tracked doc it did not re-emit.)
+        """
+        real_prefixes = {prefix for prefix in scope_prefixes if prefix and prefix.strip()}
+        if not real_prefixes:
             return False
-        if "" in scope_prefixes:
-            return True
-        return any(source_document_path.startswith(prefix) for prefix in scope_prefixes if prefix)
+        return any(source_document_path.startswith(prefix) for prefix in real_prefixes)
 
     @staticmethod
     def _empty_source_change_summary() -> Dict[str, Any]:
@@ -328,6 +384,22 @@ class IngestionPipeline(PipelineWorkflowMixin):
             )
 
         logger.info(f"Found {len(json_files)} documents in {category}")
+
+        # Pre-indexing collision guard (runs before any index_processed_document
+        # call): two distinct docs sharing one source_document_path would clobber
+        # each other on the tracked dedup branch. Keep the first, skip the rest,
+        # and surface the collision instead of silently dropping a document.
+        json_files, collisions = detect_source_path_collisions(json_files)
+        for path, files in collisions.items():
+            kept = files[0].name
+            skipped = ", ".join(f.name for f in files[1:])
+            message = (
+                f"source_document_path collision in {category}: "
+                f"{len(files)} documents resolve to '{path}'. "
+                f"Indexing '{kept}'; skipping {skipped}."
+            )
+            logger.error(message)
+            stats["errors"].append(message)
 
         # Process documents in parallel batches
         async def process_document(json_file: Path) -> Dict[str, Any]:

@@ -246,7 +246,7 @@ async def test_build_deduplicators_and_tracking_helpers(pipeline):
         {"deduplicator_key": "skill", "document_hash": "s-hash"},
     ]
     assert IngestionPipeline._path_in_scope("shared/doc.md", set()) is False
-    assert IngestionPipeline._path_in_scope("shared/doc.md", {""}) is True
+    assert IngestionPipeline._path_in_scope("shared/doc.md", {""}) is False
     assert IngestionPipeline._path_in_scope("shared/doc.md", {"enterprise/"}) is False
     assert IngestionPipeline._path_in_scope("shared/doc.md", {"shared/"}) is True
 
@@ -393,7 +393,12 @@ async def test_process_category_latest_only_and_error_paths(pipeline, tmp_path):
             path.write_text(content, encoding="utf-8")
 
     deduplicator = AsyncMock()
-    deduplicator.replace_document_chunks.return_value = 1
+    # The surviving 'keep.json' has an http source_url, so it routes through the
+    # tracked branch (source_document_path defaulted from the URL).
+    deduplicator.replace_source_document_chunks.return_value = {
+        "action": "add",
+        "indexed_count": 1,
+    }
     latest_only_pipeline = IngestionPipeline(pipeline.storage, {"latest_only": True})
 
     result = await latest_only_pipeline._process_category(
@@ -403,7 +408,7 @@ async def test_process_category_latest_only_and_error_paths(pipeline, tmp_path):
         {"knowledge": deduplicator},
     )
 
-    deduplicator.replace_document_chunks.assert_awaited_once()
+    deduplicator.replace_source_document_chunks.assert_awaited_once()
     assert result["documents_processed"] == 1
     assert len(result["errors"]) == 1
     assert "broken.json" in result["errors"][0]
@@ -641,7 +646,11 @@ async def test_ingest_source_documents_paths(pipeline, tmp_path):
             side_effect=chunk_document_side_effect,
         ),
     ):
-        results = await pipeline.ingest_source_documents(source_dir.parent)
+        # Ingest the bounded "shared/" subtree so the run declares a real,
+        # non-empty scope. (Ingesting the source_documents root yields an empty
+        # scope, which no longer authorizes deletion — empty scope must never
+        # match-everything, or a partial/cross-source run would wipe the corpus.)
+        results = await pipeline.ingest_source_documents(source_dir)
 
     skill.delete_tracked_source_document.assert_awaited_once_with(
         "old-skill-hash", "shared/tracked.md"
