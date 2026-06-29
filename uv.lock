@@ -3195,7 +3195,7 @@ wheels = [
 
 [[package]]
 name = "redis-sre-agent"
-version = "0.5.2"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-memory-client" },
