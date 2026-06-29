@@ -26,6 +26,18 @@ class PipelineOrchestrator:
 
     ProgressCallback = Callable[[str, str, Optional[Dict[str, Any]]], Awaitable[None]]
 
+    @classmethod
+    def validate_scraper_names(cls, scrapers: Optional[List[str]]) -> Optional[List[str]]:
+        """Reject unknown scraper names before a pipeline appears to succeed."""
+        if scrapers is None:
+            return None
+        invalid = [scraper for scraper in scrapers if scraper not in cls.SCRAPER_CLASSES]
+        if invalid:
+            supported = ", ".join(cls.SCRAPER_CLASSES)
+            unknown = ", ".join(invalid)
+            raise ValueError(f"Unknown scraper(s): {unknown}. Supported scrapers: {supported}")
+        return scrapers
+
     def __init__(
         self,
         artifacts_path: str = "./artifacts",
@@ -41,14 +53,18 @@ class PipelineOrchestrator:
         self.storage = ArtifactStorage(self.artifacts_path)
 
         # Only instantiate scrapers that are requested (or all if none specified)
-        scrapers_to_init = scrapers if scrapers is not None else list(self.SCRAPER_CLASSES.keys())
+        validated_scrapers = self.validate_scraper_names(scrapers)
+        scrapers_to_init = (
+            validated_scrapers
+            if validated_scrapers is not None
+            else list(self.SCRAPER_CLASSES.keys())
+        )
         self.scrapers = {}
         for scraper_name in scrapers_to_init:
-            if scraper_name in self.SCRAPER_CLASSES:
-                scraper_class = self.SCRAPER_CLASSES[scraper_name]
-                self.scrapers[scraper_name] = scraper_class(
-                    self.storage, self.config.get(scraper_name, {})
-                )
+            scraper_class = self.SCRAPER_CLASSES[scraper_name]
+            self.scrapers[scraper_name] = scraper_class(
+                self.storage, self.config.get(scraper_name, {})
+            )
 
         # Initialize ingestion pipeline with knowledge settings
         self.ingestion = IngestionPipeline(
@@ -74,7 +90,7 @@ class PipelineOrchestrator:
         """Run the complete scraping pipeline."""
         logger.info("Starting scraping pipeline")
 
-        scrapers_to_run = scrapers or list(self.scrapers.keys())
+        scrapers_to_run = self.validate_scraper_names(scrapers) or list(self.scrapers.keys())
 
         pipeline_results = {
             "pipeline_type": "scraping",
@@ -91,10 +107,6 @@ class PipelineOrchestrator:
 
             # Run each scraper
             for scraper_name in scrapers_to_run:
-                if scraper_name not in self.scrapers:
-                    logger.warning(f"Unknown scraper: {scraper_name}")
-                    continue
-
                 logger.info(f"Running scraper: {scraper_name}")
                 scraper = self.scrapers[scraper_name]
                 scraper.progress_callback = progress_callback

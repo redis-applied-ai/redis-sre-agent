@@ -12,6 +12,7 @@ import click
 import psutil
 from docket import Docket, Worker
 
+from redis_sre_agent import __version__
 from redis_sre_agent.cli.logging_utils import log_cli_exception
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import register_sre_tasks
@@ -139,7 +140,7 @@ def start(concurrency: int):
         logger.info("Starting SRE Docket worker connected to Redis")
 
         # OpenTelemetry tracing with centralized setup (includes Redis hooks for filtering)
-        setup_tracing("redis-sre-worker", "0.1.0")
+        setup_tracing("redis-sre-worker", __version__)
 
         # Start a Prometheus metrics HTTP server to expose worker metrics (incl. LLM tokens)
         try:

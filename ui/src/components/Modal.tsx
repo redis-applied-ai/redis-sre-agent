@@ -90,6 +90,9 @@ const Modal = ({
             )}
             {showCloseButton && (
               <button
+                type="button"
+                aria-label="Close modal"
+                title="Close modal"
                 onClick={onClose}
                 className="transition-colors p-1"
                 style={{ color: "var(--muted-foreground)" }}

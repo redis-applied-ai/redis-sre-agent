@@ -27,6 +27,8 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from redis_sre_agent import __version__
+
 logger = logging.getLogger(__name__)
 
 # Type var for decorators
@@ -150,7 +152,7 @@ def _get_otlp_trace_endpoint() -> Optional[str]:
 
 def setup_tracing(
     service_name: str,
-    service_version: str = "0.1.0",
+    service_version: str = __version__,
 ) -> bool:
     """Initialize OpenTelemetry tracing if OTLP endpoint is configured.
 

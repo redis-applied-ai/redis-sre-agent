@@ -43,7 +43,8 @@ describe("Modal", () => {
       </Modal>,
     );
 
-    const closeButton = screen.getByRole("button");
+    const closeButton = screen.getByRole("button", { name: "Close modal" });
+    expect(closeButton).toHaveAttribute("title", "Close modal");
     fireEvent.click(closeButton);
 
     expect(mockOnClose).toHaveBeenCalledTimes(1);

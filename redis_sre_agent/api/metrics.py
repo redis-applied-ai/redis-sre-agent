@@ -7,6 +7,7 @@ from typing import Any, Dict
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
+from redis_sre_agent import __version__
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client, test_redis_connection
@@ -43,7 +44,7 @@ async def get_application_metrics() -> Dict[str, Any]:
     metrics["sre_agent_info"] = {
         "value": 1,
         "labels": {
-            "version": "0.1.0",
+            "version": __version__,
             "app_name": settings.app_name,
             "embedding_model": settings.embedding_model,
         },

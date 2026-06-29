@@ -272,6 +272,51 @@ async def test_guarded_ainvoke_enforces_context_budget_before_request(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_guarded_ainvoke_allows_request_when_context_budget_unset(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_mode = "off"
+    monkeypatch.setattr(
+        token_usage_module,
+        "settings",
+        SimpleNamespace(llm_context_token_budget=None),
+    )
+    response = SimpleNamespace(usage_metadata={"input_tokens": 0, "output_tokens": 0})
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=response), model_name="gpt-4o-mini")
+
+    result = await guarded_ainvoke(
+        llm,
+        [HumanMessage(content="token " * 100)],
+        request_kind="unit.context_unset",
+    )
+
+    assert result is response
+    llm.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_guarded_ainvoke_allows_request_when_context_budget_is_high_enough(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_mode = "off"
+    monkeypatch.setattr(
+        token_usage_module,
+        "settings",
+        SimpleNamespace(llm_context_token_budget=10_000),
+    )
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value="ok"), model_name="gpt-4o-mini")
+
+    result = await guarded_ainvoke(
+        llm,
+        [HumanMessage(content="short request")],
+        request_kind="unit.context_allowed",
+    )
+
+    assert result == "ok"
+    llm.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_guarded_chat_completions_enforces_context_budget_before_request(
     monkeypatch, guard_settings
 ):
@@ -293,6 +338,43 @@ async def test_guarded_chat_completions_enforces_context_budget_before_request(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": "token " * 100}],
             request_kind="unit.chat_completions",
+        )
+
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_guarded_chat_completions_counts_response_format_payload_before_request(
+    monkeypatch, guard_settings
+):
+    guard_settings.pii_remediation_mode = "off"
+    monkeypatch.setattr(
+        token_usage_module,
+        "settings",
+        SimpleNamespace(llm_context_token_budget=30),
+    )
+    create = AsyncMock(return_value=SimpleNamespace(usage={"total_tokens": 1}))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    with pytest.raises(
+        LLMTokenLimitExceededError,
+        match="unit.chat_completions.response_format.*budget is 30",
+    ):
+        await guarded_chat_completions_create(
+            client,
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "short"}],
+            request_kind="unit.chat_completions.response_format",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "large_schema",
+                    "schema": {
+                        "type": "object",
+                        "description": "token " * 100,
+                    },
+                },
+            },
         )
 
     create.assert_not_awaited()

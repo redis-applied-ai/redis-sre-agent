@@ -178,9 +178,9 @@ Use the top-level `skills` commands to inspect Agent Skills packages without run
 
 ```bash
 uv run redis-sre-agent skills list --query "maintenance"
-uv run redis-sre-agent skills show redis-maintenance-triage
+uv run redis-sre-agent skills show <skill-name>
 uv run redis-sre-agent skills read-resource \
-  redis-maintenance-triage references/maintenance-checklist.md
+  <skill-name> references/evidence-checklist.md
 ```
 
 To scaffold a package from an existing markdown skill:

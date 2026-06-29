@@ -59,17 +59,20 @@ make local-services-logs # Tail logs
 
 ### HTTP endpoints
 - `POST /api/v1/tasks/{task_id}/feedback` — submit or update feedback; body `{"verdict":"up"|"down"|"withdrawn","comment":"..."}` (comment optional, max 2048 chars); returns `FeedbackRecord` (200) or 404 when task absent; invalid verdict or oversized comment → 422.
-- `GET /api/v1/tasks/{task_id}/feedback` — retrieve current feedback; returns `FeedbackRecord` (200) or 404 when no feedback exists.
+- `GET /api/v1/tasks/{task_id}/feedback` — retrieve current feedback; returns joined `FeedbackView` (200) or 404 when no feedback exists.
+- `GET /api/v1/feedback` — list joined `FeedbackView` records; query params: `since=<Ns|m|h|d>`, `verdict=up|down|withdrawn`, `status=<TaskStatus>`, `limit=1..500`.
 
-### MCP tool
+### MCP tools
 - `redis_sre_submit_feedback(task_id, verdict, comment?)` — thin wrapper around `submit_feedback()`; propagates `pydantic.ValidationError` and `TaskNotFoundError` as native MCP errors (not success-shaped error dicts).
+- `redis_sre_get_feedback(task_id)` — returns joined `FeedbackView`, `null` when the task exists but has no feedback, or native MCP error when the task is missing.
+- `redis_sre_list_feedback(since?, verdict?, status?, limit?)` — returns `{"items": [FeedbackView...], "count": N}`.
 
 ### CLI commands
 - `redis-sre-agent feedback up <task_id> [--comment "..."]`
 - `redis-sre-agent feedback down <task_id> [--comment "..."]`
 - `redis-sre-agent feedback withdraw <task_id>`
 - `redis-sre-agent feedback show <task_id>`
-- `redis-sre-agent feedback list [--since <Ns|m|h|d>] [--verdict up|down|withdrawn] [--limit N]`
+- `redis-sre-agent feedback list [--since <Ns|m|h|d>] [--verdict up|down|withdrawn] [--status <TaskStatus>] [--limit N]`
 
 ### How feedback works
 All feedback writes go through `submit_feedback()` in `redis_sre_agent/core/feedback.py`. HTTP, MCP, and CLI surfaces are thin wrappers. The Redis hash at `sre:feedback:task:{task_id}` is the source of truth; `created_at` is `HSETNX`-anchored to be concurrency-safe; a `feedback_submitted` event is published to `sre:stream:task:{thread_id}` after every successful write. To add a new surface, wrap `submit_feedback()` — do not write to the Redis hash directly.
@@ -85,7 +88,7 @@ See `.env.example` for full configuration. Key variables:
 - `REDIS_URL`: Redis connection string (default: redis://localhost:7843/0)
 
 ## Knowledge Base
-- **Data sources**: redis.io/kb articles, local redis-docs clone, `source_documents/`
+- **Data sources**: Redis documentation, local redis-docs clone, `source_documents/`
 - **Pipeline**: `pipeline scrape` creates artifacts, `pipeline ingest` indexes into Redis
 - **Sync docs**: `make redis-docs-sync` to clone/update redis/docs
 

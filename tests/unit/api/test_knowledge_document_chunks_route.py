@@ -56,3 +56,37 @@ def test_get_knowledge_document_chunks_returns_404_for_missing_chunks(test_clien
 
     assert response.status_code == 404
     assert response.json()["detail"] == "No chunks found"
+
+
+def test_get_knowledge_document_chunks_decodes_document_hash(test_client):
+    expected = {
+        "document_hash": "doc with space",
+        "fragments_count": 1,
+        "fragments": [{"chunk_index": 0, "content": "first"}],
+    }
+
+    with patch(
+        "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+        new=AsyncMock(return_value=expected),
+    ) as get_all_document_fragments:
+        response = test_client.get("/api/v1/knowledge/document-chunks/doc%20with%20space")
+
+    assert response.status_code == 200
+    assert response.json()["document_hash"] == "doc with space"
+    get_all_document_fragments.assert_awaited_once_with(
+        "doc with space",
+        include_metadata=True,
+        index_type="knowledge",
+        version=None,
+    )
+
+
+def test_get_knowledge_document_chunks_returns_404_for_deleted_document(test_client):
+    with patch(
+        "redis_sre_agent.core.knowledge_helpers.get_all_document_fragments",
+        new=AsyncMock(return_value={"error": "Document was deleted", "fragments": []}),
+    ):
+        response = test_client.get("/api/v1/knowledge/document-chunks/deleted-doc")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document was deleted"

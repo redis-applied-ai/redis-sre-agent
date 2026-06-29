@@ -185,8 +185,10 @@ The `INFO` command output is MISLEADING for Redis Enterprise:
    - Call `list_shards` to check if shards are properly distributed across nodes
 
 4. **For CRDB/Active-Active questions, validate with CRDB-specific Admin API tools**:
-   - Call `list_crdbs` and match by CRDB name, CRDB GUID, local database UID (`local_databases[].bdb_uid`), or instance `db_uid`.
+   - Call `list_crdbs` and match by CRDB name, CRDB GUID, local BDB UID (`local_databases[].bdb_uid`), or instance `db_uid`.
    - If a matching CRDB is found, call `get_crdb` and `get_crdb_health_report` before summarizing peers/sites or link status.
+   - If multiple CRDBs match the requested name or UID, ask for clarification before using topology or health tools.
+   - If no CRDBs are configured or no CRDB matches, state that only after checking `list_crdbs`.
    - For sync failures or lag, call `get_crdt_syncer_state` for the local BDB UID and `get_sync_source_stats` for lag counters.
    - Check `get_logs` for recent CRDB, CRDT, syncer, resync, replication link, or connection events.
    - Do not claim a database is not CRDB solely because a `get_database` response lacks optional CRDT fields. First check `/v1/crdbs` via `list_crdbs`.

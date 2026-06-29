@@ -45,18 +45,13 @@ LLM_LATENCY = Histogram(
 
 def _get_model_name(llm: Any) -> str:
     """Extract model name from LLM object, trying common attribute patterns."""
-    try:
-        model = llm.model  # type: ignore[attr-defined]
+    for attr in ("model", "model_name", "model_id", "deployment_name", "_model"):
+        try:
+            model = getattr(llm, attr)
+        except AttributeError:
+            continue
         if model:
-            return model
-    except AttributeError:
-        pass  # LLM may not have .model attribute
-    try:
-        model = llm._model  # type: ignore[attr-defined]
-        if model:
-            return model
-    except AttributeError:
-        pass  # LLM may not have ._model attribute
+            return str(model)
     return "unknown"
 
 

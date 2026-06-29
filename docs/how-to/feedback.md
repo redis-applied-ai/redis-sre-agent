@@ -183,7 +183,7 @@ uv run redis-sre-agent feedback show <task_id>
 
 # List recent feedback with optional filters
 uv run redis-sre-agent feedback list
-uv run redis-sre-agent feedback list --since 24h --verdict down --limit 50
+uv run redis-sre-agent feedback list --since 24h --verdict down --status done --limit 50
 ```
 
 **Read output shape**: `feedback show` prints the same joined `FeedbackView` JSON shown above, or `null` when the task exists but has no feedback yet. `feedback list` emits one `FeedbackView` JSON object per line by default, or a table with `--table`.

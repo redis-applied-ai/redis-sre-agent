@@ -19,6 +19,14 @@ def _parse_scraper_list(scrapers: str | None) -> list[str] | None:
     return [scraper.strip() for scraper in scrapers.split(",")]
 
 
+def _validated_scraper_list(scrapers: str | None) -> list[str] | None:
+    """Parse and validate scraper names for CLI entry points."""
+    try:
+        return PipelineOrchestrator.validate_scraper_names(_parse_scraper_list(scrapers))
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--scrapers") from exc
+
+
 def _validate_batch_date(batch_date: str | None) -> str | None:
     """Validate a YYYY-MM-DD batch date override."""
     if not batch_date:
@@ -119,9 +127,9 @@ def scrape(
     batch_date: str | None,
 ):
     """Run the scraping pipeline to collect SRE documents."""
+    scraper_list = _validated_scraper_list(scrapers)
     click.echo("🔍 Starting scraping pipeline...")
 
-    scraper_list = _parse_scraper_list(scrapers)
     validated_batch_date = _validate_batch_date(batch_date)
 
     async def run_scraping():
@@ -204,7 +212,10 @@ def ingest(batch_date: str, artifacts_path: str, latest_only: bool, verbose: boo
 
 @pipeline.command()
 @click.option("--artifacts-path", default="./artifacts", help="Path to store artifacts")
-@click.option("--scrapers", help="Comma-separated list of scrapers to run")
+@click.option(
+    "--scrapers",
+    help=("Comma-separated list of scrapers to run (redis_docs,redis_docs_local,redis_cloud_api)"),
+)
 @click.option(
     "--latest-only",
     is_flag=True,
@@ -224,9 +235,9 @@ def full(
     batch_date: str | None,
 ):
     """Run the complete pipeline: scraping + ingestion."""
+    scraper_list = _validated_scraper_list(scrapers)
     click.echo("🚀 Starting full pipeline (scraping + ingestion)...")
 
-    scraper_list = _parse_scraper_list(scrapers)
     validated_batch_date = _validate_batch_date(batch_date)
 
     async def run_full_pipeline():

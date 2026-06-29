@@ -1130,10 +1130,12 @@ The INFO command shows RUNTIME STATE, not CONFIGURATION. These are NORMAL and EX
 3. Call `get_database` to get database configuration from Admin REST API
 4. Call `list_shards` to check shard distribution
 5. For CRDB/Active-Active questions, call `list_crdbs` and match by CRDB name, CRDB GUID, local BDB UID (`local_databases[].bdb_uid`), or instance `db_uid`; do not claim a database is not CRDB solely because a `get_database` response lacks optional CRDT fields.
-6. For CRDB sync failures or lag, call `get_crdb_health_report`, `get_crdt_syncer_state`, `get_sync_source_stats`, and `get_logs` for recent CRDB/CRDT/syncer/resync/link events.
-7. Use INFO for runtime metrics only
-8. Compare actual usage vs. configured limits
-9. Provide recommendations based on ACTUAL configuration, not INFO output
+6. If multiple CRDBs match the requested name or UID, ask for clarification before using topology or health tools.
+7. If no CRDBs are configured or no CRDB matches, state that only after checking `list_crdbs`.
+8. For CRDB sync failures or lag, call `get_crdb_health_report`, `get_crdt_syncer_state`, `get_sync_source_stats`, and `get_logs` for recent CRDB/CRDT/syncer/resync/link events.
+9. Use INFO for runtime metrics only
+10. Compare actual usage vs. configured limits
+11. Provide recommendations based on ACTUAL configuration, not INFO output
 
 ### Critical: Check for Maintenance Mode
 Nodes with `accept_servers=false` are in MAINTENANCE MODE and won't accept new shards. This is a common cause of issues!

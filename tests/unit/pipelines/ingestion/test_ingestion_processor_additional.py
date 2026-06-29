@@ -328,6 +328,65 @@ async def test_delete_stale_source_documents_respects_scope_and_current_paths(pi
 
 
 @pytest.mark.asyncio
+async def test_delete_stale_source_documents_keeps_mixed_api_sources_out_of_local_scope(
+    pipeline,
+):
+    knowledge = AsyncMock()
+
+    deletions = await pipeline._delete_stale_source_documents(
+        {"knowledge": knowledge},
+        {
+            "shared/current.md": [{"deduplicator_key": "knowledge", "document_hash": "current"}],
+            "shared/deleted.md": [{"deduplicator_key": "knowledge", "document_hash": "deleted"}],
+            "redis-cloud-api/GET /subscriptions": [
+                {"deduplicator_key": "knowledge", "document_hash": "cloud-api"}
+            ],
+        },
+        {"shared/current.md"},
+        {"shared/"},
+    )
+
+    knowledge.delete_tracked_source_document.assert_awaited_once_with(
+        "deleted", "shared/deleted.md"
+    )
+    assert [deletion["path"] for deletion in deletions] == ["shared/deleted.md"]
+
+
+@pytest.mark.asyncio
+async def test_delete_stale_source_documents_deletes_duplicate_tracked_entries(
+    pipeline,
+):
+    knowledge = AsyncMock()
+    skill = AsyncMock()
+
+    deletions = await pipeline._delete_stale_source_documents(
+        {"knowledge": knowledge, "skill": skill},
+        {
+            "shared/removed.md": [
+                {
+                    "deduplicator_key": "knowledge",
+                    "document_hash": "knowledge-hash",
+                    "doc_type": "knowledge",
+                },
+                {
+                    "deduplicator_key": "skill",
+                    "document_hash": "skill-hash",
+                    "doc_type": "skill",
+                },
+            ]
+        },
+        set(),
+        {"shared/"},
+    )
+
+    knowledge.delete_tracked_source_document.assert_awaited_once_with(
+        "knowledge-hash", "shared/removed.md"
+    )
+    skill.delete_tracked_source_document.assert_awaited_once_with("skill-hash", "shared/removed.md")
+    assert [deletion["doc_type"] for deletion in deletions] == ["knowledge", "skill"]
+
+
+@pytest.mark.asyncio
 async def test_index_processed_document_skips_cross_index_delete_for_non_source_docs():
     document = _make_document(metadata={})
     deduplicator = MagicMock()
@@ -700,6 +759,24 @@ def test_load_source_documents_discovers_nested_and_configured_skill_roots(pipel
     assert paths.count("skills/local-skill/references/maintenance-checklist.md") == 1
 
 
+def test_load_source_documents_keeps_same_filenames_in_distinct_directories(pipeline, tmp_path):
+    source_root = tmp_path / "source_documents"
+    shared_dir = source_root / "shared"
+    enterprise_dir = source_root / "enterprise"
+    shared_dir.mkdir(parents=True)
+    enterprise_dir.mkdir()
+    (shared_dir / "guide.md").write_text("# Shared Guide\n\nBody", encoding="utf-8")
+    (enterprise_dir / "guide.md").write_text("# Enterprise Guide\n\nBody", encoding="utf-8")
+
+    documents = pipeline._load_source_documents(source_root, action="process")
+    by_path = {
+        str(document.metadata.get("source_document_path") or ""): document for document in documents
+    }
+
+    assert by_path["shared/guide.md"].title == "Shared Guide"
+    assert by_path["enterprise/guide.md"].title == "Enterprise Guide"
+
+
 def test_load_source_documents_discovers_skill_packages_directly_under_source_root(
     pipeline, tmp_path
 ):
@@ -780,6 +857,76 @@ async def test_ingest_source_documents_marks_unchanged_skill_resources(pipeline,
     unchanged_paths = {result["file"] for result in results if result["action"] == "unchanged"}
     assert "skills/redis-maintenance-triage/SKILL.md" in unchanged_paths
     assert "skills/redis-maintenance-triage/references/maintenance-checklist.md" in unchanged_paths
+
+
+@pytest.mark.asyncio
+async def test_ingest_source_documents_replaces_changed_title_at_same_source_path(
+    pipeline, tmp_path
+):
+    source_root = tmp_path / "source_documents"
+    shared_dir = source_root / "shared"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "tracked.md").write_text(
+        "---\n"
+        "title: New title\n"
+        "doc_type: knowledge\n"
+        "---\n\n"
+        "Updated body for the same source path.\n",
+        encoding="utf-8",
+    )
+
+    knowledge_deduplicator = AsyncMock()
+    knowledge_deduplicator.replace_source_document_chunks.return_value = {
+        "action": "update",
+        "indexed_count": 1,
+        "document_hash": "new-hash",
+        "previous_document_hash": "old-hash",
+        "source_document_path": "shared/tracked.md",
+    }
+
+    with (
+        patch(
+            "redis_sre_agent.pipelines.ingestion._processor_impl.get_vectorizer",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            pipeline,
+            "_build_deduplicators",
+            return_value={"knowledge": knowledge_deduplicator, "skill": AsyncMock()},
+        ),
+        patch.object(
+            pipeline,
+            "_list_tracked_source_documents",
+            return_value={
+                "shared/tracked.md": [
+                    {
+                        "deduplicator_key": "knowledge",
+                        "document_hash": "old-hash",
+                        "title": "Old title",
+                    }
+                ]
+            },
+        ),
+    ):
+        results = await pipeline.ingest_source_documents(source_root)
+
+    knowledge_deduplicator.replace_source_document_chunks.assert_awaited_once()
+    chunks = knowledge_deduplicator.replace_source_document_chunks.await_args.args[0]
+    assert chunks[0]["source_document_path"] == "shared/tracked.md"
+    assert chunks[0]["title"] == "New title"
+    assert "Updated body" in chunks[0]["content"]
+    assert results == [
+        {
+            "file": "shared/tracked.md",
+            "title": "New title",
+            "category": DocumentCategory.SHARED,
+            "severity": SeverityLevel.MEDIUM,
+            "status": "success",
+            "action": "update",
+            "chunks_created": 1,
+            "chunks_indexed": 1,
+        }
+    ]
 
 
 @pytest.mark.asyncio

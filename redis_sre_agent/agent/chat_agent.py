@@ -326,7 +326,9 @@ For Redis diagnostics:
   peers/sites, link status, syncer state, lag, and recent CRDB/CRDT/resync events.
   Match CRDBs by CRDB name, CRDB GUID, local BDB UID, or instance DB UID. Do not
   declare a database "not CRDB" solely because optional CRDT fields are absent
-  from a BDB response.
+  from a BDB response. If multiple CRDBs match the requested name or UID, ask for
+  clarification instead of choosing one. If `list_crdbs` returns no matches, say
+  no CRDB was found only after reporting that CRDB inventory check.
 
 For code/repo investigation:
 - **First:** One targeted repos-category search with a specific query

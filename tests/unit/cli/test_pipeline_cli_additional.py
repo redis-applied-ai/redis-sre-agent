@@ -24,6 +24,7 @@ def temp_artifacts_path():
 @pytest.fixture
 def mock_orchestrator():
     with patch("redis_sre_agent.cli.pipeline.PipelineOrchestrator") as mock_class:
+        mock_class.validate_scraper_names.side_effect = lambda names: names
         mock_instance = AsyncMock()
         mock_class.return_value = mock_instance
         yield mock_instance
@@ -61,6 +62,44 @@ def test_full_command_additional_branches(cli_runner, temp_artifacts_path, mock_
     failed = cli_runner.invoke(pipeline, ["full", "--artifacts-path", temp_artifacts_path])
     assert failed.exit_code != 0
     assert "Full pipeline failed: full boom" in failed.output
+
+
+def test_pipeline_help_lists_current_sources_without_retired_scrapers(cli_runner):
+    root = cli_runner.invoke(pipeline, ["--help"])
+    scrape = cli_runner.invoke(pipeline, ["scrape", "--help"])
+    full = cli_runner.invoke(pipeline, ["full", "--help"])
+    prepare_sources = cli_runner.invoke(pipeline, ["prepare-sources", "--help"])
+
+    for result in (root, scrape, full, prepare_sources):
+        assert result.exit_code == 0, result.output
+
+    assert "prepare-sources" in root.output
+    for output in (scrape.output, full.output):
+        assert "redis_docs,redis_docs_local,redis_cloud_api" in output
+        assert "redis_faq" not in output
+        assert "redis_kb" not in output
+
+    assert "Prepare source documents" in prepare_sources.output
+
+
+@pytest.mark.parametrize("command", ["scrape", "full"])
+def test_pipeline_rejects_retired_or_unknown_scraper_names(
+    cli_runner, temp_artifacts_path, command
+):
+    result = cli_runner.invoke(
+        pipeline,
+        [
+            command,
+            "--artifacts-path",
+            temp_artifacts_path,
+            "--scrapers",
+            "redis_docs, redis_kb",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Unknown scraper(s): redis_kb" in result.output
+    assert "redis_docs, redis_docs_local, redis_cloud_api" in result.output
 
 
 def test_scrape_and_full_accept_batch_date_override(

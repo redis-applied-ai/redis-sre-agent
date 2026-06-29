@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from redis_sre_agent import __version__
 from redis_sre_agent.skills.backend import (
     normalize_skill_search_type,
     unsupported_skill_search_type_result,
@@ -927,7 +928,7 @@ class AFSWorkspaceSkillBackend:
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "redis-sre-agent", "version": "0.1.0"},
+                "clientInfo": {"name": "redis-sre-agent", "version": __version__},
             },
         }
         headers = self._gateway_headers()

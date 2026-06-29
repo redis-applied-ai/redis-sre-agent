@@ -388,12 +388,12 @@ const Settings = () => {
         </p>
       </div>
 
-      <div className="flex gap-6">
+      <div className="flex flex-col gap-6 lg:flex-row">
         {/* Sidebar Navigation */}
-        <div className="w-64 flex-shrink-0">
+        <div className="w-full flex-shrink-0 lg:w-64">
           <Card>
             <CardContent className="p-0">
-              <nav className="space-y-1">
+              <nav className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:block lg:space-y-1">
                 {sections.map((section) => (
                   <button
                     key={section.id}
@@ -401,7 +401,7 @@ const Settings = () => {
                       setActiveSection(section.id);
                       setSearchParams({ section: section.id });
                     }}
-                    className={`w-full flex items-center px-4 py-3 text-left text-sm font-medium rounded-none first:rounded-t-lg last:rounded-b-lg transition-colors ${
+                    className={`w-full flex items-center px-4 py-3 text-left text-sm font-medium rounded-none lg:first:rounded-t-lg lg:last:rounded-b-lg transition-colors ${
                       activeSection === section.id
                         ? "bg-redis-blue-03 text-white"
                         : "text-foreground hover:bg-redis-dusk-09"
@@ -416,7 +416,7 @@ const Settings = () => {
         </div>
 
         {/* Main Content */}
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           {activeSection === "general" && (
             <div className="space-y-6">
               <Card>

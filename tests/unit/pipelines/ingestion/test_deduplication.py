@@ -431,3 +431,56 @@ async def test_replace_source_document_chunks_variants(deduplicator):
     )
     assert added["action"] == "add"
     assert added["previous_document_hash"] is None
+
+
+@pytest.mark.asyncio
+async def test_replace_source_document_chunks_updates_cloud_api_path(deduplicator):
+    vectorizer = AsyncMock()
+    deduplicator.get_source_document_tracking = AsyncMock(
+        return_value={"document_hash": "old-cloud-hash"}
+    )
+    deduplicator.delete_tracked_source_document = AsyncMock()
+    deduplicator.replace_document_chunks = AsyncMock(return_value=1)
+    deduplicator.update_source_document_tracking = AsyncMock()
+
+    updated = await deduplicator.replace_source_document_chunks(
+        [
+            {
+                "document_hash": "new-cloud-hash",
+                "source_document_path": "redis-cloud-api/GET /subscriptions",
+                "title": "List subscriptions v2",
+                "source": "https://api.redislabs.com/v1/swagger.json",
+                "category": "shared",
+                "severity": "medium",
+                "doc_type": "documentation",
+                "source_document_scope": "redis-cloud-api/",
+            }
+        ],
+        vectorizer,
+    )
+
+    deduplicator.delete_tracked_source_document.assert_awaited_once_with(
+        "old-cloud-hash",
+        "redis-cloud-api/GET /subscriptions",
+        remove_source_tracking=False,
+    )
+    deduplicator.update_source_document_tracking.assert_awaited_once_with(
+        "redis-cloud-api/GET /subscriptions",
+        {
+            "document_hash": "new-cloud-hash",
+            "title": "List subscriptions v2",
+            "source": "https://api.redislabs.com/v1/swagger.json",
+            "category": "shared",
+            "severity": "medium",
+            "doc_type": "documentation",
+            "source_document_scope": "redis-cloud-api/",
+            "pinned": "false",
+        },
+    )
+    assert updated == {
+        "action": "update",
+        "indexed_count": 1,
+        "document_hash": "new-cloud-hash",
+        "previous_document_hash": "old-cloud-hash",
+        "source_document_path": "redis-cloud-api/GET /subscriptions",
+    }

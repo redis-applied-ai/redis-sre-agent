@@ -794,6 +794,10 @@ class TestSkillContractRuntimeRepair:
         assert "get_crdb_health_report" in CHAT_SYSTEM_PROMPT
         assert "get_crdt_syncer_state" in CHAT_SYSTEM_PROMPT
         assert "get_sync_source_stats" in CHAT_SYSTEM_PROMPT
+        assert "do not decide from `get_database`" in CHAT_SYSTEM_PROMPT
+        assert "CRDB name, CRDB GUID, local BDB UID, or instance DB UID" in CHAT_SYSTEM_PROMPT
+        assert "If multiple CRDBs match the requested name or UID" in CHAT_SYSTEM_PROMPT
+        assert "If `list_crdbs` returns no matches" in CHAT_SYSTEM_PROMPT
         assert 'declare a database "not CRDB"' in CHAT_SYSTEM_PROMPT
         assert "optional CRDT fields are absent" in CHAT_SYSTEM_PROMPT
 
@@ -1881,6 +1885,153 @@ class TestChatAgentStartupContext:
         synthesis_messages = mock_llm.ainvoke.await_args.args[0]
         assert "Iteration budget: 2/2" in str(synthesis_messages[-1].content)
         assert "get_cluster_health" in str(synthesis_messages[-1].content)
+
+    async def _run_iteration_limit_synthesis_case(
+        self,
+        mock_create_mini_llm,
+        mock_create_llm,
+        *,
+        llm_response=None,
+        llm_side_effect=None,
+    ):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        if llm_side_effect is not None:
+            mock_llm.ainvoke = AsyncMock(side_effect=llm_side_effect)
+        else:
+            mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content=llm_response))
+        mock_create_llm.return_value = mock_llm
+        mock_create_mini_llm.return_value = mock_llm
+
+        agent = ChatAgent()
+
+        prepared_memory = PreparedAgentTurnMemory(
+            memory_service=MagicMock(),
+            memory_context=TurnMemoryContext(
+                system_prompt=None,
+                user_working_memory=None,
+                asset_working_memory=None,
+            ),
+            session_id="test-session",
+            user_id=None,
+            query="Is the cluster healthy?",
+            instance_id=None,
+            cluster_id=None,
+            emitter=None,
+        )
+        prepared_memory.persist_response_fail_open = AsyncMock()
+
+        mock_tool_manager = MagicMock()
+        mock_tool_manager.__aenter__.return_value = mock_tool_manager
+        mock_tool_manager.__aexit__.return_value = None
+        mock_tool_manager.get_tools.return_value = []
+        mock_tool_manager.get_toolset_generation.return_value = 1
+
+        tool_envelopes = [
+            {
+                "tool_key": "get_cluster_health",
+                "name": "get_cluster_health",
+                "data": {"status": "degraded", "failed_checks": ["memory"]},
+            }
+        ]
+        fake_app = AsyncMock()
+        fake_app.ainvoke.return_value = {
+            "messages": [
+                HumanMessage(content="Is the cluster healthy?"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "name": "get_cluster_health",
+                            "args": {},
+                        }
+                    ],
+                ),
+                ToolMessage(
+                    content='{"status": "degraded", "failed_checks": ["memory"]}',
+                    tool_call_id="call-1",
+                    name="get_cluster_health",
+                ),
+            ],
+            "signals_envelopes": tool_envelopes,
+            "iteration_count": 2,
+            "max_iterations": 2,
+        }
+        fake_workflow = MagicMock()
+        fake_workflow.compile.return_value = fake_app
+
+        with (
+            patch(
+                "redis_sre_agent.agent.chat_agent.prepare_agent_turn_memory",
+                AsyncMock(return_value=prepared_memory),
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.ToolManager",
+                return_value=mock_tool_manager,
+            ),
+            patch(
+                "redis_sre_agent.agent.chat_agent.build_startup_knowledge_context",
+                new=AsyncMock(return_value=""),
+            ),
+            patch.object(agent, "_build_workflow", return_value=fake_workflow),
+        ):
+            response = await agent.process_query(
+                query="Is the cluster healthy?",
+                session_id="test-session",
+                user_id=None,
+                max_iterations=2,
+            )
+
+        return response, prepared_memory, mock_llm, tool_envelopes
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_iteration_limit_falls_back_for_empty_synthesis(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        (
+            response,
+            prepared_memory,
+            mock_llm,
+            tool_envelopes,
+        ) = await self._run_iteration_limit_synthesis_case(
+            mock_create_mini_llm,
+            mock_create_llm,
+            llm_response="   ",
+        )
+
+        assert response.tool_envelopes == tool_envelopes
+        assert response.response.startswith("I reached the chat iteration limit (2/2)")
+        assert "1 tool result envelope(s)" in response.response
+        assert "final synthesis step did not return usable text" in response.response
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with(response.response)
+        mock_llm.ainvoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.chat_agent.create_llm")
+    @patch("redis_sre_agent.agent.chat_agent.create_mini_llm")
+    async def test_process_query_iteration_limit_falls_back_for_synthesis_error(
+        self, mock_create_mini_llm, mock_create_llm
+    ):
+        (
+            response,
+            prepared_memory,
+            mock_llm,
+            tool_envelopes,
+        ) = await self._run_iteration_limit_synthesis_case(
+            mock_create_mini_llm,
+            mock_create_llm,
+            llm_side_effect=RuntimeError("provider unavailable"),
+        )
+
+        assert response.tool_envelopes == tool_envelopes
+        assert response.response.startswith("I reached the chat iteration limit (2/2)")
+        assert "1 tool result envelope(s)" in response.response
+        assert "final synthesis step did not return usable text" in response.response
+        prepared_memory.persist_response_fail_open.assert_awaited_once_with(response.response)
+        mock_llm.ainvoke.assert_awaited_once()
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.chat_agent.create_llm")

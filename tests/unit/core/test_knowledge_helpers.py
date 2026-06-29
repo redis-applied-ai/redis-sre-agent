@@ -612,6 +612,129 @@ class TestSearchKnowledgeBaseHelper:
         assert result["results"][0]["id"] == "doc-phrase"
         assert mock_index.query.await_args_list[4].args[0].__class__.__name__ == "HybridQuery"
 
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_returns_quoted_phrase_when_embedding_unavailable(self):
+        """Quoted phrase searches should degrade to literal RediSearch text hits."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [],
+                [],
+                [],
+                [
+                    {
+                        "id": "doc-phrase",
+                        "document_hash": "hash-phrase",
+                        "chunk_index": 0,
+                        "title": "DB memory full",
+                        "content": "Alert: DB memory full on cluster.",
+                        "source": "alerts",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(side_effect=Exception("OpenAI API error"))
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(query='"DB memory full"', limit=10)
+
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-phrase"
+        assert mock_index.query.call_count == 4
+        assert mock_vectorizer.aembed_many.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_quotes_injection_like_phrase_before_fallback(self):
+        """Injection-like quoted input should stay inside the literal phrase fallback."""
+        phrase = 'foo") | @title:*'
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            side_effect=[
+                [],
+                [],
+                [],
+                [
+                    {
+                        "id": "doc-literal",
+                        "document_hash": "hash-literal",
+                        "chunk_index": 0,
+                        "title": phrase,
+                        "content": "Literal punctuation example.",
+                        "source": "alerts",
+                        "category": "incident",
+                        "doc_type": "runbook",
+                        "version": "latest",
+                        "score": 5.0,
+                    }
+                ],
+            ]
+        )
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(side_effect=Exception("OpenAI API error"))
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await search_knowledge_base_helper(query=f'"{phrase}"', limit=10)
+
+        literal_query = str(mock_index.query.await_args_list[3].args[0])
+        assert _quoted_text_phrase_query(phrase) in literal_query
+        assert result["results_count"] == 1
+        assert result["results"][0]["id"] == "doc-literal"
+        assert mock_vectorizer.aembed_many.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query", ["how do I tune memory", "   "])
+    async def test_search_knowledge_base_general_query_requires_embedding_provider(self, query):
+        """General and empty searches should still surface embedding provider failures."""
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(return_value=[])
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed_many = AsyncMock(side_effect=Exception("OpenAI API error"))
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+            pytest.raises(Exception, match="OpenAI API error"),
+        ):
+            await search_knowledge_base_helper(query=query, limit=10)
+
+        mock_index.query.assert_not_called()
+        assert mock_vectorizer.aembed_many.await_count == 1
+
     def test_quoted_text_phrase_query_uses_implicit_and_for_filters(self):
         """Phrase queries should only contain the literal TEXT search expression."""
         query = _quoted_text_phrase_query("DB memory full")
@@ -1371,6 +1494,83 @@ class TestIngestSreDocumentHelper:
         assert doc_data[0]["chunk_index"] == 0
 
     @pytest.mark.asyncio
+    async def test_ingest_document_allows_empty_content_with_pipeline_chunk_key(self):
+        mock_index = AsyncMock()
+        mock_index.load = AsyncMock()
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed = AsyncMock(return_value=b"empty-vector")
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await ingest_sre_document_helper(
+                title="Empty Document",
+                content="",
+                source="manual-entry",
+                category="runbook",
+                severity="info",
+            )
+
+        expected_document_hash = hashlib.sha256(
+            "Empty Document||||manual-entry".encode()
+        ).hexdigest()[:16]
+        expected_key = f"sre_knowledge:{expected_document_hash}:chunk:0"
+        assert result["document_hash"] == expected_document_hash
+        assert result["document_id"] == expected_key
+        assert result["chunk_count"] == 1
+        mock_vectorizer.aembed.assert_awaited_once_with("", as_buffer=True)
+        doc_data = mock_index.load.call_args.kwargs["data"]
+        assert doc_data[0]["id"] == expected_key
+        assert doc_data[0]["content_hash"] == hashlib.sha256(b"").hexdigest()
+        assert doc_data[0]["content"] == ""
+
+    @pytest.mark.asyncio
+    async def test_ingest_document_stores_long_markdown_as_single_chunk(self):
+        mock_index = AsyncMock()
+        mock_index.load = AsyncMock()
+
+        mock_vectorizer = MagicMock()
+        mock_vectorizer.aembed = AsyncMock(return_value=b"long-vector")
+        content = "# Memory Runbook\n\n" + "\n".join(
+            f"## Step {index}\nCheck signal {index}." for index in range(150)
+        )
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_vectorizer",
+                return_value=mock_vectorizer,
+            ),
+        ):
+            result = await ingest_sre_document_helper(
+                title="Long Markdown Runbook",
+                content=content,
+                source="manual-entry",
+                category="runbook",
+                severity="warning",
+            )
+
+        assert result["chunk_count"] == 1
+        assert result["document_id"].endswith(":chunk:0")
+        doc_data = mock_index.load.call_args.kwargs["data"]
+        assert doc_data[0]["content"] == content
+        assert doc_data[0]["chunk_index"] == 0
+        assert doc_data[0]["title"] == "Long Markdown Runbook"
+
+    @pytest.mark.asyncio
     async def test_ingest_support_ticket_defaults_pinned_false(self):
         """Support tickets should store pinned=false to support tag filters."""
         mock_index = AsyncMock()
@@ -1652,6 +1852,41 @@ class TestGetRelatedDocumentFragments:
         assert result["document_hash"] == "test-hash"
         assert "error" in result
         assert "Database error" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_related_fragments_missing_chunk_returns_empty_window(self):
+        mock_index = AsyncMock()
+        mock_index.query = AsyncMock(
+            return_value=[
+                {"chunk_index": "0", "content": "Part 0"},
+                {"chunk_index": "1", "content": "Part 1"},
+            ]
+        )
+
+        mock_deduplicator = MagicMock()
+        mock_deduplicator.get_document_metadata = AsyncMock(return_value={})
+
+        with (
+            patch(
+                "redis_sre_agent.core.knowledge_helpers.get_knowledge_index",
+                new_callable=AsyncMock,
+                return_value=mock_index,
+            ),
+            patch(
+                "redis_sre_agent.pipelines.ingestion.deduplication.DocumentDeduplicator",
+                return_value=mock_deduplicator,
+            ),
+        ):
+            result = await get_related_document_fragments(
+                document_hash="test-hash",
+                current_chunk_index=99,
+                context_window=1,
+            )
+
+        assert result["target_chunk_index"] == 99
+        assert result["related_fragments_count"] == 0
+        assert result["related_fragments"] == []
+        assert result["related_content"] == ""
 
 
 class TestSkillHelpers:

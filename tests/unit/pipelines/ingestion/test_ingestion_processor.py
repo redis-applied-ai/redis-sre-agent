@@ -857,7 +857,7 @@ class TestIngestionPipeline:
         doc_data = {
             "title": "Regular Batch Document",
             "content": "Regular content. " * 20,
-            "source_url": "https://example.com/regular-doc",
+            "source_url": "file:///tmp/regular-doc",
             "category": "shared",
             "doc_type": "knowledge",
             "severity": "medium",
@@ -869,6 +869,10 @@ class TestIngestionPipeline:
         manifest = {"batch_date": batch_date, "documents": [{"category": "shared"}]}
         knowledge_deduplicator = AsyncMock()
         knowledge_deduplicator.replace_document_chunks.return_value = 1
+        knowledge_deduplicator.replace_source_document_chunks.return_value = {
+            "action": "add",
+            "indexed_count": 1,
+        }
 
         with patch.object(pipeline.storage, "get_batch_manifest", return_value=manifest):
             with patch.object(

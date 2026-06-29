@@ -270,6 +270,53 @@ class TestThreadsAPI:
         ]
         assert mock_task_manager.add_task_update.await_count == 2
 
+    def test_cancel_thread_tasks_reports_terminal_and_missing_history_without_mutation(
+        self, client
+    ):
+        """POST /threads/{id}/cancel reports historical tasks without rewriting them."""
+        from redis_sre_agent.core.threads import Thread, ThreadMetadata
+
+        class FailedState:
+            status = TaskStatus.FAILED
+
+        class CancelledState:
+            status = TaskStatus.CANCELLED
+
+        mock_thread = Thread(thread_id="th1", context={}, metadata=ThreadMetadata(user_id="u"))
+        mock_tm = MagicMock()
+        mock_tm.get_thread = AsyncMock(return_value=mock_thread)
+        mock_task_manager = MagicMock()
+        mock_task_manager.get_task_state = AsyncMock(
+            side_effect=[FailedState(), CancelledState(), None]
+        )
+        mock_task_manager.set_pending_approval = AsyncMock()
+        mock_task_manager.set_resume_supported = AsyncMock()
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_redis = AsyncMock()
+        mock_redis.zrange.return_value = [b"failed-task", b"cancelled-task", b"missing-task"]
+
+        with (
+            patch("redis_sre_agent.api.threads.get_redis_client", return_value=mock_redis),
+            patch("redis_sre_agent.api.threads.ThreadManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.threads.TaskManager", return_value=mock_task_manager),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+        ):
+            resp = client.post("/api/v1/threads/th1/cancel")
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "thread_id": "th1",
+            "cancelled_task_ids": [],
+            "terminal_task_ids": ["failed-task", "cancelled-task"],
+            "missing_task_ids": ["missing-task"],
+        }
+        mock_docket.assert_not_called()
+        mock_task_manager.set_pending_approval.assert_not_awaited()
+        mock_task_manager.set_resume_supported.assert_not_awaited()
+        mock_task_manager.update_task_status.assert_not_awaited()
+        mock_task_manager.add_task_update.assert_not_awaited()
+
     def test_cancel_thread_tasks_not_found(self, client):
         """POST /threads/{id}/cancel returns 404 when the thread is missing."""
         mock_tm = MagicMock()

@@ -36,8 +36,13 @@ export const Header: React.FC<HeaderProps> = ({
         className,
       )}
     >
-      <div className={cn("flex items-center justify-between", paddingClass)}>
-        <div className="flex items-center gap-4 sm:gap-6">
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-3",
+          paddingClass,
+        )}
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-4 sm:gap-6">
           {logo && (
             <div className="focus:ring-redis-dusk-08 flex-shrink-0 rounded transition hover:opacity-80 focus:outline-none focus:ring-2">
               {logo}
@@ -45,7 +50,7 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {navigationItems.length > 0 && (
-            <nav className="flex items-center gap-2 sm:gap-4">
+            <nav className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:gap-x-4">
               {navigationItems.map((item, index) => {
                 if (item.hidden) return null;
 
@@ -86,7 +91,7 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-4">
+        <div className="flex flex-shrink-0 items-center gap-2 sm:gap-4">
           {userEmail && (
             <span className="text-redis-dusk-04 hidden max-w-[150px] truncate text-redis-xs font-normal sm:block md:max-w-none">
               {userEmail}

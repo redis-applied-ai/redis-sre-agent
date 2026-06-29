@@ -5,8 +5,9 @@ cluster is required.
 """
 
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 from aiohttp import web
 
@@ -241,6 +242,7 @@ async def test_database_tool_descriptions_warn_about_crdb_field_projection(provi
     list_database_schema = next(
         schema for schema in schemas if schema.name.endswith("_list_databases")
     )
+    list_crdbs_schema = next(schema for schema in schemas if schema.name.endswith("_list_crdbs"))
 
     get_database_description = get_database_schema.description
     get_database_fields_description = get_database_schema.parameters["properties"]["fields"][
@@ -252,6 +254,10 @@ async def test_database_tool_descriptions_warn_about_crdb_field_projection(provi
 
     assert "crdt" in get_database_description
     assert "crdt_guid" in get_database_description
+    assert "before concluding a database is not CRDB" in get_database_description
+    assert "CRDB GUID" in list_crdbs_schema.description
+    assert "local database mapping" in list_crdbs_schema.description
+    assert "participating instances/sites" in list_crdbs_schema.description
     assert "omitted fields are unknown, not false" in get_database_fields_description
     assert "crdt,crdt_guid" in get_database_fields_description
     assert "list_crdbs" in get_database_fields_description
@@ -407,6 +413,56 @@ async def test_list_databases_with_fields(provider):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fields",
+    [
+        " uid, name ,status,status ",
+        "uid,name,unknown_field",
+        "uid,name,crdt,crdt_guid,proxy_policy,memory_size",
+    ],
+)
+async def test_list_databases_preserves_projection_field_string(provider, fields):
+    """Whitespace, duplicate, unknown, and mixed projection fields pass through."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = [{"uid": 1, "name": "db1"}]
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.list_databases(fields=fields)
+
+        assert result["status"] == "success"
+        mock_client.get.assert_called_once_with("/v1/bdbs", params={"fields": fields})
+
+
+@pytest.mark.asyncio
+async def test_list_databases_retries_without_fields_when_projection_rejected(provider):
+    """Older Admin API versions can reject fields projections with 400 or 406."""
+    request = httpx.Request("GET", "https://test.example.com/v1/bdbs")
+    response = httpx.Response(400, request=request, text="unknown field")
+
+    with patch.object(provider, "_get_json", new_callable=AsyncMock) as mock_get_json:
+        mock_get_json.side_effect = [
+            httpx.HTTPStatusError("unknown field", request=request, response=response),
+            [{"uid": 1, "name": "db1", "status": "active"}],
+        ]
+
+        result = await provider.list_databases(fields="uid,name,unknown_field")
+
+        assert result["status"] == "success"
+        assert result["databases"] == [{"uid": 1, "name": "db1", "status": "active"}]
+        mock_get_json.assert_has_awaits(
+            [
+                call("/v1/bdbs", params={"fields": "uid,name,unknown_field"}),
+                call("/v1/bdbs"),
+            ]
+        )
+
+
+@pytest.mark.asyncio
 async def test_get_database_success(provider):
     """Test successful database retrieval."""
     database_data = {
@@ -471,6 +527,105 @@ async def test_get_database_preserves_crdt_guid_field_name(provider):
 
 
 @pytest.mark.asyncio
+async def test_get_database_projection_omits_crdt_fields_without_inference(provider):
+    """Projected BDB payloads should stay sparse instead of implying non-CRDB state."""
+    projected_payload = {
+        "uid": 1,
+        "name": "large-key",
+        "status": "active",
+        "proxy_policy": "single",
+    }
+    mock_response = MagicMock()
+    mock_response.json.return_value = projected_payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_database(uid=1, fields="uid,name,status,proxy_policy")
+
+        assert result["status"] == "success"
+        assert result["database"] == projected_payload
+        assert "crdt" not in result["database"]
+        assert "crdt_guid" not in result["database"]
+        mock_client.get.assert_called_once_with(
+            "/v1/bdbs/1", params={"fields": "uid,name,status,proxy_policy"}
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fields",
+    [
+        " uid, name ,status,status ",
+        "uid,name,unknown_field",
+        "uid,name,crdt,crdt_guid,proxy_policy,memory_size",
+    ],
+)
+async def test_get_database_preserves_projection_field_string(provider, fields):
+    """Single-BDB lookups preserve whitespace, duplicate, unknown, and mixed fields."""
+    projected_payload = {
+        "uid": 1,
+        "name": "large-key",
+        "status": "active",
+        "crdt": True,
+        "crdt_guid": "crdb-guid-1",
+        "proxy_policy": "single",
+        "memory_size": 1073741824,
+    }
+    mock_response = MagicMock()
+    mock_response.json.return_value = projected_payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_database(uid=1, fields=fields)
+
+        assert result["status"] == "success"
+        assert result["database"] == projected_payload
+        mock_client.get.assert_called_once_with("/v1/bdbs/1", params={"fields": fields})
+
+
+@pytest.mark.asyncio
+async def test_get_database_retries_without_fields_when_projection_rejected(provider):
+    """Unknown or unsupported field projections fall back to a full BDB payload."""
+    request = httpx.Request("GET", "https://test.example.com/v1/bdbs/1")
+    response = httpx.Response(406, request=request, text="fields not supported")
+    full_payload = {
+        "uid": 1,
+        "name": "large-key",
+        "status": "active",
+        "proxy_policy": "single",
+    }
+
+    with patch.object(provider, "_get_json", new_callable=AsyncMock) as mock_get_json:
+        mock_get_json.side_effect = [
+            httpx.HTTPStatusError(
+                "fields not supported",
+                request=request,
+                response=response,
+            ),
+            full_payload,
+        ]
+
+        result = await provider.get_database(uid=1, fields="uid,name,unknown_field")
+
+        assert result["status"] == "success"
+        assert result["database"] == full_payload
+        mock_get_json.assert_has_awaits(
+            [
+                call("/v1/bdbs/1", params={"fields": "uid,name,unknown_field"}),
+                call("/v1/bdbs/1"),
+            ]
+        )
+
+
+@pytest.mark.asyncio
 async def test_list_crdbs_success(provider):
     """Test CRDB listing."""
     crdbs = [
@@ -524,6 +679,43 @@ async def test_list_crdbs_counts_wrapped_payload(provider):
 
 
 @pytest.mark.asyncio
+async def test_list_crdbs_empty_inventory(provider):
+    """An empty Active-Active inventory returns count=0 without error."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = []
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.list_crdbs()
+
+        assert result["status"] == "success"
+        assert result["count"] == 0
+        assert result["crdbs"] == []
+        mock_client.get.assert_called_once_with("/v1/crdbs", params={})
+
+
+@pytest.mark.asyncio
+async def test_list_crdbs_timeout_error(provider):
+    """Admin API timeouts surface as error payloads for CRDB inventory."""
+    import httpx
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+        mock_get_client.return_value = mock_client
+
+        result = await provider.list_crdbs()
+
+        assert result["status"] == "error"
+        assert "timed out" in result["error"]
+        mock_client.get.assert_called_once_with("/v1/crdbs", params={})
+
+
+@pytest.mark.asyncio
 async def test_get_crdb_with_instance_id(provider):
     """Test CRDB detail retrieval by GUID."""
     payload = {
@@ -547,6 +739,28 @@ async def test_get_crdb_with_instance_id(provider):
         assert result["crdb_guid"] == "crdb-guid-1"
         assert result["crdb"] == payload
         mock_client.get.assert_called_once_with("/v1/crdbs/crdb-guid-1", params={"instance_id": 2})
+
+
+@pytest.mark.asyncio
+async def test_get_crdb_sparse_payload_missing_optional_fields(provider):
+    """Sparse CRDB payloads still return successfully for older Admin API versions."""
+    payload = {"guid": "crdb-guid-1", "name": "large-key"}
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = payload
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_crdb("crdb-guid-1")
+
+        assert result["status"] == "success"
+        assert result["crdb_guid"] == "crdb-guid-1"
+        assert result["crdb"] == payload
+        mock_client.get.assert_called_once_with("/v1/crdbs/crdb-guid-1", params={})
 
 
 @pytest.mark.asyncio
@@ -582,6 +796,36 @@ async def test_get_crdb_health_report(provider):
         assert result["status"] == "success"
         assert result["health_report"] == payload
         mock_client.get.assert_called_once_with("/v1/crdbs/crdb-guid-1/health_report", params={})
+
+
+@pytest.mark.asyncio
+async def test_get_crdb_health_report_auth_failure(provider):
+    """CRDB health auth failures preserve the CRDB GUID in the error payload."""
+    from httpx import HTTPStatusError, Request, Response
+
+    mock_request = Request("GET", "https://test.com/v1/crdbs/crdb-guid-1/health_report")
+    mock_response = Response(401, request=mock_request, text="Unauthorized")
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=HTTPStatusError(
+                "Unauthorized",
+                request=mock_request,
+                response=mock_response,
+            )
+        )
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_crdb_health_report("crdb-guid-1")
+
+        assert result["status"] == "error"
+        assert result["crdb_guid"] == "crdb-guid-1"
+        assert "HTTP 401" in result["error"]
+        mock_client.get.assert_called_once_with(
+            "/v1/crdbs/crdb-guid-1/health_report",
+            params={},
+        )
 
 
 @pytest.mark.asyncio
@@ -649,6 +893,27 @@ async def test_get_sync_source_stats_with_time_range(provider):
                 "stime": "2026-06-25T10:00:00Z",
                 "etime": "2026-06-25T10:05:00Z",
             },
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_sync_source_stats_timeout_error(provider):
+    """Sync-source timeout errors preserve the local BDB UID in the payload."""
+    import httpx
+
+    with patch.object(provider, "get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("read timed out"))
+        mock_get_client.return_value = mock_client
+
+        result = await provider.get_sync_source_stats(uid=14, interval="1sec")
+
+        assert result["status"] == "error"
+        assert result["uid"] == 14
+        assert "read timed out" in result["error"]
+        mock_client.get.assert_called_once_with(
+            "/v1/bdbs/14/sync_source_stats",
+            params={"interval": "1sec"},
         )
 
 

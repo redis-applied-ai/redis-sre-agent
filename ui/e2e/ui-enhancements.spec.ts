@@ -49,6 +49,8 @@ const knowledgeResult = {
 
 interface MockApiOptions {
   threads?: unknown[];
+  instances?: unknown[];
+  clusters?: unknown[];
   threadResponses?: Record<string, unknown>;
   taskResponses?: Record<string, unknown>;
   feedbackResponses?: Record<string, unknown>;
@@ -61,7 +63,8 @@ const delay = (ms: number) =>
   });
 
 async function mockApi(page: Page, options: MockApiOptions = {}) {
-  const clusters = [cluster];
+  const instances = options.instances || [instance];
+  const clusters = options.clusters || [cluster];
   const threadResponses: Record<string, unknown> = {
     "thread-cluster": {
       thread_id: "thread-cluster",
@@ -160,7 +163,12 @@ async function mockApi(page: Page, options: MockApiOptions = {}) {
     }
 
     if (method === "GET" && path === "/api/v1/instances") {
-      return json({ instances: [instance], total: 1, limit: 1000, offset: 0 });
+      return json({
+        instances,
+        total: instances.length,
+        limit: 1000,
+        offset: 0,
+      });
     }
 
     if (method === "GET" && path === "/api/v1/clusters") {
@@ -264,6 +272,14 @@ async function mockApi(page: Page, options: MockApiOptions = {}) {
   };
 }
 
+async function expectNoHorizontalOverflow(page: Page, widthAllowance = 2) {
+  const viewportWidth = page.viewportSize()?.width || 0;
+  const documentWidth = await page.evaluate(
+    () => document.documentElement.scrollWidth,
+  );
+  expect(documentWidth).toBeLessThanOrEqual(viewportWidth + widthAllowance);
+}
+
 test("dashboard shows clusters alongside instances", async ({ page }) => {
   await mockApi(page);
 
@@ -325,6 +341,65 @@ test("settings lets users configure a Redis cluster", async ({ page }) => {
     .click();
 
   await expect(page.getByText("QA Redis Cloud")).toBeVisible();
+});
+
+test("settings instances support test environments at narrow widths", async ({
+  page,
+}) => {
+  const longName =
+    "Very Long QA Redis Enterprise Cache Name With Regional Failover Context";
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page, {
+    instances: [
+      {
+        ...instance,
+        id: "instance-long",
+        name: longName,
+        environment: "test",
+        description:
+          "Instance fixture with a long descriptive label used to check narrow layout wrapping.",
+        connection_url:
+          "redis://very-long-user:masked-password@cache-long-name.internal.example.com:12000/0",
+        instance_type: "redis_enterprise",
+      },
+    ],
+  });
+
+  await page.goto("/settings?section=instances");
+
+  await expect(
+    page.getByRole("heading", { name: "Redis Instances" }),
+  ).toBeVisible();
+  await expect(page.getByText(longName)).toBeVisible();
+  await expect(page.getByText("TEST", { exact: true })).toBeVisible();
+
+  await expectNoHorizontalOverflow(page);
+
+  await page.getByRole("button", { name: "Add Instance" }).first().click();
+  const environmentSelect = page
+    .locator(
+      'xpath=//label[normalize-space(.)="Environment *"]/following-sibling::select[1]',
+    )
+    .first();
+  await expect(environmentSelect.locator('option[value="test"]')).toHaveText(
+    "Test",
+  );
+  const modalBox = await page
+    .getByRole("heading", { name: "Add Redis Instance" })
+    .locator("xpath=ancestor::div[contains(@class, 'max-w-2xl')][1]")
+    .boundingBox();
+  expect(modalBox).not.toBeNull();
+  expect(modalBox!.x).toBeGreaterThanOrEqual(0);
+  expect(modalBox!.x + modalBox!.width).toBeLessThanOrEqual(390);
+
+  const closeButton = page.getByRole("button", { name: "Close instance form" });
+  await closeButton.focus();
+  await expect(closeButton).toBeFocused();
+  await closeButton.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Add Redis Instance" }),
+  ).not.toBeVisible();
+  await expectNoHorizontalOverflow(page);
 });
 
 test("chat can start a cluster-scoped agent task", async ({ page }) => {
@@ -895,6 +970,34 @@ test("knowledge search renders fragments and opens the selected chunk", async ({
   await expect(
     page.getByText("Review eviction metrics before changing production."),
   ).toBeVisible();
+});
+
+test("knowledge chunk navigation survives mobile back forward and reload", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+
+  await page.goto("/knowledge?search=maxmemory");
+
+  await expect(page.getByText("Memory Tuning Guide")).toBeVisible();
+  await page.getByRole("link", { name: "Memory Tuning Guide" }).click();
+
+  await expect(page).toHaveURL(
+    /\/knowledge\/document-chunks\/doc-1\?version=8\.0#chunk-0$/,
+  );
+  await expect(page.getByRole("heading", { name: "Chunk 0" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/knowledge\?search=maxmemory$/);
+  await expect(page.getByText("Memory Tuning Guide")).toBeVisible();
+
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: "Chunk 0" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Chunk 0" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
 });
 
 test("knowledge search chunk prefix opens a selected chunk", async ({

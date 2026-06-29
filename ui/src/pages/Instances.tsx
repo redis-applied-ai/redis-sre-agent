@@ -166,7 +166,8 @@ const AddInstanceForm = ({
     success: boolean;
     message: string;
   } | null>(null);
-  const [localClusters, setLocalClusters] = useState<APIRedisCluster[]>(clusters);
+  const [localClusters, setLocalClusters] =
+    useState<APIRedisCluster[]>(clusters);
   const [showCreateClusterForm, setShowCreateClusterForm] = useState(false);
   const [isCreatingCluster, setIsCreatingCluster] = useState(false);
   const [createClusterError, setCreateClusterError] = useState("");
@@ -185,7 +186,9 @@ const AddInstanceForm = ({
     setLocalClusters(clusters);
   }, [clusters]);
 
-  const compatibleClusterTypes = getCompatibleClusterTypes(formData.instanceType);
+  const compatibleClusterTypes = getCompatibleClusterTypes(
+    formData.instanceType,
+  );
   const compatibleClusters = localClusters.filter((cluster) =>
     compatibleClusterTypes.includes(cluster.cluster_type || "unknown"),
   );
@@ -244,7 +247,9 @@ const AddInstanceForm = ({
     if (!formData.clusterId) {
       return;
     }
-    const selected = localClusters.find((cluster) => cluster.id === formData.clusterId);
+    const selected = localClusters.find(
+      (cluster) => cluster.id === formData.clusterId,
+    );
     if (!selected) {
       return;
     }
@@ -1515,13 +1520,15 @@ const Instances = () => {
       selectedUsage === "all" || instance.usage === selectedUsage;
     return environmentMatch && usageMatch;
   });
-  const clustersById = new Map(clusters.map((cluster) => [cluster.id, cluster]));
+  const clustersById = new Map(
+    clusters.map((cluster) => [cluster.id, cluster]),
+  );
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-redis-xl font-bold text-foreground">
             Redis Instances
           </h1>
@@ -1530,7 +1537,7 @@ const Instances = () => {
             analyze.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Tooltip content="Refresh instances data">
             <Button
               variant="outline"
@@ -1553,7 +1560,7 @@ const Instances = () => {
       {instances.length > 0 && (
         <Card>
           <CardContent>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
               <div className="flex items-center gap-2">
                 <label className="text-redis-sm text-redis-dusk-04">
                   Environment:
@@ -1672,122 +1679,122 @@ const Instances = () => {
                     className="hover:shadow-lg transition-shadow"
                   >
                     <CardContent>
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <span className="text-redis-sm font-mono text-redis-dusk-04">
-                            {instance.id}
-                          </span>
-                          <span
-                            className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getEnvironmentColor(instance.environment)}`}
-                          >
-                            {instance.environment.toUpperCase()}
-                          </span>
-                          <span
-                            className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getUsageColor(instance.usage)}`}
-                          >
-                            {instance.usage.toUpperCase()}
-                          </span>
-                          {instance.instanceType && (
-                            <span
-                              className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getInstanceTypeColor(instance.instanceType)}`}
-                            >
-                              {getInstanceTypeLabel(instance.instanceType)}
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <span className="text-redis-sm font-mono text-redis-dusk-04 break-all">
+                              {instance.id}
                             </span>
-                          )}
-                          {instance.status && (
                             <span
-                              className={`text-redis-xs font-medium capitalize ${getStatusColor(instance.status)}`}
+                              className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getEnvironmentColor(instance.environment)}`}
                             >
-                              ● {instance.status}
+                              {instance.environment.toUpperCase()}
                             </span>
-                          )}
-                        </div>
-                        <h3 className="text-redis-lg font-semibold text-foreground mb-2">
-                          {instance.name}
-                        </h3>
-                        <p className="text-redis-sm text-redis-dusk-04 mb-3">
-                          {instance.description}
-                        </p>
-                        <div className="grid grid-cols-2 gap-4 mb-3">
-                          <div className="text-redis-xs text-redis-dusk-05">
-                            <div>
-                              <strong>Connection:</strong>{" "}
-                              {maskRedisUrl(instance.connectionUrl)}
+                            <span
+                              className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getUsageColor(instance.usage)}`}
+                            >
+                              {instance.usage.toUpperCase()}
+                            </span>
+                            {instance.instanceType && (
+                              <span
+                                className={`px-2 py-1 rounded-redis-xs text-redis-xs font-medium ${getInstanceTypeColor(instance.instanceType)}`}
+                              >
+                                {getInstanceTypeLabel(instance.instanceType)}
+                              </span>
+                            )}
+                            {instance.status && (
+                              <span
+                                className={`text-redis-xs font-medium capitalize ${getStatusColor(instance.status)}`}
+                              >
+                                ● {instance.status}
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="text-redis-lg font-semibold text-foreground mb-2 break-words">
+                            {instance.name}
+                          </h3>
+                          <p className="text-redis-sm text-redis-dusk-04 mb-3 break-words">
+                            {instance.description}
+                          </p>
+                          <div className="grid grid-cols-1 gap-4 mb-3 sm:grid-cols-2">
+                            <div className="min-w-0 text-redis-xs text-redis-dusk-05 break-words">
+                              <div>
+                                <strong>Connection:</strong>{" "}
+                                {maskRedisUrl(instance.connectionUrl)}
+                              </div>
+                              {instance.version && (
+                                <div>
+                                  <strong>Version:</strong> {instance.version}
+                                </div>
+                              )}
+                              {instance.memory && (
+                                <div>
+                                  <strong>Memory:</strong> {instance.memory}
+                                </div>
+                              )}
                             </div>
-                            {instance.version && (
-                              <div>
-                                <strong>Version:</strong> {instance.version}
-                              </div>
-                            )}
-                            {instance.memory && (
-                              <div>
-                                <strong>Memory:</strong> {instance.memory}
-                              </div>
-                            )}
+                            <div className="min-w-0 text-redis-xs text-redis-dusk-05 break-words">
+                              {instance.connections && (
+                                <div>
+                                  <strong>Connections:</strong>{" "}
+                                  {instance.connections}
+                                </div>
+                              )}
+                              {instance.clusterId && (
+                                <div>
+                                  <strong>Cluster:</strong>{" "}
+                                  {linkedCluster
+                                    ? `${linkedCluster.name} (${linkedCluster.cluster_type || "unknown"})`
+                                    : instance.clusterId}
+                                </div>
+                              )}
+                              {instance.lastChecked && (
+                                <div>
+                                  <strong>Last Checked:</strong>{" "}
+                                  {formatDate(instance.lastChecked)}
+                                </div>
+                              )}
+                              {instance.monitoringIdentifier && (
+                                <div>
+                                  <strong>Monitoring ID:</strong>{" "}
+                                  {instance.monitoringIdentifier}
+                                </div>
+                              )}
+                              {instance.loggingIdentifier && (
+                                <div>
+                                  <strong>Logging ID:</strong>{" "}
+                                  {instance.loggingIdentifier}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div className="text-redis-xs text-redis-dusk-05">
-                            {instance.connections && (
-                              <div>
-                                <strong>Connections:</strong>{" "}
-                                {instance.connections}
-                              </div>
-                            )}
-                            {instance.clusterId && (
-                              <div>
-                                <strong>Cluster:</strong>{" "}
-                                {linkedCluster
-                                  ? `${linkedCluster.name} (${linkedCluster.cluster_type || "unknown"})`
-                                  : instance.clusterId}
-                              </div>
-                            )}
-                            {instance.lastChecked && (
-                              <div>
-                                <strong>Last Checked:</strong>{" "}
-                                {formatDate(instance.lastChecked)}
-                              </div>
-                            )}
-                            {instance.monitoringIdentifier && (
-                              <div>
-                                <strong>Monitoring ID:</strong>{" "}
-                                {instance.monitoringIdentifier}
-                              </div>
-                            )}
-                            {instance.loggingIdentifier && (
-                              <div>
-                                <strong>Logging ID:</strong>{" "}
-                                {instance.loggingIdentifier}
-                              </div>
-                            )}
-                          </div>
+                          {instance.repoUrl && (
+                            <div className="mb-2">
+                              <span className="text-redis-xs text-redis-dusk-04">
+                                Repository:{" "}
+                              </span>
+                              <a
+                                href={instance.repoUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-redis-xs text-redis-blue-03 hover:underline break-all"
+                              >
+                                {instance.repoUrl}
+                              </a>
+                            </div>
+                          )}
+                          {instance.notes && (
+                            <div className="mt-2 p-2 bg-redis-dusk-09 rounded-redis-sm">
+                              <span className="text-redis-xs text-redis-dusk-04">
+                                Notes:{" "}
+                              </span>
+                              <span className="text-redis-xs text-foreground break-words">
+                                {instance.notes}
+                              </span>
+                            </div>
+                          )}
                         </div>
-                        {instance.repoUrl && (
-                          <div className="mb-2">
-                            <span className="text-redis-xs text-redis-dusk-04">
-                              Repository:{" "}
-                            </span>
-                            <a
-                              href={instance.repoUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-redis-xs text-redis-blue-03 hover:underline"
-                            >
-                              {instance.repoUrl}
-                            </a>
-                          </div>
-                        )}
-                        {instance.notes && (
-                          <div className="mt-2 p-2 bg-redis-dusk-09 rounded-redis-sm">
-                            <span className="text-redis-xs text-redis-dusk-04">
-                              Notes:{" "}
-                            </span>
-                            <span className="text-redis-xs text-foreground">
-                              {instance.notes}
-                            </span>
-                          </div>
-                        )}
-                        </div>
-                        <div className="flex gap-2 ml-4">
+                        <div className="flex flex-wrap gap-2 lg:ml-4 lg:flex-shrink-0">
                           <Button
                             variant="outline"
                             size="sm"
@@ -1842,12 +1849,14 @@ const Instances = () => {
               <Button
                 variant="outline"
                 size="sm"
+                aria-label="Close instance form"
+                title="Close instance form"
                 onClick={() => {
                   setShowAddForm(false);
                   setEditingInstance(null);
                 }}
               >
-                ✕
+                <span aria-hidden="true">✕</span>
               </Button>
             </div>
 

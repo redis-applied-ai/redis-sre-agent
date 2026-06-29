@@ -423,6 +423,109 @@ async def test_resolve_target_query_allow_multiple_does_not_treat_prefix_as_exac
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "target_kind",
+        "resource_id",
+        "display_name",
+        "longer_resource_id",
+        "longer_display_name",
+        "query",
+    ),
+    [
+        (
+            "instance",
+            "redis-prod-cache-1",
+            "prod-cache-1",
+            "redis-prod-cache-10",
+            "prod-cache-10",
+            "deep triage prod-cache-1",
+        ),
+        (
+            "instance",
+            "redis_prod_cache_1",
+            "prod_cache_1",
+            "redis_prod_cache_10",
+            "prod_cache_10",
+            "deep triage prod_cache_1",
+        ),
+        (
+            "instance",
+            "bdb-123e4567-e89b-12d3-a456-426614174000",
+            "bdb-123e4567-e89b-12d3-a456-426614174000",
+            "bdb-123e4567-e89b-12d3-a456-4266141740001",
+            "bdb-123e4567-e89b-12d3-a456-4266141740001",
+            "deep triage bdb-123e4567-e89b-12d3-a456-426614174000",
+        ),
+        (
+            "instance",
+            "10.0.0.1:6379",
+            "10.0.0.1:6379",
+            "10.0.0.1:63790",
+            "10.0.0.1:63790",
+            "deep triage 10.0.0.1:6379",
+        ),
+        (
+            "cluster",
+            "cluster-prod-cache-1",
+            "cluster-prod-cache-1",
+            "cluster-prod-cache-10",
+            "cluster-prod-cache-10",
+            "deep triage cluster-prod-cache-1",
+        ),
+    ],
+)
+async def test_resolve_target_query_allow_multiple_exact_identifier_boundaries(
+    target_kind,
+    resource_id,
+    display_name,
+    longer_resource_id,
+    longer_display_name,
+    query,
+):
+    expected = TargetCatalogDoc(
+        target_id=f"{target_kind}:{resource_id}",
+        target_kind=target_kind,
+        resource_id=resource_id,
+        display_name=display_name,
+        name=display_name,
+        environment="production",
+        usage="cache",
+        target_type="redis_enterprise" if target_kind == "cluster" else "oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text=f"{display_name} production cache",
+        search_aliases=[],
+    )
+    longer = TargetCatalogDoc(
+        target_id=f"{target_kind}:{longer_resource_id}",
+        target_kind=target_kind,
+        resource_id=longer_resource_id,
+        display_name=longer_display_name,
+        name=longer_display_name,
+        environment="production",
+        usage="cache",
+        target_type="redis_enterprise" if target_kind == "cluster" else "oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text=f"{longer_display_name} production cache",
+        search_aliases=[],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[expected, longer]),
+    ):
+        resolved = await resolve_target_query(
+            query=query,
+            allow_multiple=True,
+            max_results=5,
+        )
+
+    assert resolved.status == "resolved"
+    assert resolved.clarification_required is False
+    assert [match.resource_id for match in resolved.selected_matches] == [resource_id]
+
+
+@pytest.mark.asyncio
 async def test_resolve_target_query_allow_multiple_honors_max_results_for_exact_mentions():
     targets = [
         TargetCatalogDoc(
@@ -456,6 +559,37 @@ async def test_resolve_target_query_allow_multiple_honors_max_results_for_exact_
     assert [match.resource_id for match in resolved.selected_matches] == [
         f"redis-prod-cache-{index}" for index in range(5)
     ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_query_allow_multiple_deduplicates_repeated_exact_mentions():
+    target = TargetCatalogDoc(
+        target_id="instance:redis-prod-cache-1",
+        target_kind="instance",
+        resource_id="redis-prod-cache-1",
+        display_name="cache-1-prod",
+        name="cache-1-prod",
+        environment="production",
+        usage="cache",
+        target_type="oss_single",
+        capabilities=["redis", "diagnostics"],
+        search_text="cache 1 prod production cache",
+        search_aliases=["cache 1 prod"],
+    )
+
+    with patch(
+        "redis_sre_agent.core.targets.get_target_catalog",
+        new=AsyncMock(return_value=[target]),
+    ):
+        resolved = await resolve_target_query(
+            query="deep triage cache-1-prod, cache-1-prod, and cache-1-prod again",
+            allow_multiple=True,
+            max_results=5,
+        )
+
+    assert resolved.status == "resolved"
+    assert resolved.clarification_required is False
+    assert [match.resource_id for match in resolved.selected_matches] == ["redis-prod-cache-1"]
 
 
 @pytest.mark.asyncio

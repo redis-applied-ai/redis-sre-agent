@@ -54,7 +54,7 @@ def setup_tracing(app: FastAPI) -> None:
     and Redis filtering hooks.
     """
     # Setup base tracing (Redis with hooks, HTTP clients, OpenAI)
-    if not setup_base_tracing(settings.app_name, "0.1.0"):
+    if not setup_base_tracing(settings.app_name, __version__):
         return  # Tracing not enabled
 
     # Instrument FastAPI (exclude common health/docs paths)

@@ -207,6 +207,8 @@ For Redis Enterprise troubleshooting, configure `admin_url` (and credentials) on
 
 When `admin_url` is configured, the agent connects to the Redis Enterprise cluster during troubleshooting and uses relevant Redis Enterprise Admin API areas to gather information, including cluster, nodes, databases (BDBs), shards, actions, stats, logs, and alerts.
 
+For Active-Active / CRDB questions, do not treat a narrow BDB projection as proof that the database is not CRDB. Calls that request only fields such as `uid`, `name`, `status`, or `proxy_policy` can omit CRDB indicators. Use the CRDB tools (`list_crdbs`, `get_crdb`, CRDB health, syncer state, and sync-source stats) before concluding that a local BDB is not part of an Active-Active database.
+
 Run troubleshooting against the configured instance:
 
 ```bash

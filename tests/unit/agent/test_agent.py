@@ -2812,6 +2812,54 @@ class TestSRELangGraphAgent:
 
     @pytest.mark.asyncio
     @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
+    async def test_enterprise_context_reinforces_crdb_grounding_when_reinjected(
+        self, mock_build_startup_context, mock_settings, mock_llm
+    ):
+        mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok", tool_calls=[]))
+
+        agent = SRELangGraphAgent()
+        agent.llm_with_tools = mock_llm
+        agent._run_cache_active = False
+        agent._llm_cache = {}
+
+        mock_tool_mgr = MagicMock()
+        mock_tool_mgr.get_tools.return_value = []
+        target_instance = MagicMock()
+        target_instance.instance_type = "redis_enterprise"
+        workflow = agent._build_workflow(mock_tool_mgr, target_instance=target_instance)
+        compiled = workflow.compile()
+
+        state = {
+            "messages": [
+                SystemMessage(content="BASE"),
+                HumanMessage(content="Is large-key a CRDB or Active-Active database?"),
+            ],
+            "session_id": "test-session",
+            "user_id": "test-user",
+            "current_tool_calls": [],
+            "iteration_count": 0,
+            "max_iterations": 10,
+            "instance_context": None,
+            "signals_envelopes": [],
+        }
+
+        await compiled.nodes["agent"].ainvoke(state)
+
+        sent_messages = mock_llm.ainvoke.call_args.args[0]
+        system_prompt = sent_messages[0].content
+        assert "CRITICAL REDIS ENTERPRISE CONTEXT" in system_prompt
+        assert "call `list_crdbs`" in system_prompt
+        assert "CRDB name, CRDB GUID, local BDB UID" in system_prompt
+        assert "instance `db_uid`" in system_prompt
+        assert "If multiple CRDBs match the requested name or UID" in system_prompt
+        assert "If no CRDBs are configured or no CRDB matches" in system_prompt
+        assert "get_crdb_health_report" in system_prompt
+        assert "get_crdt_syncer_state" in system_prompt
+        assert "get_sync_source_stats" in system_prompt
+        assert mock_build_startup_context.await_count == 0
+
+    @pytest.mark.asyncio
+    @patch("redis_sre_agent.agent.langgraph_agent.build_startup_knowledge_context")
     async def test_agent_node_does_not_persist_injected_system_message(
         self, mock_build_startup_context, mock_settings, mock_llm
     ):
@@ -3061,6 +3109,25 @@ class TestAgentSystemPrompt:
         from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
 
         assert "SRE" in SRE_SYSTEM_PROMPT
+
+    def test_system_prompt_requires_crdb_grounding_before_status_claims(
+        self, mock_settings, mock_llm
+    ):
+        """Deep-triage CRDB answers must be grounded in CRDB Admin API inventory."""
+        from redis_sre_agent.agent.prompts import SRE_SYSTEM_PROMPT
+
+        assert "list_crdbs" in SRE_SYSTEM_PROMPT
+        assert "get_crdb" in SRE_SYSTEM_PROMPT
+        assert "get_crdb_health_report" in SRE_SYSTEM_PROMPT
+        assert "get_crdt_syncer_state" in SRE_SYSTEM_PROMPT
+        assert "get_sync_source_stats" in SRE_SYSTEM_PROMPT
+        assert "CRDB name, CRDB GUID, local BDB UID" in SRE_SYSTEM_PROMPT
+        assert "instance `db_uid`" in SRE_SYSTEM_PROMPT
+        assert "If multiple CRDBs match the requested name or UID" in SRE_SYSTEM_PROMPT
+        assert "If no CRDBs are configured or no CRDB matches" in SRE_SYSTEM_PROMPT
+        assert "sync failures or lag" in SRE_SYSTEM_PROMPT
+        assert "before summarizing peers/sites or link status" in SRE_SYSTEM_PROMPT
+        assert "First check `/v1/crdbs` via `list_crdbs`" in SRE_SYSTEM_PROMPT
 
 
 class TestAgentEmitter:

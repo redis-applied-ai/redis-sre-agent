@@ -135,6 +135,41 @@ async def test_run_agent_only_scenario_calls_selected_agent_with_prebuilt_contex
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_name", "expected_factory", "expected_iterations"),
+    [
+        ("chat", "redis_chat", 7),
+        ("knowledge", "knowledge_only", 8),
+        ("redis_triage", "redis_triage", 7),
+    ],
+)
+async def test_run_agent_only_scenario_maps_tool_steps_to_iteration_budget(
+    agent_name: str,
+    expected_factory: str,
+    expected_iterations: int,
+):
+    payload = _agent_only_payload()
+    payload["execution"]["agent"] = agent_name
+    scenario = EvalScenario.model_validate(payload)
+    fake_agent = _FakeAgent()
+
+    result = await run_agent_only_scenario(
+        scenario,
+        session_id="sess-budget",
+        user_id="user-1",
+        agent_factories={
+            "redis_chat": lambda: fake_agent,
+            "knowledge_only": lambda: fake_agent,
+            "redis_triage": lambda: fake_agent,
+        },
+    )
+
+    assert result.agent_name == expected_factory
+    assert result.context["tool_call_budget_override"] == 7
+    assert fake_agent.calls[0]["max_iterations"] == expected_iterations
+
+
+@pytest.mark.asyncio
 async def test_run_agent_only_scenario_rejects_non_agent_only_lane():
     payload = _agent_only_payload()
     payload["execution"]["lane"] = "full_turn"

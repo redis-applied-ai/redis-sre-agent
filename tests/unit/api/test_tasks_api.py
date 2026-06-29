@@ -56,6 +56,49 @@ class TestTasksAPI:
             assert data["task_id"] == "t1"
             assert data["thread_id"] == "th1"
 
+    def test_create_task_queues_zero_scope_deep_triage_for_worker_routing(self, client):
+        """POST /tasks should pass zero-scope deep-triage language to the worker."""
+        fake = {
+            "task_id": "t1",
+            "thread_id": "th1",
+            "status": "queued",
+            "message": "ok",
+        }
+        task_func = AsyncMock()
+        docket_instance = MagicMock()
+        docket_instance.__aenter__ = AsyncMock(return_value=docket_instance)
+        docket_instance.__aexit__ = AsyncMock(return_value=False)
+        docket_instance.add.return_value = task_func
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client", return_value=MagicMock()),
+            patch(
+                "redis_sre_agent.api.tasks.create_task",
+                new=AsyncMock(return_value=fake),
+            ) as mock_create,
+            patch(
+                "redis_sre_agent.api.tasks.get_redis_url",
+                new=AsyncMock(return_value="redis://test"),
+            ),
+            patch("redis_sre_agent.api.tasks.Docket", return_value=docket_instance),
+        ):
+            resp = client.post(
+                "/api/v1/tasks",
+                json={"message": "Do a deep triage on checkout-cluster-prod"},
+            )
+
+        assert resp.status_code == 202
+        mock_create.assert_awaited_once()
+        assert mock_create.await_args.kwargs["context"] == {}
+        docket_instance.add.assert_called_once()
+        assert docket_instance.add.call_args.kwargs["key"] == "t1"
+        task_func.assert_awaited_once_with(
+            thread_id="th1",
+            message="Do a deep triage on checkout-cluster-prod",
+            context={},
+            task_id="t1",
+        )
+
     def test_create_task_missing_thread_id_returns_500(self, client):
         """POST /api/v1/tasks returns 500 if core create_task omits thread_id."""
         fake = {
@@ -338,6 +381,60 @@ class TestTasksAPI:
 
         assert resp.status_code == 200
         assert resp.json()["status"] == TaskStatus.DONE.value
+        mock_docket.assert_not_called()
+        mock_tm.set_pending_approval.assert_not_awaited()
+        mock_tm.set_resume_supported.assert_not_awaited()
+        mock_tm.update_task_status.assert_not_awaited()
+        mock_tm.add_task_update.assert_not_awaited()
+
+    @pytest.mark.parametrize("terminal_status", [TaskStatus.FAILED, TaskStatus.CANCELLED])
+    def test_cancel_task_failed_or_cancelled_terminal_state_is_idempotent(
+        self, client, terminal_status
+    ):
+        """POST /api/v1/tasks/{task_id}/cancel preserves failed/cancelled task history."""
+
+        class Metadata:
+            subject = "Terminal task"
+            created_at = "2024-01-01T00:00:00Z"
+            updated_at = "2024-01-01T00:01:00Z"
+
+        class TerminalState:
+            task_id = "t1"
+            thread_id = "th1"
+            status = terminal_status
+            updates = []
+            result = {"response": "terminal result"}
+            error_message = "terminal error" if terminal_status == TaskStatus.FAILED else None
+            metadata = Metadata()
+            pending_approval = None
+            resume_supported = False
+
+        mock_tm = MagicMock()
+        mock_tm.get_task_state = AsyncMock(return_value=TerminalState())
+        mock_tm.get_task_tool_calls = AsyncMock(return_value=[])
+        mock_tm.set_pending_approval = AsyncMock()
+        mock_tm.set_resume_supported = AsyncMock()
+        mock_tm.update_task_status = AsyncMock()
+        mock_tm.add_task_update = AsyncMock()
+
+        with (
+            patch("redis_sre_agent.api.tasks.get_redis_client", return_value=MagicMock()),
+            patch("redis_sre_agent.api.tasks.TaskManager", return_value=mock_tm),
+            patch("redis_sre_agent.api.tasks.Docket") as mock_docket,
+            patch(
+                "redis_sre_agent.api.tasks.get_feedback",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            resp = client.post("/api/v1/tasks/t1/cancel")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == terminal_status.value
+        assert data["result"] == {"response": "terminal result"}
+        assert data["error_message"] == (
+            "terminal error" if terminal_status == TaskStatus.FAILED else None
+        )
         mock_docket.assert_not_called()
         mock_tm.set_pending_approval.assert_not_awaited()
         mock_tm.set_resume_supported.assert_not_awaited()

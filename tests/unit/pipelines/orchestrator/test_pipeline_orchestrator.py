@@ -57,6 +57,22 @@ class TestPipelineOrchestrator:
         assert "redis_cloud_api" in orchestrator.scrapers
         assert orchestrator.ingestion is not None
 
+    def test_supported_scraper_registry_excludes_retired_sources(self):
+        """Only current Redis docs and Cloud API scrapers should be exposed."""
+        assert set(PipelineOrchestrator.SCRAPER_CLASSES) == {
+            "redis_docs",
+            "redis_docs_local",
+            "redis_cloud_api",
+        }
+        assert not {"redis_faq", "redis_kb", "faq", "kb"} & set(
+            PipelineOrchestrator.SCRAPER_CLASSES
+        )
+
+    def test_unknown_scraper_names_raise_clear_error(self, tmp_path):
+        """Unknown scraper names should fail before a zero-document success."""
+        with pytest.raises(ValueError, match=r"Unknown scraper\(s\): redis_kb"):
+            PipelineOrchestrator(str(tmp_path), scrapers=["redis_docs", "redis_kb"])
+
     def test_init_with_custom_config(self, orchestrator):
         """Test orchestrator initialization with custom configuration."""
         assert orchestrator.config["ingestion"]["chunk_size"] == 500

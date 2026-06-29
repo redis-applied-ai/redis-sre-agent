@@ -100,6 +100,7 @@ class TestRouteToAppropriateAgent:
         [
             "Do a deep triage on database 12345",
             "Do a deep triage on orders-cache-prod",
+            "Do a deep triage on checkout-cluster-prod",
             "Run a comprehensive triage for the prod orders cache",
         ],
     )

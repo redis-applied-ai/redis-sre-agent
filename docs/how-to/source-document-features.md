@@ -86,20 +86,18 @@ Legacy `get_skill` responses stay compact and return only:
 Agent Skills `get_skill` responses return the entrypoint plus a manifest of references, scripts, and text
 assets. Resource bodies remain separate and are fetched explicitly with `get_skill_resource`.
 
-### Agent Skills package example
+### Agent Skills package layout
 
-The repository includes a package example under `skills/redis-maintenance-triage/`.
-
-Example package layout:
+Agent Skills packages use this layout:
 
 ```text
 skills/
-  redis-maintenance-triage/
+  example-incident-brief/
     SKILL.md
     references/
-      maintenance-checklist.md
+      evidence-checklist.md
     scripts/
-      collect_maintenance_context.sh
+      collect_context.sh
     assets/
       example-query.txt
     agents/
@@ -127,9 +125,9 @@ Use the top-level `skills` CLI for discovery and package scaffolding:
 
 ```bash
 uv run redis-sre-agent skills list
-uv run redis-sre-agent skills show redis-maintenance-triage
+uv run redis-sre-agent skills show <skill-name>
 uv run redis-sre-agent skills read-resource \
-  redis-maintenance-triage references/maintenance-checklist.md
+  <skill-name> references/evidence-checklist.md
 uv run redis-sre-agent skills scaffold legacy-skill.md skills/legacy-skill
 ```
 

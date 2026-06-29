@@ -1665,6 +1665,81 @@ class TestProcessAgentTurn:
         assert mock_thread_manager.append_messages.await_args.args[1][0]["role"] == "user"
 
     @pytest.mark.asyncio
+    async def test_process_agent_turn_token_limit_failure_preserves_user_message(self):
+        mock_redis = AsyncMock()
+
+        mock_thread = MagicMock()
+        mock_thread.id = "thread-123"
+        mock_thread.context = {}
+        mock_thread.metadata = MagicMock()
+        mock_thread.metadata.user_id = "user-1"
+        mock_thread.metadata.session_id = "session-1"
+        mock_thread.messages = []
+
+        mock_thread_manager = AsyncMock()
+        mock_thread_manager.get_thread = AsyncMock(return_value=mock_thread)
+        mock_thread_manager.update_thread_context = AsyncMock()
+        mock_thread_manager.append_messages = AsyncMock()
+
+        mock_task_manager = AsyncMock()
+        mock_task_manager.create_task = AsyncMock(return_value="task-123")
+        mock_task_manager.update_task_status = AsyncMock()
+        mock_task_manager.add_task_update = AsyncMock()
+        mock_task_manager.set_task_result = AsyncMock()
+        mock_task_manager.set_task_error = AsyncMock()
+        mock_task_manager._publish_stream_update = AsyncMock()
+
+        token_error = LLMTokenLimitExceededError(
+            "LLM context token budget exceeded for redis_chat: "
+            "estimated 120 input tokens; budget is 80"
+        )
+        mock_chat_agent = AsyncMock()
+        mock_chat_agent.process_query = AsyncMock(side_effect=token_error)
+
+        with (
+            patch("redis_sre_agent.core.docket_tasks.get_redis_client", return_value=mock_redis),
+            patch(
+                "redis_sre_agent.core.docket_tasks.ThreadManager", return_value=mock_thread_manager
+            ),
+            patch("redis_sre_agent.core.docket_tasks.TaskManager", return_value=mock_task_manager),
+            patch(
+                "redis_sre_agent.core.docket_tasks._extract_instance_details_from_message",
+                return_value=None,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.get_chat_agent",
+                return_value=mock_chat_agent,
+            ),
+            patch(
+                "redis_sre_agent.core.docket_tasks.route_to_appropriate_agent",
+                new=AsyncMock(return_value=AgentType.REDIS_CHAT),
+            ),
+            patch("opentelemetry.trace.get_tracer") as mock_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_span.end = MagicMock()
+            mock_span.record_exception = MagicMock()
+            mock_tracer.return_value.start_span.return_value = mock_span
+
+            with pytest.raises(LLMTokenLimitExceededError, match="budget is 80"):
+                await process_agent_turn(
+                    thread_id="thread-123",
+                    message="Investigate memory pressure with a large context",
+                )
+
+        mock_task_manager.set_task_error.assert_awaited_once()
+        error_message = mock_task_manager.set_task_error.await_args.args[1]
+        assert "LLM context token budget exceeded" in error_message
+        append_calls = mock_thread_manager.append_messages.await_args_list
+        assert [message["role"] for message in append_calls[0].args[1]] == ["user"]
+        assert (
+            append_calls[0].args[1][0]["content"]
+            == "Investigate memory pressure with a large context"
+        )
+        assert [message["role"] for message in append_calls[1].args[1]] == ["assistant"]
+        assert "LLM context token budget exceeded" in append_calls[1].args[1][0]["content"]
+
+    @pytest.mark.asyncio
     async def test_process_agent_turn_approval_error_marks_awaiting_approval(self):
         mock_redis = AsyncMock()
 
@@ -2418,6 +2493,158 @@ class TestProcessAgentTurn:
 
         assert slow_cancelled.is_set()
         task_manager.set_task_result.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_multi_target_deep_triage_fanout_runs_five_target_boundary(self):
+        bindings = [
+            TargetBinding(
+                target_handle=f"tgt_{index:02d}",
+                target_kind="instance",
+                resource_id=f"redis-cache-{index}",
+                display_name=f"cache-{index}",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            )
+            for index in range(5)
+        ]
+        thread = MagicMock()
+        thread.metadata.user_id = "test-user"
+        task_manager = AsyncMock()
+        task_manager.create_task = AsyncMock(
+            side_effect=[f"child-task-{index}" for index in range(5)]
+        )
+        task_manager.add_task_update = AsyncMock()
+        task_manager.complete_task_if_open = AsyncMock(return_value=True)
+        task_manager._publish_stream_update = AsyncMock()
+        thread_manager = AsyncMock()
+
+        async def _run_child(**kwargs):
+            binding = kwargs["binding"]
+            return {
+                "status": TaskStatus.DONE.value,
+                "task_id": kwargs["child_task_id"],
+                "message_id": f"message-{kwargs['child_task_id']}",
+                "target": {
+                    "target_handle": binding.target_handle,
+                    "display_name": binding.display_name,
+                },
+            }
+
+        with patch(
+            "redis_sre_agent.core.docket_tasks._run_single_target_triage_child",
+            new=_run_child,
+        ):
+            result = await _run_multi_target_deep_triage_fanout(
+                agent=MagicMock(),
+                bindings=bindings,
+                task_id="provided-task-123",
+                thread_id="thread-123",
+                thread=thread,
+                task_manager=task_manager,
+                thread_manager=thread_manager,
+                conversation_state={"messages": []},
+                routing_context={},
+                original_query="Deep triage cache 0 through 4",
+                generation=4,
+            )
+
+        assert result["metadata"]["fanout"] is True
+        assert result["metadata"]["target_count"] == 5
+        assert result["metadata"]["failed_count"] == 0
+        assert result["child_task_ids"] == [f"child-task-{index}" for index in range(5)]
+        assert {entry["status"] for entry in result["target_results"]} == {TaskStatus.DONE.value}
+        assert task_manager.create_task.await_count == 5
+        update_types = [call.args[2] for call in task_manager.add_task_update.await_args_list]
+        assert update_types.count("triage_fanout_start") == 1
+        assert update_types.count("triage_fanout_child_complete") == 5
+        task_manager.complete_task_if_open.assert_awaited_once()
+        assert task_manager.complete_task_if_open.await_args.args[0] == "provided-task-123"
+
+    @pytest.mark.asyncio
+    async def test_multi_target_deep_triage_fanout_records_failed_child_without_cancelling_siblings(
+        self,
+    ):
+        bindings = [
+            TargetBinding(
+                target_handle=f"tgt_{index:02d}",
+                target_kind="instance",
+                resource_id=f"redis-cache-{index}",
+                display_name=f"cache-{index}",
+                capabilities=["redis", "diagnostics"],
+                thread_id="thread-123",
+                task_id="provided-task-123",
+            )
+            for index in range(3)
+        ]
+        thread = MagicMock()
+        thread.metadata.user_id = "test-user"
+        task_manager = AsyncMock()
+        task_manager.create_task = AsyncMock(
+            side_effect=[f"child-task-{index}" for index in range(3)]
+        )
+        task_manager.add_task_update = AsyncMock()
+        task_manager.complete_task_if_open = AsyncMock(return_value=True)
+        task_manager._publish_stream_update = AsyncMock()
+        thread_manager = AsyncMock()
+        visited_children: list[str] = []
+
+        async def _run_child(**kwargs):
+            child_task_id = kwargs["child_task_id"]
+            binding = kwargs["binding"]
+            visited_children.append(child_task_id)
+            status = (
+                TaskStatus.FAILED.value
+                if child_task_id == "child-task-1"
+                else TaskStatus.DONE.value
+            )
+            return {
+                "status": status,
+                "task_id": child_task_id,
+                "message_id": f"message-{child_task_id}",
+                "target": {
+                    "target_handle": binding.target_handle,
+                    "display_name": binding.display_name,
+                },
+            }
+
+        with patch(
+            "redis_sre_agent.core.docket_tasks._run_single_target_triage_child",
+            new=_run_child,
+        ):
+            result = await _run_multi_target_deep_triage_fanout(
+                agent=MagicMock(),
+                bindings=bindings,
+                task_id="provided-task-123",
+                thread_id="thread-123",
+                thread=thread,
+                task_manager=task_manager,
+                thread_manager=thread_manager,
+                conversation_state={"messages": []},
+                routing_context={},
+                original_query="Deep triage cache 0 through 2",
+                generation=4,
+            )
+
+        assert sorted(visited_children) == [
+            "child-task-0",
+            "child-task-1",
+            "child-task-2",
+        ]
+        assert result["metadata"]["target_count"] == 3
+        assert result["metadata"]["failed_count"] == 1
+        assert "Failed targets: 1" in result["response"]
+        assert {entry["task_id"]: entry["status"] for entry in result["target_results"]} == {
+            "child-task-0": TaskStatus.DONE.value,
+            "child-task-1": TaskStatus.FAILED.value,
+            "child-task-2": TaskStatus.DONE.value,
+        }
+        update_types = [call.args[2] for call in task_manager.add_task_update.await_args_list]
+        assert update_types.count("triage_fanout_start") == 1
+        assert update_types.count("triage_fanout_child_complete") == 2
+        assert update_types.count("triage_fanout_child_failed") == 1
+        task_manager.complete_task_if_open.assert_awaited_once()
+        assert task_manager.complete_task_if_open.await_args.args[0] == "provided-task-123"
 
     @pytest.mark.asyncio
     async def test_pre_resolved_over_limit_multi_target_deep_triage_asks_to_narrow(self):

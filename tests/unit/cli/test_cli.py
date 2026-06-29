@@ -28,6 +28,7 @@ def temp_artifacts_path():
 def mock_orchestrator():
     """Mock PipelineOrchestrator."""
     with patch("redis_sre_agent.cli.pipeline.PipelineOrchestrator") as mock_class:
+        mock_class.validate_scraper_names.side_effect = lambda names: names
         mock_instance = AsyncMock()
         mock_class.return_value = mock_instance
         yield mock_instance
