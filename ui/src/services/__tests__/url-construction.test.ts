@@ -8,14 +8,14 @@ const mockLocation = (
   port: string,
   protocol: string = "http:",
 ) => {
-  Object.defineProperty(window, "location", {
-    value: {
+  vi.stubGlobal("window", {
+    ...window,
+    location: {
       hostname,
       port,
       protocol,
       origin: `${protocol}//${hostname}${port ? `:${port}` : ""}`,
     },
-    writable: true,
   });
 };
 
@@ -24,7 +24,9 @@ import { SREAgentAPI } from "../sreAgentApi";
 
 describe("URL Construction", () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+    vi.stubEnv("VITE_API_BASE_URL", "");
   });
 
   test("should use relative URLs in production", () => {

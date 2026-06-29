@@ -5,11 +5,32 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
-      "@": resolve(__dirname, "src"),
-      "@radar/ui-kit": resolve(__dirname, "ui-kit/src"),
-      "@radar/ui-kit/styles": resolve(__dirname, "ui-kit/src/styles/index.css"),
-    },
+    dedupe: ["react", "react-dom"],
+    alias: [
+      { find: "@", replacement: resolve(__dirname, "src") },
+      { find: "@radar/ui-kit", replacement: resolve(__dirname, "ui-kit/src") },
+      {
+        find: "@radar/ui-kit/styles",
+        replacement: resolve(__dirname, "ui-kit/src/styles/index.css"),
+      },
+      {
+        find: /^@testing-library\/react$/,
+        replacement: resolve(__dirname, "node_modules/@testing-library/react"),
+      },
+      { find: /^react$/, replacement: resolve(__dirname, "node_modules/react") },
+      {
+        find: /^react\/(.+)$/,
+        replacement: resolve(__dirname, "node_modules/react/$1"),
+      },
+      {
+        find: /^react-dom$/,
+        replacement: resolve(__dirname, "node_modules/react-dom"),
+      },
+      {
+        find: /^react-dom\/(.+)$/,
+        replacement: resolve(__dirname, "node_modules/react-dom/$1"),
+      },
+    ],
   },
   test: {
     environment: "jsdom",
