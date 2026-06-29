@@ -40,7 +40,7 @@ interface FeedbackButtonsProps {
   onError: (msg: string) => void;
 }
 
-const FeedbackButtons = ({
+export const FeedbackButtons = ({
   taskId,
   initialVerdict,
   onError,

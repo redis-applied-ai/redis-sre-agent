@@ -349,7 +349,13 @@ async def test_stream_publish_ordering_after_commit(redis_client, task_factory, 
 
     await submit_feedback(task_id, "down", comment="late")
 
+    assert observed["thread_id"] == "thr-test"
     assert observed["update_type"] == FEEDBACK_SUBMITTED_UPDATE_TYPE
+    assert observed["data"] == {
+        "task_id": task_id,
+        "verdict": "down",
+        "has_comment": True,
+    }
     assert observed["hash_at_publish"], "hash must be committed before publish"
 
 

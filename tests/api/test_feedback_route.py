@@ -30,6 +30,12 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(scope="module")
+def client_no_raise():
+    """TestClient that returns 500 responses instead of raising app exceptions."""
+    return TestClient(app, raise_server_exceptions=False)
+
+
 # ---------------------------------------------------------------------------
 # Redis availability + task factory
 # ---------------------------------------------------------------------------
@@ -121,6 +127,31 @@ async def test_post_up_and_down(client, task_factory):
     assert data2["created_at"] == data["created_at"]
 
 
+@pytest.mark.asyncio
+async def test_post_withdrawn_and_idempotent_resubmit(client, task_factory):
+    """POST withdrawn is accepted; identical resubmit returns the existing row."""
+    task_id = await task_factory()
+
+    first = client.post(
+        f"/api/v1/tasks/{task_id}/feedback",
+        json={"verdict": "up", "comment": "looks right"},
+    )
+    assert first.status_code == 200, first.text
+
+    withdrawn = client.post(f"/api/v1/tasks/{task_id}/feedback", json={"verdict": "withdrawn"})
+    assert withdrawn.status_code == 200, withdrawn.text
+    withdrawn_data = withdrawn.json()
+    assert withdrawn_data["verdict"] == "withdrawn"
+    assert withdrawn_data["comment"] is None
+    assert withdrawn_data["created_at"] == first.json()["created_at"]
+
+    resubmit = client.post(f"/api/v1/tasks/{task_id}/feedback", json={"verdict": "withdrawn"})
+    assert resubmit.status_code == 200, resubmit.text
+    resubmit_data = resubmit.json()
+    assert resubmit_data["created_at"] == withdrawn_data["created_at"]
+    assert resubmit_data["updated_at"] == withdrawn_data["updated_at"]
+
+
 # ---------------------------------------------------------------------------
 # US-004 / AC-GET — GET existing and missing feedback
 # ---------------------------------------------------------------------------
@@ -180,6 +211,20 @@ def test_validation_errors_comment_too_long(client):
     first = detail[0]
     assert first["type"] == "string_too_long"
     assert first["loc"][-1] == "comment"
+
+
+@pytest.mark.asyncio
+async def test_validation_accepts_max_length_comment(client, task_factory):
+    """POST accepts a comment exactly at the 2048-character boundary."""
+    task_id = await task_factory()
+    comment = "x" * 2048
+
+    resp = client.post(
+        f"/api/v1/tasks/{task_id}/feedback",
+        json={"verdict": "up", "comment": comment},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["comment"] == comment
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +504,26 @@ async def test_list_filter_combination(client, task_factory, redis_client):
     assert task_up_done not in returned_ids
 
 
+@pytest.mark.asyncio
+async def test_list_limit_applies_to_many_feedback_rows(client, task_factory):
+    """GET /api/v1/feedback?limit=50 returns at most 50 newest feedback views."""
+    task_ids = []
+    for _ in range(55):
+        task_id = await task_factory()
+        task_ids.append(task_id)
+        resp = client.post(f"/api/v1/tasks/{task_id}/feedback", json={"verdict": "up"})
+        assert resp.status_code == 200, resp.text
+
+    resp = client.get("/api/v1/feedback?limit=50")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["count"] == 50
+    assert len(data["items"]) == 50
+
+    returned_ids = {item["feedback"]["task_id"] for item in data["items"]}
+    assert returned_ids.issubset(set(task_ids))
+
+
 def test_list_limit_bounds(client):
     """limit=0 and limit=1000 return 422; no limit uses default of 50."""
     resp_zero = client.get("/api/v1/feedback?limit=0")
@@ -480,6 +545,28 @@ def test_list_since_iso_rejected(client):
     # FastAPI pattern validation puts the field name in loc
     locs = [d["loc"][-1] for d in detail if isinstance(d, dict) and "loc" in d]
     assert "since" in locs, f"Expected 'since' in locs, got {locs}"
+
+
+def test_submit_redis_error_returns_500(client_no_raise):
+    """Unhandled Redis failures surface as 500s on submit."""
+    with patch(
+        "redis_sre_agent.api.feedback.core_submit_feedback",
+        new=AsyncMock(side_effect=ConnectionError("redis down")),
+    ):
+        resp = client_no_raise.post("/api/v1/tasks/tsk-redis-down/feedback", json={"verdict": "up"})
+
+    assert resp.status_code == 500, resp.text
+
+
+def test_list_redis_error_returns_500(client_no_raise):
+    """Unhandled Redis failures surface as 500s on list."""
+    with patch(
+        "redis_sre_agent.api.feedback.core_list_feedback_views",
+        new=AsyncMock(side_effect=ConnectionError("redis down")),
+    ):
+        resp = client_no_raise.get("/api/v1/feedback")
+
+    assert resp.status_code == 500, resp.text
 
 
 # ---------------------------------------------------------------------------

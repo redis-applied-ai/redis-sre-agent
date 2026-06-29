@@ -100,6 +100,26 @@ class TestMCPSubmitFeedback:
         assert "status" not in result
 
     @pytest.mark.asyncio
+    async def test_mcp_withdrawn_and_repeated_write(self, task_factory):
+        """Withdrawn verdicts and identical resubmits preserve the existing row."""
+        task_id = await task_factory()
+
+        first = await redis_sre_submit_feedback(
+            task_id=task_id,
+            verdict="down",
+            comment="needs more evidence",
+        )
+        withdrawn = await redis_sre_submit_feedback(task_id=task_id, verdict="withdrawn")
+
+        assert withdrawn["verdict"] == "withdrawn"
+        assert withdrawn["comment"] is None
+        assert withdrawn["created_at"] == first["created_at"]
+
+        resubmit = await redis_sre_submit_feedback(task_id=task_id, verdict="withdrawn")
+        assert resubmit["created_at"] == withdrawn["created_at"]
+        assert resubmit["updated_at"] == withdrawn["updated_at"]
+
+    @pytest.mark.asyncio
     async def test_mcp_validation_raises(self, task_factory):
         """Invalid verdict propagates as ValidationError — NOT a success-shaped dict.
 
@@ -223,6 +243,23 @@ class TestMCPListFeedback:
         returned_ids = {item["feedback"]["task_id"] for item in result["items"]}
         assert task_down_1 in returned_ids
         assert task_down_2 in returned_ids
+        assert task_up not in returned_ids
+
+    @pytest.mark.asyncio
+    async def test_mcp_list_feedback_filters_withdrawn(self, task_factory):
+        """The withdrawn verdict participates in list filtering like up/down."""
+        task_up = await task_factory()
+        task_withdrawn = await task_factory()
+        await redis_sre_submit_feedback(task_id=task_up, verdict="up")
+        await redis_sre_submit_feedback(task_id=task_withdrawn, verdict="withdrawn")
+
+        result = await redis_sre_list_feedback(verdict="withdrawn")
+
+        assert isinstance(result, dict)
+        for item in result["items"]:
+            assert item["feedback"]["verdict"] == "withdrawn"
+        returned_ids = {item["feedback"]["task_id"] for item in result["items"]}
+        assert task_withdrawn in returned_ids
         assert task_up not in returned_ids
 
     @pytest.mark.asyncio

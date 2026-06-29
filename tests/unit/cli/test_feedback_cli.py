@@ -101,6 +101,16 @@ class TestUpDownWithdraw:
         data = json.loads(result.output)
         assert data["verdict"] == "withdrawn"
 
+    def test_comment_preserves_shell_like_text(self, runner, task_factory):
+        """Comments with spaces, quotes, and punctuation round-trip through JSON."""
+        task_id = asyncio.get_event_loop().run_until_complete(task_factory())
+        comment = 'needs "INFO commandstats" output; ops/sec > 42'
+
+        result = runner.invoke(feedback, ["down", task_id, "--comment", comment])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["comment"] == comment
+
 
 class TestShow:
     """AC: show returns FeedbackView or null; exit contract."""
@@ -194,6 +204,12 @@ class TestList:
         # Implementation choice: clamp to 500 (exit 0)
         assert result.exit_code == 0, result.output
 
+    def test_list_rejects_limit_below_one(self, runner):
+        """--limit 0 exits non-zero so callers do not silently get no rows."""
+        result = runner.invoke(feedback, ["list", "--limit", "0"])
+        assert result.exit_code != 0
+        assert "limit" in result.output.lower()
+
     def test_list_default_is_jsonl(self, runner, task_factory):
         """AC-11: default output is JSON Lines — one FeedbackView per line."""
 
@@ -230,6 +246,21 @@ class TestList:
         assert "status" in output_lower, f"Missing 'status' column in: {result.output}"
         assert "verdict" in output_lower, f"Missing 'verdict' column in: {result.output}"
         assert "updated_at" in output_lower, f"Missing 'updated_at' column in: {result.output}"
+
+    def test_list_table_truncates_long_comment(self, runner, task_factory):
+        """Long comments are shortened in table output while JSONL keeps full text."""
+        task_id = asyncio.get_event_loop().run_until_complete(task_factory())
+        long_comment = ("a" * 40) + ("b" * 40)
+        runner.invoke(feedback, ["down", task_id, "--comment", long_comment])
+
+        table_result = runner.invoke(feedback, ["list", "--table", "--verdict", "down"])
+        assert table_result.exit_code == 0, table_result.output
+        assert long_comment[:40] in table_result.output
+        assert long_comment[40:] not in table_result.output
+
+        json_result = runner.invoke(feedback, ["list", "--verdict", "down"])
+        assert json_result.exit_code == 0, json_result.output
+        assert long_comment in json_result.output
 
     def test_list_status_filter(self, runner, task_factory):
         """AC-11: --status filters by task.status."""

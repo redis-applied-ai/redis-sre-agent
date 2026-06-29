@@ -194,9 +194,13 @@ def feedback_show(task_id: str):
 )
 @click.option(
     "--limit",
+    type=int,
     default=50,
     show_default=True,
-    help=f"Maximum rows to return (default 50, max {_LIMIT_MAX}). Values above {_LIMIT_MAX} are clamped.",
+    help=(
+        f"Maximum rows to return (default 50, max {_LIMIT_MAX}). "
+        f"Values above {_LIMIT_MAX} are clamped; values below 1 are rejected."
+    ),
 )
 @click.option(
     "--table",
@@ -238,7 +242,11 @@ def feedback_list(
         )
         sys.exit(1)
 
-    # Clamp --limit
+    if limit < 1:
+        click.echo("Error: --limit must be at least 1.", err=True)
+        sys.exit(1)
+
+    # Clamp upper bound for backwards-compatible large-limit handling.
     effective_limit = min(limit, _LIMIT_MAX)
 
     async def _run():
