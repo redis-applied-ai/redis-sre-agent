@@ -98,7 +98,12 @@ class SemanticCache:
         )
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        # Cleanup must never raise — a failed close in a `finally` must not
+        # discard an already-computed lookup result/key (§F).
+        try:
+            await self._client.aclose()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("semantic-cache client close failed: %s", exc)
 
     # -- helpers --------------------------------------------------------------
 
@@ -429,20 +434,25 @@ async def lookup_cached_answer(
     cache is disabled or misconfigured. The returned key can be reused for a
     later store so the rewrite is computed once (§F). Fails open on any error.
     """
-    try:
-        from redis_sre_agent.core.redis import get_redis_client
+    from redis_sre_agent.core.redis import get_redis_client
 
+    cache = None
+    key: Optional[str] = None
+    try:
         cache = SemanticCache.from_settings(get_redis_client())
         if cache is None:
             return None, None
-        try:
-            key = await cache.canonical_key(query, conversation_history)
-            return await cache.lookup(query, conversation_history, rewritten_query=key), key
-        finally:
-            await cache.aclose()
+        key = await cache.canonical_key(query, conversation_history)
+        result = await cache.lookup(query, conversation_history, rewritten_query=key)
+        return result, key
     except Exception as exc:
+        # Preserve the key if it was already computed, so the miss-path store can
+        # still reuse it instead of paying a second nano rewrite (§F).
         logger.warning("semantic-cache lookup failed (fail-open miss): %s", exc)
-        return None, None
+        return None, key
+    finally:
+        if cache is not None:
+            await cache.aclose()
 
 
 async def _run_store(

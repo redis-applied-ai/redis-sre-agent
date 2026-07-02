@@ -87,3 +87,21 @@ async def test_schedule_store_noop_when_disabled():
         schedule_store("q", "answer", [{"source_document_path": "a.md"}])
         await asyncio.gather(*list(_STORE_TASKS))
     # No cache built => nothing to assert beyond "did not raise".
+
+
+@pytest.mark.asyncio
+async def test_lookup_preserves_key_when_lookup_errors():
+    """If the lookup path errors after the key is computed, the key is still
+    returned so the store can reuse it (no second nano rewrite)."""
+    fake_cache = MagicMock()
+    fake_cache.canonical_key = AsyncMock(return_value="canonical-q")
+    fake_cache.lookup = AsyncMock(side_effect=RuntimeError("lookup boom"))
+    fake_cache.aclose = AsyncMock()
+    with (
+        patch.object(service_mod.SemanticCache, "from_settings", return_value=fake_cache),
+        patch("redis_sre_agent.core.redis.get_redis_client", return_value=MagicMock()),
+    ):
+        result, key = await lookup_cached_answer("q")
+    assert result is None
+    assert key == "canonical-q"
+    fake_cache.aclose.assert_awaited_once()

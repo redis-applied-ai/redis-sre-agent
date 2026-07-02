@@ -452,3 +452,22 @@ async def test_invalidate_keeps_reverse_index_for_failed_deletes():
     assert deleted == 1  # only e_ok
     remaining = await store.entries_for_path(ph)
     assert remaining == ["e_fail"]  # failed delete kept for retry; e_ok removed
+
+
+@pytest.mark.asyncio
+async def test_aclose_never_raises():
+    """Cleanup must be exception-safe so a failed close in a finally can't
+    discard an already-computed lookup result/key."""
+
+    class _BoomClient:
+        async def aclose(self):
+            raise RuntimeError("close boom")
+
+    cache = SemanticCache(
+        client=_BoomClient(),
+        provenance=FakeProvenance(),
+        similarity_threshold=0.9,
+        ttl_latest_ms=1,
+        ttl_pinned_ms=1,
+    )
+    await cache.aclose()  # must not raise
