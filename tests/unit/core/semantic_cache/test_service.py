@@ -491,3 +491,24 @@ async def test_invalidate_multi_path_shared_entry_clears_all_links():
     assert client.deleted == ["shared"]  # not re-deleted on the second path
     assert await store.entries_for_path(ph_a) == []
     assert await store.entries_for_path(ph_b) == []  # no orphan
+
+
+@pytest.mark.asyncio
+async def test_lookup_skips_multi_entity_query():
+    client = FakeLangCache()
+    client.search_result = [_entry({"response": "x"})]
+    cache = _make_cache(client, FakeProvenance())
+    result = await cache.lookup("compare RET-4421 and RET-4422")
+    assert result is None
+    assert client.search_calls == []  # never even queried LangCache
+
+
+@pytest.mark.asyncio
+async def test_store_skips_multi_entity_query():
+    client = FakeLangCache()
+    cache = _make_cache(client, FakeProvenance())
+    entry_id = await cache.store(
+        "compare RET-4421 and RET-4422", "answer", [{"source_document_path": "a.md"}]
+    )
+    assert entry_id is None
+    assert client.set_calls == []  # never stored

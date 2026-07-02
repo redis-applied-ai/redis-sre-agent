@@ -168,6 +168,11 @@ class SemanticCache:
             # version (e.g. a mid-conversation "what about for 7.2?") tags and
             # filters the entry correctly (§D/§F).
             scope = extract_cache_scope(key)
+            if scope.multi_entity:
+                # Multi-ticket queries are deferred (§J): don't serve one under a
+                # single entity_id.
+                logger.debug("semantic-cache lookup skipped: multi-entity query")
+                return None
             attributes: Dict[str, str] = {"version": scope.version}
             if scope.entity_id:
                 attributes["entity_id"] = scope.entity_id
@@ -252,6 +257,11 @@ class SemanticCache:
             # Scope from the canonical key so the stored version/entity match the
             # form the lookup filters on (§D/§F).
             scope = extract_cache_scope(key)
+            if scope.multi_entity:
+                # Multi-ticket answers can't be represented by a single entity_id
+                # scope — deferred per §J, so don't store them under one ticket.
+                logger.debug("semantic-cache store skipped: multi-entity query")
+                return None
             attributes: Dict[str, str] = {
                 "version": scope.version,
                 "cache_origin": _CACHE_ORIGIN_DYNAMIC,

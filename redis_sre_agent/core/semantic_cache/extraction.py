@@ -45,6 +45,10 @@ class CacheScope:
 
     version: str = DEFAULT_VERSION
     entity_id: Optional[str] = None
+    # True when the query names more than one distinct ticket ID. Multi-entity
+    # questions are deferred (§J): v1 neither serves nor stores them, since a
+    # single-valued entity_id can't represent a multi-ticket answer.
+    multi_entity: bool = False
 
 
 def extract_query_version(query: str) -> str:
@@ -82,7 +86,15 @@ def extract_entity_id(query: str, *, version: Optional[str] = None) -> Optional[
 
 
 def extract_cache_scope(query: str) -> CacheScope:
-    """Resolve the full cache lookup scope (version + optional entity_id)."""
+    """Resolve the full cache lookup scope (version + optional entity_id).
+
+    If the query names more than one distinct ticket ID it is flagged
+    ``multi_entity`` (deferred per §J) so the caller can skip serving/storing it,
+    rather than silently caching under whichever ticket happened to match first.
+    """
     version = extract_query_version(query)
-    entity_id = extract_entity_id(query, version=version)
+    ticket_ids = [tid for tid in _TICKET_ID_RE.findall(query or "") if tid != version]
+    if len(set(ticket_ids)) > 1:
+        return CacheScope(version=version, entity_id=None, multi_entity=True)
+    entity_id = ticket_ids[0] if ticket_ids else None
     return CacheScope(version=version, entity_id=entity_id)

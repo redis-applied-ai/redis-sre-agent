@@ -56,3 +56,21 @@ def test_plain_query_scope_defaults():
     scope = extract_cache_scope("how do I tune maxmemory-policy?")
     assert scope.version == "latest"
     assert scope.entity_id is None
+
+
+def test_multiple_tickets_flag_multi_entity():
+    scope = extract_cache_scope("compare RET-4421 and RET-4422 latency")
+    assert scope.multi_entity is True
+    assert scope.entity_id is None
+
+
+def test_single_ticket_is_not_multi_entity():
+    scope = extract_cache_scope("status of RET-4421")
+    assert scope.multi_entity is False
+    assert scope.entity_id == "RET-4421"
+
+
+def test_same_ticket_repeated_is_not_multi_entity():
+    scope = extract_cache_scope("RET-4421 — is RET-4421 resolved?")
+    assert scope.multi_entity is False
+    assert scope.entity_id == "RET-4421"
