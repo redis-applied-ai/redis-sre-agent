@@ -329,6 +329,11 @@ class SemanticCache:
         open. Returns the number of LangCache entries deleted.
         """
         deleted = 0
+        # Track entries deleted earlier in THIS call: an entry cited by several
+        # changed paths is deleted on the first path, and a repeat delete of the
+        # now-gone row would "fail" — we must still clear its link on later paths
+        # rather than orphan it in their reverse-index sets.
+        deleted_ids: set[str] = set()
         try:
             for source in source_document_paths or []:
                 source = str(source or "").strip()
@@ -341,16 +346,20 @@ class SemanticCache:
                 # the reverse index (§H).
                 await self._provenance.write_tombstone(path_hash)
                 entry_ids = await self._provenance.entries_for_path(path_hash)
-                # Only clear reverse-index links for entries we actually deleted.
-                # A failed delete means the LangCache row may still exist, so we
-                # keep its link so a later invalidation can retry — dropping it
-                # would strand the row (reachable only by TTL) (§G).
-                succeeded = []
+                # Clear reverse-index links only for entries confirmed gone (deleted
+                # now or earlier in this call). A genuinely failed delete keeps its
+                # link so a later invalidation can retry — dropping it would strand
+                # the row (reachable only by TTL) (§G).
+                to_clear = []
                 for entry_id in entry_ids:
+                    if entry_id in deleted_ids:
+                        to_clear.append(entry_id)
+                        continue
                     if await self._client.delete_entry(entry_id):
                         deleted += 1
-                        succeeded.append(entry_id)
-                await self._provenance.clear_path(path_hash, succeeded)
+                        deleted_ids.add(entry_id)
+                        to_clear.append(entry_id)
+                await self._provenance.clear_path(path_hash, to_clear)
         except Exception as exc:
             logger.warning("semantic-cache invalidate failed: %s", exc)
         return deleted

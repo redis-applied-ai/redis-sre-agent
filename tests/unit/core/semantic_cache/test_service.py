@@ -471,3 +471,23 @@ async def test_aclose_never_raises():
         ttl_pinned_ms=1,
     )
     await cache.aclose()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_invalidate_multi_path_shared_entry_clears_all_links():
+    """An entry cited by several changed paths must be deleted once and have its
+    link cleared from EVERY path's reverse-index set (no orphan on later paths)."""
+    client = FakeLangCache()
+    redis_client = fakeredis.aioredis.FakeRedis()
+    store = ProvenanceStore(redis_client)
+    cache = _make_cache(client, store)
+
+    ph_a = path_hash_for_source("a.md")
+    ph_b = path_hash_for_source("b.md")
+    await store.record_entry("shared", [ph_a, ph_b], meta={})
+
+    deleted = await cache.invalidate(["a.md", "b.md"])
+    assert deleted == 1  # deleted once, not double-counted
+    assert client.deleted == ["shared"]  # not re-deleted on the second path
+    assert await store.entries_for_path(ph_a) == []
+    assert await store.entries_for_path(ph_b) == []  # no orphan
