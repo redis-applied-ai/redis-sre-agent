@@ -380,3 +380,28 @@ async def test_lookup_rejects_ticket_entry_for_general_query():
     cache = _make_cache(client, FakeProvenance())
     result = await cache.lookup("how do I tune maxmemory?")  # no entity_id
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_meta_provenance_path_hashes_align_with_mixed_citations():
+    """cache_meta provenance must pair each result with ITS OWN path_hash, even
+    when some cited rows lack source_document_path (would misalign under zip)."""
+    client = FakeLangCache()
+    prov = FakeProvenance()
+    cache = _make_cache(client, prov)
+    await cache.store(
+        "q",
+        "answer",
+        [
+            {"source_document_path": "a.md", "title": "A"},
+            {"source": "configuration", "title": "no-path"},  # no source_document_path
+            {"source_document_path": "b.md", "title": "B"},
+        ],
+    )
+    meta = prov.records[0][2]
+    prov_list = meta["provenance"]
+    assert prov_list[0]["path_hash"] == path_hash_for_source("a.md")
+    assert prov_list[1]["path_hash"] is None  # row without a path stays None
+    assert prov_list[2]["path_hash"] == path_hash_for_source("b.md")
+    # Reverse index still only carries the two real paths.
+    assert prov.records[0][1] == [path_hash_for_source("a.md"), path_hash_for_source("b.md")]

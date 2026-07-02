@@ -272,16 +272,24 @@ class SemanticCache:
                 "version": scope.version,
                 "entity_id": scope.entity_id,
                 "num_sources": len(search_results),
+                # Compute each row's path_hash inline (aligned per-result). Do NOT
+                # zip against path_hashes: that list omits rows without
+                # source_document_path, which would shift pairings for mixed
+                # citations and attach the wrong hash to a result.
                 "provenance": [
                     {
-                        "source_document_path": r.get("source_document_path") or r.get("source"),
-                        "path_hash": ph,
+                        "source_document_path": r.get("source_document_path"),
+                        "path_hash": (
+                            path_hash_for_source(sp)
+                            if (sp := str(r.get("source_document_path") or "").strip())
+                            else None
+                        ),
                         "index_type": r.get("index_type"),
                         "title": r.get("title"),
                         "doc_version": r.get("version"),
                         "document_hash": r.get("document_hash"),
                     }
-                    for r, ph in zip(search_results, path_hashes)
+                    for r in search_results
                 ],
             }
             await self._provenance.record_entry(entry_id, path_hashes, meta=meta)
