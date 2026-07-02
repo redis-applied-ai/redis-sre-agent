@@ -108,9 +108,14 @@ class SemanticCache:
 
     @staticmethod
     def _path_hashes(search_results: Sequence[Dict[str, Any]]) -> List[str]:
+        # Key strictly on source_document_path — the exact field ingestion hashes
+        # for its tombstones (deduplication.py). A `source` fallback would mint a
+        # hash ingestion never emits, so those reverse-index entries could never be
+        # push-invalidated; such results simply get no reverse-index entry (the
+        # fixed TTL is their only backstop).
         hashes: List[str] = []
         for result in search_results or []:
-            source = str(result.get("source_document_path") or result.get("source") or "").strip()
+            source = str(result.get("source_document_path") or "").strip()
             if source:
                 hashes.append(path_hash_for_source(source))
         return hashes
@@ -148,12 +153,16 @@ class SemanticCache:
         Fails open: any error is logged and treated as a miss.
         """
         try:
-            scope = extract_cache_scope(query)
             key = (
                 rewritten_query
                 if rewritten_query is not None
                 else await self.canonical_key(query, conversation_history)
             )
+            # Resolve version/entity from the canonical key (the rewritten,
+            # standalone question) — not the raw query — so a context-resolved
+            # version (e.g. a mid-conversation "what about for 7.2?") tags and
+            # filters the entry correctly (§D/§F).
+            scope = extract_cache_scope(key)
             attributes: Dict[str, str] = {"version": scope.version}
             if scope.entity_id:
                 attributes["entity_id"] = scope.entity_id
@@ -171,9 +180,11 @@ class SemanticCache:
             if candidate.similarity < self._threshold:
                 return None
 
-            # Post-filter safety net (§D note 4): identifier correctness must hold
+            # Post-filter safety net (§D note 4): the served entry's entity_id must
+            # EQUAL the requested one — symmetrically. A general query (no entity_id)
+            # must not receive a ticket-scoped entry, and vice versa. Holds
             # regardless of whether LangCache pre- or post-filters on attributes.
-            if scope.entity_id and candidate.attributes.get("entity_id") != scope.entity_id:
+            if (candidate.attributes.get("entity_id") or None) != scope.entity_id:
                 logger.debug("semantic-cache post-filter reject: entity_id mismatch")
                 return None
 
@@ -228,12 +239,14 @@ class SemanticCache:
                 logger.debug("semantic-cache store skipped: fresh invalidation tombstone")
                 return None
 
-            scope = extract_cache_scope(query)
             key = (
                 rewritten_query
                 if rewritten_query is not None
                 else await self.canonical_key(query, conversation_history)
             )
+            # Scope from the canonical key so the stored version/entity match the
+            # form the lookup filters on (§D/§F).
+            scope = extract_cache_scope(key)
             attributes: Dict[str, str] = {
                 "version": scope.version,
                 "cache_origin": _CACHE_ORIGIN_DYNAMIC,

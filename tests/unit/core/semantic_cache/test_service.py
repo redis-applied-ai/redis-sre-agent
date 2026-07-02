@@ -312,3 +312,71 @@ async def test_invalidate_changed_sources_noop_without_credentials():
 async def test_invalidate_changed_sources_noop_for_pure_adds():
     deleted = await invalidate_changed_sources([{"file": "a.md", "action": "add"}])
     assert deleted == 0
+
+
+# -- regression coverage for PR review findings ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_store_version_resolved_from_rewritten_key_not_raw_query():
+    """Version/entity are tagged from the canonical key, not the raw query.
+
+    A referential mid-conversation turn ("what about that version?") has no
+    version in the raw text, but the nano rewrite resolves it (e.g. 7.2). The
+    stored entry must carry version=7.2 (+ pinned TTL), not latest.
+    """
+    client = FakeLangCache()
+    cache = _make_cache(client, FakeProvenance())
+    await cache.store(
+        "what about that version?",
+        "answer",
+        [{"source_document_path": "a.md"}],
+        conversation_history=[object()],
+        rewritten_query="How do I configure clustering in Redis 7.2?",
+    )
+    assert client.set_calls[0]["attributes"]["version"] == "7.2"
+    assert client.set_calls[0]["ttl"] == 86_400_000  # pinned TTL, not latest
+
+
+@pytest.mark.asyncio
+async def test_lookup_version_resolved_from_rewritten_key():
+    client = FakeLangCache()
+    client.search_result = []
+    cache = _make_cache(client, FakeProvenance())
+    await cache.lookup(
+        "what about that version?",
+        conversation_history=[object()],
+        rewritten_query="How do I configure clustering in Redis 7.2?",
+    )
+    assert client.search_calls[0]["attributes"]["version"] == "7.2"
+
+
+def test_path_hashes_ignores_source_fallback():
+    """Only source_document_path is hashed; `source` is not a fallback (would
+    mint a hash ingestion never emits -> un-invalidatable entries)."""
+    assert SemanticCache._path_hashes([{"source": "configuration"}]) == []
+    assert SemanticCache._path_hashes([{"source_document_path": "runbooks/x.md"}]) == [
+        path_hash_for_source("runbooks/x.md")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_store_without_source_document_path_records_no_reverse_index():
+    client = FakeLangCache()
+    prov = FakeProvenance()
+    cache = _make_cache(client, prov)
+    entry_id = await cache.store("q", "answer", [{"source": "configuration", "title": "X"}])
+    assert entry_id == "entry-xyz"  # still stored (grounded)
+    assert prov.records[0][1] == []  # ...but no path_hashes -> no reverse index
+
+
+@pytest.mark.asyncio
+async def test_lookup_rejects_ticket_entry_for_general_query():
+    """A general query (no entity_id) must not be served a ticket-scoped entry."""
+    client = FakeLangCache()
+    client.search_result = [
+        _entry({"response": "ticket-scoped answer"}, attributes={"entity_id": "RET-4421"})
+    ]
+    cache = _make_cache(client, FakeProvenance())
+    result = await cache.lookup("how do I tune maxmemory?")  # no entity_id
+    assert result is None
