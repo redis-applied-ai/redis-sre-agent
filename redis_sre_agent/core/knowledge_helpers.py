@@ -58,6 +58,7 @@ _SEARCH_RETURN_FIELDS = [
     "meta_pinned",
     "severity",
     "version",
+    "source_document_path",
 ]
 _EXACT_MATCH_TAG_FIELDS = ("name", "document_hash", "source")
 _SUPPORT_TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$")
@@ -1432,6 +1433,7 @@ async def search_knowledge_base_helper(
                 "priority": _doc_priority(doc),
                 "pinned": _doc_is_pinned(doc),
                 "version": _normalized_doc_version(doc),
+                "source_document_path": doc.get("source_document_path", ""),
                 # RedisVL returns distance when return_score=True (default). Some versions
                 # expose it as 'score' and others as 'vector_distance' or 'distance'.
                 # Normalize to float.

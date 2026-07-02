@@ -100,6 +100,26 @@ class RedisKeys:
         return "sre:knowledge_pack:active"
 
     # ============================================================================
+    # Semantic answer cache (LangCache) provenance — see
+    # docs/design/semantic-cache-knowledge-agent.md §B
+    # ============================================================================
+
+    @staticmethod
+    def semantic_cache_provenance(path_hash: str) -> str:
+        """Reverse index: source path_hash -> SET of LangCache entry_ids."""
+        return f"cache_prov:{path_hash}"
+
+    @staticmethod
+    def semantic_cache_meta(entry_id: str) -> str:
+        """Side metadata (provenance + audit) for one LangCache entry."""
+        return f"cache_meta:{entry_id}"
+
+    @staticmethod
+    def semantic_cache_invalidation(path_hash: str) -> str:
+        """Short-TTL tombstone guarding the write-vs-invalidate race."""
+        return f"cache_inval:{path_hash}"
+
+    # ============================================================================
     # Task result keys
     # ============================================================================
 
