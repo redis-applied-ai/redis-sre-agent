@@ -22,6 +22,7 @@ class FakeLangCache:
         self.search_calls = []
         self.set_calls = []
         self.deleted = []
+        self.delete_fail = set()  # entry_ids for which delete_entry returns False
 
     async def search(
         self, prompt, *, similarity_threshold, attributes=None, search_strategies=None
@@ -41,7 +42,7 @@ class FakeLangCache:
 
     async def delete_entry(self, entry_id):
         self.deleted.append(entry_id)
-        return True
+        return entry_id not in self.delete_fail
 
     async def aclose(self):
         pass
@@ -431,3 +432,23 @@ async def test_store_no_paths_not_rolled_back_on_meta_only_failure():
     entry_id = await cache.store("q", "answer", [{"source": "configuration"}])
     assert entry_id == "entry-xyz"
     assert client.deleted == []  # not rolled back (no reverse index was expected)
+
+
+@pytest.mark.asyncio
+async def test_invalidate_keeps_reverse_index_for_failed_deletes():
+    """A failed LangCache delete must NOT drop its reverse-index link — the row
+    may still exist and needs to stay invalidatable on a later retry."""
+    client = FakeLangCache()
+    client.delete_fail = {"e_fail"}
+    redis_client = fakeredis.aioredis.FakeRedis()
+    store = ProvenanceStore(redis_client)
+    cache = _make_cache(client, store)
+
+    ph = path_hash_for_source("changed.md")
+    await store.record_entry("e_ok", [ph], meta={})
+    await store.record_entry("e_fail", [ph], meta={})
+
+    deleted = await cache.invalidate(["changed.md"])
+    assert deleted == 1  # only e_ok
+    remaining = await store.entries_for_path(ph)
+    assert remaining == ["e_fail"]  # failed delete kept for retry; e_ok removed

@@ -336,10 +336,16 @@ class SemanticCache:
                 # the reverse index (§H).
                 await self._provenance.write_tombstone(path_hash)
                 entry_ids = await self._provenance.entries_for_path(path_hash)
+                # Only clear reverse-index links for entries we actually deleted.
+                # A failed delete means the LangCache row may still exist, so we
+                # keep its link so a later invalidation can retry — dropping it
+                # would strand the row (reachable only by TTL) (§G).
+                succeeded = []
                 for entry_id in entry_ids:
                     if await self._client.delete_entry(entry_id):
                         deleted += 1
-                await self._provenance.clear_path(path_hash, entry_ids)
+                        succeeded.append(entry_id)
+                await self._provenance.clear_path(path_hash, succeeded)
         except Exception as exc:
             logger.warning("semantic-cache invalidate failed: %s", exc)
         return deleted

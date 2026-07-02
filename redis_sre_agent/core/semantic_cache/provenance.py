@@ -83,10 +83,16 @@ class ProvenanceStore:
             return []
 
     async def clear_path(self, path_hash: str, entry_ids: Iterable[str]) -> None:
-        """Drop the reverse-index set and side metadata for invalidated entries."""
+        """Remove reverse-index links + side metadata for the given entries only.
+
+        Uses SREM per entry (not a full-set delete) so entries whose LangCache
+        delete failed keep their link and can be retried on a later invalidation.
+        Redis drops the set automatically once its last member is removed.
+        """
         try:
-            await self._redis.delete(RedisKeys.semantic_cache_provenance(path_hash))
+            prov_key = RedisKeys.semantic_cache_provenance(path_hash)
             for entry_id in entry_ids:
+                await self._redis.srem(prov_key, entry_id)
                 await self._redis.delete(RedisKeys.semantic_cache_meta(entry_id))
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("semantic-cache provenance clear failed: %s", exc)
