@@ -2481,15 +2481,42 @@ async def _process_agent_turn_impl(
             else:
                 max_iterations = min(int(settings.max_iterations or 15), 10)
 
-            chat_agent_response = await agent.process_query(
-                query=message,
-                user_id=thread.metadata.user_id,
-                session_id=thread.metadata.session_id or thread_id,
-                max_iterations=max_iterations,
-                context=routing_context,
-                progress_emitter=progress_emitter,
-                conversation_history=lc_history if lc_history else None,
-            )
+            # Semantic answer cache: only the knowledge-only turn is instance-
+            # independent and therefore safe to serve globally (chat/triage turns
+            # depend on a specific instance's live state). Default OFF; fail-open.
+            cache_history = lc_history if lc_history else None
+            cached_response = None
+            cache_key = None
+            if is_knowledge_only and settings.semantic_cache_enabled:
+                from redis_sre_agent.core.semantic_cache.service import lookup_cached_answer
+
+                cached_response, cache_key = await lookup_cached_answer(message, cache_history)
+
+            if cached_response is not None:
+                await task_manager.add_task_update(
+                    task_id, "Served answer from semantic cache", "agent_processing"
+                )
+                chat_agent_response = cached_response
+            else:
+                chat_agent_response = await agent.process_query(
+                    query=message,
+                    user_id=thread.metadata.user_id,
+                    session_id=thread.metadata.session_id or thread_id,
+                    max_iterations=max_iterations,
+                    context=routing_context,
+                    progress_emitter=progress_emitter,
+                    conversation_history=cache_history,
+                )
+                if is_knowledge_only and settings.semantic_cache_enabled:
+                    from redis_sre_agent.core.semantic_cache.service import schedule_store
+
+                    schedule_store(
+                        message,
+                        chat_agent_response.response,
+                        chat_agent_response.search_results,
+                        cache_history,
+                        rewritten_query=cache_key,
+                    )
 
             # chat_agent_response is an AgentResponse with .response, .search_results, .tool_envelopes
             agent_response = {

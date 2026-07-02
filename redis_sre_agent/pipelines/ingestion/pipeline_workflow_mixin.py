@@ -215,6 +215,12 @@ class PipelineWorkflowMixin:
                 }
             )
 
+        # Push-invalidate the semantic answer cache for replaced/removed docs
+        # (design §G/§L); fails open and runs regardless of the kill switch.
+        from redis_sre_agent.core.semantic_cache.service import invalidate_changed_sources
+
+        await invalidate_changed_sources(results)
+
         return results
 
     async def prepare_source_artifacts(self, source_dir: Path, batch_date: str) -> int:
