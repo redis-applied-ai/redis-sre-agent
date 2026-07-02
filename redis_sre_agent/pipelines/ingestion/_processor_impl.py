@@ -259,13 +259,6 @@ class IngestionPipeline(PipelineWorkflowMixin):
             ingestion_stats["completed_at"] = datetime.now(timezone.utc).isoformat()
             ingestion_stats["success"] = True
 
-            # Push-invalidate the semantic answer cache for replaced/removed docs.
-            # Runs regardless of the serve/store kill switch (design §G/§L) and
-            # fails open so ingestion is never blocked by cache issues.
-            from redis_sre_agent.core.semantic_cache.service import invalidate_changed_sources
-
-            await invalidate_changed_sources(ingestion_stats["source_document_changes"])
-
             # Save ingestion manifest
             await self._save_ingestion_manifest(batch_date, ingestion_stats)
 
@@ -276,6 +269,16 @@ class IngestionPipeline(PipelineWorkflowMixin):
             ingestion_stats["error"] = str(e)
             ingestion_stats["completed_at"] = datetime.now(timezone.utc).isoformat()
             raise
+        finally:
+            # Push-invalidate the semantic answer cache for docs already
+            # replaced/removed — in `finally` so a PARTIAL ingestion (some
+            # categories changed docs, then a later failure) still invalidates
+            # the cache entries citing those now-stale docs (§G). Runs regardless
+            # of the serve/store kill switch (§L) and fails open, so it never
+            # masks the original error or blocks ingestion.
+            from redis_sre_agent.core.semantic_cache.service import invalidate_changed_sources
+
+            await invalidate_changed_sources(ingestion_stats["source_document_changes"])
 
         return ingestion_stats
 
