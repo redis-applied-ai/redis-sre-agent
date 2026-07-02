@@ -50,11 +50,12 @@ class FakeLangCache:
 class FakeProvenance:
     """Provenance double with programmable tombstone responses."""
 
-    def __init__(self, tombstone_sequence=None):
+    def __init__(self, tombstone_sequence=None, record_ok=True):
         self.records = []
         self.removed = []
         self.tombstones_written = []
         self._tombstone_sequence = list(tombstone_sequence or [])
+        self._record_ok = record_ok
         self.entries = {}
 
     async def has_fresh_tombstone(self, path_hashes):
@@ -64,7 +65,7 @@ class FakeProvenance:
 
     async def record_entry(self, entry_id, path_hashes, *, meta=None):
         self.records.append((entry_id, list(path_hashes), meta))
-        return True
+        return self._record_ok
 
     async def remove_entry(self, entry_id, path_hashes):
         self.removed.append((entry_id, list(path_hashes)))
@@ -405,3 +406,28 @@ async def test_meta_provenance_path_hashes_align_with_mixed_citations():
     assert prov_list[2]["path_hash"] == path_hash_for_source("b.md")
     # Reverse index still only carries the two real paths.
     assert prov.records[0][1] == [path_hash_for_source("a.md"), path_hash_for_source("b.md")]
+
+
+@pytest.mark.asyncio
+async def test_store_rolls_back_when_provenance_recording_fails():
+    """If reverse-index recording fails, the LangCache entry must be rolled back
+    so it can't linger un-invalidatable (only TTL would reach it)."""
+    client = FakeLangCache()
+    prov = FakeProvenance(record_ok=False)
+    cache = _make_cache(client, prov)
+    entry_id = await cache.store("q", "answer", [{"source_document_path": "a.md"}])
+    assert entry_id is None
+    assert client.set_calls and client.deleted == ["entry-xyz"]  # stored then undone
+    assert prov.removed and prov.removed[0][0] == "entry-xyz"
+
+
+@pytest.mark.asyncio
+async def test_store_no_paths_not_rolled_back_on_meta_only_failure():
+    """An entry with no source paths is TTL-only by design; a meta-only record
+    failure should NOT delete an otherwise-servable entry."""
+    client = FakeLangCache()
+    prov = FakeProvenance(record_ok=False)
+    cache = _make_cache(client, prov)
+    entry_id = await cache.store("q", "answer", [{"source": "configuration"}])
+    assert entry_id == "entry-xyz"
+    assert client.deleted == []  # not rolled back (no reverse index was expected)

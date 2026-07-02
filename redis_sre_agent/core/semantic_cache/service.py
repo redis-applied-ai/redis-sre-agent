@@ -292,7 +292,15 @@ class SemanticCache:
                     for r in search_results
                 ],
             }
-            await self._provenance.record_entry(entry_id, path_hashes, meta=meta)
+            recorded = await self._provenance.record_entry(entry_id, path_hashes, meta=meta)
+            if path_hashes and not recorded:
+                # The reverse-index links failed to write, so this entry could not
+                # be push-invalidated (only TTL would reach it). Roll the LangCache
+                # write back rather than leave an un-invalidatable orphan (§G/§H).
+                logger.warning("semantic-cache store undone: provenance recording failed")
+                await self._client.delete_entry(entry_id)
+                await self._provenance.remove_entry(entry_id, path_hashes)
+                return None
 
             # Recheck for a tombstone that appeared during the write window (§H).
             if await self._provenance.has_fresh_tombstone(path_hashes):
