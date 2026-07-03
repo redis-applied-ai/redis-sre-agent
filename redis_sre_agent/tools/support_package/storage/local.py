@@ -54,6 +54,7 @@ class LocalStorage(SupportPackageStorage):
         self,
         source_path: Path,
         package_id: Optional[str] = None,
+        original_filename: Optional[str] = None,
     ) -> str:
         """Upload a support package to local storage."""
         if package_id is None:
@@ -70,7 +71,7 @@ class LocalStorage(SupportPackageStorage):
         checksum = self._compute_checksum(dest_file)
         metadata = PackageMetadata(
             package_id=package_id,
-            filename=source_path.name,
+            filename=original_filename or source_path.name,
             size_bytes=dest_file.stat().st_size,
             uploaded_at=datetime.now(timezone.utc),
             storage_path=str(dest_file),
@@ -134,3 +135,12 @@ class LocalStorage(SupportPackageStorage):
     async def exists(self, package_id: str) -> bool:
         """Check if a package exists in local storage."""
         return self._package_file(package_id).exists()
+
+    async def update_tags(self, package_id: str, tags: List[str]) -> PackageMetadata:
+        """Replace the tag list for a package and persist to metadata.json."""
+        metadata = await self.get_metadata(package_id)
+        if metadata is None:
+            raise PackageNotFoundError(package_id)
+        updated = metadata.model_copy(update={"tags": list(tags)})
+        self._metadata_file(package_id).write_text(updated.model_dump_json(indent=2))
+        return updated

@@ -1765,6 +1765,89 @@ export class SREAgentAPI {
     return response.json();
   }
 
+  // Support Package Methods
+  async listSupportPackages(): Promise<{
+    packages: Array<{
+      package_id: string;
+      filename: string;
+      size_bytes: number;
+      uploaded_at: string;
+      is_extracted: boolean;
+      storage_path?: string;
+      checksum?: string;
+    }>;
+    total: number;
+  }> {
+    const response = await fetch(`${this.tasksBaseUrl}/support-packages`);
+    if (!response.ok) {
+      throw new Error(`Failed to list support packages: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async uploadSupportPackage(
+    file: File,
+    packageId?: string,
+  ): Promise<{ package_id: string; status: string; filename: string }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const url = this.createURL(`${this.tasksBaseUrl}/support-packages/upload`);
+    if (packageId) url.searchParams.set("package_id", packageId);
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to upload support package: ${errorText}`);
+    }
+    return response.json();
+  }
+
+  async extractSupportPackage(
+    packageId: string,
+  ): Promise<{ package_id: string; status: string; path: string }> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/support-packages/${packageId}/extract`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to extract support package: ${errorText}`);
+    }
+    return response.json();
+  }
+
+  async deleteSupportPackage(packageId: string): Promise<void> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/support-packages/${packageId}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to delete support package: ${errorText}`);
+    }
+  }
+
+  async updateSupportPackageTags(
+    packageId: string,
+    tags: string[],
+  ): Promise<{ package_id: string; tags: string[] }> {
+    const response = await fetch(
+      `${this.tasksBaseUrl}/support-packages/${packageId}/tags`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tags),
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to update tags: ${errorText}`);
+    }
+    return response.json();
+  }
+
   async submitFeedback(
     taskId: string,
     verdict: FeedbackVerdict,

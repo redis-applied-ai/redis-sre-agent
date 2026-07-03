@@ -11,6 +11,7 @@ import Triage from "./pages/Triage";
 import Knowledge from "./pages/Knowledge";
 import KnowledgeDocumentChunks from "./pages/KnowledgeDocumentChunks";
 import Schedules from "./pages/Schedules";
+import SupportPackages from "./pages/SupportPackages";
 import Settings from "./pages/Settings";
 import { useApp } from "./hooks/useApp";
 
@@ -56,6 +57,7 @@ function App() {
           element={<KnowledgeDocumentChunks />}
         />
         <Route path="/schedules" element={<Schedules />} />
+        <Route path="/support-packages" element={<SupportPackages />} />
         <Route path="/settings" element={<Settings />} />
         {/* Redirect instances to settings with instances section */}
         <Route

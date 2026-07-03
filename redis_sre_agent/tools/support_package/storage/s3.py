@@ -76,6 +76,7 @@ class S3Storage(SupportPackageStorage):
         self,
         source_path: Path,
         package_id: Optional[str] = None,
+        original_filename: Optional[str] = None,
     ) -> str:
         """Upload a support package to S3."""
         if package_id is None:
@@ -92,7 +93,7 @@ class S3Storage(SupportPackageStorage):
             ExtraArgs={
                 "ContentType": "application/gzip",
                 "Metadata": {
-                    "original-filename": source_path.name,
+                    "original-filename": original_filename or source_path.name,
                     "checksum-sha256": checksum,
                     "uploaded-at": datetime.now(timezone.utc).isoformat(),
                 },
@@ -208,3 +209,22 @@ class S3Storage(SupportPackageStorage):
             if e.response["Error"]["Code"] == "404":
                 return False
             raise
+
+    async def update_tags(self, package_id: str, tags: List[str]) -> PackageMetadata:
+        """Store tags as a sidecar JSON object alongside the package in S3."""
+        import json as _json
+
+        if not await self.exists(package_id):
+            raise PackageNotFoundError(package_id)
+
+        tags_key = f"{self.prefix}{package_id}.tags.json"
+        self._client.put_object(
+            Bucket=self.bucket,
+            Key=tags_key,
+            Body=_json.dumps(tags).encode(),
+            ContentType="application/json",
+        )
+
+        metadata = await self.get_metadata(package_id)
+        # Attach tags from the sidecar to the returned metadata object
+        return metadata.model_copy(update={"tags": list(tags)})

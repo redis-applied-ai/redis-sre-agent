@@ -3,7 +3,7 @@
 import shutil
 import tarfile
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from .provider import SupportPackageToolProvider
 from .storage.protocols import PackageMetadata, SupportPackageStorage
@@ -35,17 +35,19 @@ class SupportPackageManager:
         self,
         source_path: Path,
         package_id: Optional[str] = None,
+        original_filename: Optional[str] = None,
     ) -> str:
         """Upload a support package to storage.
 
         Args:
             source_path: Path to the support package file
             package_id: Optional custom package ID
+            original_filename: Original filename from the upload request
 
         Returns:
             The package ID
         """
-        return await self.storage.upload(source_path, package_id)
+        return await self.storage.upload(source_path, package_id, original_filename)
 
     async def list_packages(self) -> List[PackageMetadata]:
         """List all uploaded packages.
@@ -163,6 +165,18 @@ class SupportPackageManager:
         """
         extract_path = self.extract_dir / package_id
         return extract_path.exists() and any(extract_path.iterdir())
+
+    async def update_tags(self, package_id: str, tags: Sequence[str]):
+        """Replace the tag list for a package.
+
+        Args:
+            package_id: ID of the package
+            tags: New list of tags
+
+        Returns:
+            Updated PackageMetadata
+        """
+        return await self.storage.update_tags(package_id, list(tags))
 
     async def get_tool_provider(self, package_id: str) -> SupportPackageToolProvider:
         """Get a tool provider for a package.
