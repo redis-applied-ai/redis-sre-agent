@@ -142,6 +142,16 @@ async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
             detail="Please provide only one of instance_id or cluster_id in context",
         )
 
+    if context.get("support_package_id") and not context.get("support_package_path"):
+        from redis_sre_agent.core.query_helpers import _resolve_support_package_context
+
+        try:
+            context.update(
+                await _resolve_support_package_context(context["support_package_id"])
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
     try:
         redis_client = get_redis_client()
         data = await create_task(

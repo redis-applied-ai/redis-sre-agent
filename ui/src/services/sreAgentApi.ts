@@ -593,6 +593,7 @@ export class SREAgentAPI {
     tags?: string[],
     instanceId?: string,
     clusterId?: string,
+    supportPackageId?: string,
   ): Promise<TriageResponse> {
     if (instanceId && clusterId) {
       throw new Error(
@@ -614,6 +615,7 @@ export class SREAgentAPI {
           tags,
           ...(instanceId && { instance_id: instanceId }),
           ...(clusterId && { cluster_id: clusterId }),
+          ...(supportPackageId && { support_package_id: supportPackageId }),
         },
       }),
     });
@@ -1179,6 +1181,7 @@ export class SREAgentAPI {
     tags?: string[],
     instanceId?: string,
     clusterId?: string,
+    supportPackageId?: string,
   ): Promise<string> {
     const triageResponse = await this.submitTriageRequest(
       message,
@@ -1188,6 +1191,7 @@ export class SREAgentAPI {
       tags,
       instanceId,
       clusterId,
+      supportPackageId,
     );
     return triageResponse.thread_id;
   }
