@@ -1,4 +1,4 @@
-"""Direct agent runtime helpers for narrow eval scenarios."""
+"""Direct agent execution helpers for narrow eval scenarios."""
 
 from __future__ import annotations
 
