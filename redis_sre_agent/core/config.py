@@ -614,38 +614,13 @@ class Settings(BaseSettings):
     )
     skill_backend_kind: Literal["redis", "custom"] = Field(
         default="redis",
-        description="Runtime skill backend selection. 'redis' uses the shipped Redis backend; "
+        description="Skill backend selection. 'redis' uses the shipped Redis backend; "
         "'custom' loads a deployment-provided implementation.",
     )
     skill_backend_class: Optional[str] = Field(
         default=None,
         description="Dot-path to a custom SkillBackend implementation when "
         "skill_backend_kind='custom'.",
-    )
-    skills_api_base_url: Optional[str] = Field(
-        default=None,
-        description="Base URL for the runtime-owned Skills facade when using the proxy-backed "
-        "workspace skill backend.",
-    )
-    skills_api_tenant_id: Optional[str] = Field(
-        default=None,
-        description="Tenant id used when calling the runtime-owned Skills facade.",
-    )
-    skills_api_project_id: Optional[str] = Field(
-        default=None,
-        description="Project id used when calling the runtime-owned Skills facade.",
-    )
-    skills_api_agent_id: Optional[str] = Field(
-        default=None,
-        description="Agent app id used when calling the runtime-owned Skills facade.",
-    )
-    skills_api_token: Optional[str] = Field(
-        default=None,
-        description="Optional bearer token for the runtime-owned Skills facade.",
-    )
-    skills_api_timeout_seconds: float = Field(
-        default=15.0,
-        description="HTTP timeout in seconds for the runtime-owned Skills facade.",
     )
     skill_reference_char_budget: int = Field(
         default=12000,
