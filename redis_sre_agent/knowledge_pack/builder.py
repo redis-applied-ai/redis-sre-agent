@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -13,6 +15,7 @@ from typing import Any, Optional
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from redis_sre_agent.core.config import Settings, settings
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import SRE_KNOWLEDGE_SCHEMA, get_knowledge_index
 
 from .checksums import build_checksums_for_directory, write_checksums_file
@@ -34,6 +37,9 @@ from .utils import utcnow
 
 _MANIFEST_FILE = "manifest.json"
 _CHECKSUMS_FILE = "checksums.txt"
+_SOURCE_DOCUMENTS_SCRAPER = "source_documents"
+_NON_KNOWLEDGE_RESTORE_DOC_TYPES = {"skill", "support_ticket"}
+_MAX_MISSING_EXAMPLES = 5
 
 
 def _git_rev_parse(target: str, cwd: Path) -> str | None:
@@ -199,6 +205,135 @@ def _copy_batch_artifacts(source_batch_path: Path, destination_root: Path) -> in
     )
 
 
+def _iter_artifact_payloads(batch_root: Path) -> list[tuple[Path, dict[str, Any]]]:
+    payloads: list[tuple[Path, dict[str, Any]]] = []
+    for artifact_path in sorted(batch_root.rglob("*.json")):
+        if artifact_path.name in {"batch_manifest.json", "ingestion_manifest.json"}:
+            continue
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            payloads.append((artifact_path, payload))
+    return payloads
+
+
+def _normalize_doc_type(value: Any) -> str:
+    normalized = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
+    return normalized or "knowledge"
+
+
+def _artifact_doc_type(payload: dict[str, Any]) -> str:
+    metadata = payload.get("metadata")
+    metadata_doc_type = metadata.get("doc_type") if isinstance(metadata, dict) else None
+    return _normalize_doc_type(payload.get("doc_type") or metadata_doc_type or "knowledge")
+
+
+def _artifact_source_document_path(payload: dict[str, Any]) -> str:
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    return str(metadata.get("source_document_path") or "").strip()
+
+
+def _knowledge_source_meta_key(source_document_path: str) -> str:
+    path_hash = hashlib.sha256(source_document_path.encode("utf-8")).hexdigest()[:16]
+    return RedisKeys.knowledge_source_meta(path_hash)
+
+
+def _expected_repo_source_document_paths(repo_root: Path) -> set[str]:
+    source_root = repo_root / "source_documents"
+    if not source_root.exists():
+        return set()
+    return {
+        path.relative_to(source_root).as_posix()
+        for path in source_root.rglob("*.md")
+        if path.is_file() and path.name.lower() != "readme.md"
+    }
+
+
+def _format_missing_values(values: set[str]) -> str:
+    examples = sorted(values)[:_MAX_MISSING_EXAMPLES]
+    suffix = "" if len(values) <= _MAX_MISSING_EXAMPLES else ", ..."
+    return ", ".join(examples) + suffix
+
+
+def _validate_repo_source_artifact_coverage(
+    *,
+    repo_root: Path,
+    source_batch_path: Path,
+    artifact_payloads: list[tuple[Path, dict[str, Any]]],
+    scrapers_run: list[str],
+) -> int:
+    if _SOURCE_DOCUMENTS_SCRAPER not in scrapers_run:
+        return 0
+
+    expected_source_paths = _expected_repo_source_document_paths(repo_root)
+    if not expected_source_paths:
+        return 0
+
+    artifact_source_paths = {
+        source_document_path
+        for _, payload in artifact_payloads
+        if (source_document_path := _artifact_source_document_path(payload))
+    }
+    missing = expected_source_paths - artifact_source_paths
+    if missing:
+        raise ValueError(
+            "Knowledge-pack artifact batch is missing "
+            f"{len(missing)} source_documents artifacts from {source_batch_path}: "
+            f"{_format_missing_values(missing)}"
+        )
+    return len(expected_source_paths)
+
+
+def _expected_knowledge_restore_keys(
+    artifact_payloads: list[tuple[Path, dict[str, Any]]],
+) -> tuple[set[str], set[str]]:
+    document_meta_keys: set[str] = set()
+    source_meta_keys: set[str] = set()
+    for artifact_path, payload in artifact_payloads:
+        if _artifact_doc_type(payload) in _NON_KNOWLEDGE_RESTORE_DOC_TYPES:
+            continue
+
+        content_hash = str(payload.get("content_hash") or "").strip()
+        if not content_hash:
+            raise ValueError(f"Knowledge artifact is missing content_hash: {artifact_path}")
+
+        document_meta_keys.add(RedisKeys.knowledge_document_meta(content_hash))
+        source_document_path = _artifact_source_document_path(payload)
+        if source_document_path:
+            source_meta_keys.add(_knowledge_source_meta_key(source_document_path))
+    return document_meta_keys, source_meta_keys
+
+
+def _validate_restore_record_coverage(
+    *,
+    expected_document_meta_keys: set[str],
+    expected_source_meta_keys: set[str],
+    document_meta_records: list[dict[str, Any]],
+    source_meta_records: list[dict[str, Any]],
+) -> None:
+    actual_document_meta_keys = {str(record.get("key") or "") for record in document_meta_records}
+    actual_source_meta_keys = {str(record.get("key") or "") for record in source_meta_records}
+    missing_document_meta = expected_document_meta_keys - actual_document_meta_keys
+    missing_source_meta = expected_source_meta_keys - actual_source_meta_keys
+
+    errors: list[str] = []
+    if missing_document_meta:
+        errors.append(
+            f"missing {len(missing_document_meta)} document metadata records "
+            f"({_format_missing_values(missing_document_meta)})"
+        )
+    if missing_source_meta:
+        errors.append(
+            f"missing {len(missing_source_meta)} source tracking records "
+            f"({_format_missing_values(missing_source_meta)})"
+        )
+    if errors:
+        raise ValueError(
+            "Knowledge-pack restore records do not cover the artifact batch: " + "; ".join(errors)
+        )
+
+
 def _build_source_revisions(repo_root: Path, repo_sha: str | None) -> dict[str, Any]:
     source_revisions: dict[str, Any] = {}
     if repo_sha:
@@ -265,6 +400,18 @@ async def build_knowledge_pack(
 
     index = await get_knowledge_index(config=cfg)
     redis_client = index.client
+    normalized_scrapers_run = scrapers_run or []
+    artifact_payloads = _iter_artifact_payloads(source_batch_path)
+    repo_source_documents = _validate_repo_source_artifact_coverage(
+        repo_root=repo_root,
+        source_batch_path=source_batch_path,
+        artifact_payloads=artifact_payloads,
+        scrapers_run=normalized_scrapers_run,
+    )
+    expected_document_meta_keys, expected_source_meta_keys = _expected_knowledge_restore_keys(
+        artifact_payloads
+    )
+
     chunk_records = await _scan_chunk_records(redis_client)
     document_meta_records = await _scan_meta_records(redis_client, pattern="sre_knowledge_meta:*")
     source_meta_records = [
@@ -282,6 +429,12 @@ async def build_knowledge_pack(
         raise ValueError(
             "Knowledge index is empty; ingest the target batch before building a pack."
         )
+    _validate_restore_record_coverage(
+        expected_document_meta_keys=expected_document_meta_keys,
+        expected_source_meta_keys=expected_source_meta_keys,
+        document_meta_records=document_meta_records,
+        source_meta_records=source_meta_records,
+    )
 
     pack_id = uuid.uuid4().hex
     active_registry = ActiveKnowledgePackRegistry(
@@ -322,6 +475,9 @@ async def build_knowledge_pack(
             source_revisions=source_revisions,
             record_counts=RecordCounts(
                 artifact_documents=artifact_documents,
+                repo_source_documents=repo_source_documents,
+                knowledge_artifact_documents=len(expected_document_meta_keys),
+                knowledge_source_documents=len(expected_source_meta_keys),
                 chunk_records=len(chunk_records),
                 document_meta_records=len(document_meta_records),
                 source_meta_records=len(source_meta_records),

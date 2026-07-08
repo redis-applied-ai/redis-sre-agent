@@ -2,8 +2,14 @@ import json
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
+from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.knowledge_pack.builder import (
     _copy_batch_artifacts,
+    _expected_knowledge_restore_keys,
+    _validate_repo_source_artifact_coverage,
+    _validate_restore_record_coverage,
     compute_embedding_fingerprint,
     compute_schema_hash,
     resolve_pack_embedding_profile,
@@ -101,3 +107,78 @@ def test_copy_batch_artifacts_excludes_batch_manifest_from_fallback_count(tmp_pa
     copied_count = _copy_batch_artifacts(source_batch_path, tmp_path / "pack-root")
 
     assert copied_count == 2
+
+
+def test_validate_repo_source_artifact_coverage_requires_declared_source_documents(
+    tmp_path: Path,
+):
+    repo_root = tmp_path / "repo"
+    source_doc = repo_root / "source_documents" / "shared" / "source.md"
+    source_doc.parent.mkdir(parents=True)
+    source_doc.write_text("# Source\n", encoding="utf-8")
+    batch_root = tmp_path / "artifacts" / "2026-05-12"
+
+    with pytest.raises(ValueError, match="missing 1 source_documents artifacts"):
+        _validate_repo_source_artifact_coverage(
+            repo_root=repo_root,
+            source_batch_path=batch_root,
+            artifact_payloads=[],
+            scrapers_run=["source_documents"],
+        )
+
+
+def test_expected_knowledge_restore_keys_excludes_non_knowledge_indices(tmp_path: Path):
+    artifact_payloads = [
+        (
+            tmp_path / "knowledge.json",
+            {
+                "content_hash": "knowledge-hash",
+                "doc_type": "knowledge",
+                "metadata": {"source_document_path": "shared/knowledge.md"},
+            },
+        ),
+        (
+            tmp_path / "runbook.json",
+            {
+                "content_hash": "runbook-hash",
+                "doc_type": "runbook",
+                "metadata": {"source_document_path": "shared/runbook.md"},
+            },
+        ),
+        (
+            tmp_path / "skill.json",
+            {
+                "content_hash": "skill-hash",
+                "doc_type": "skill",
+                "metadata": {"source_document_path": "shared/skill.md"},
+            },
+        ),
+        (
+            tmp_path / "ticket.json",
+            {
+                "content_hash": "ticket-hash",
+                "doc_type": "support_ticket",
+                "metadata": {"source_document_path": "shared/ticket.md"},
+            },
+        ),
+    ]
+
+    document_meta_keys, source_meta_keys = _expected_knowledge_restore_keys(artifact_payloads)
+
+    assert document_meta_keys == {
+        RedisKeys.knowledge_document_meta("knowledge-hash"),
+        RedisKeys.knowledge_document_meta("runbook-hash"),
+    }
+    assert len(source_meta_keys) == 2
+
+
+def test_validate_restore_record_coverage_requires_source_tracking():
+    with pytest.raises(ValueError, match="missing 1 source tracking records"):
+        _validate_restore_record_coverage(
+            expected_document_meta_keys={RedisKeys.knowledge_document_meta("doc-hash")},
+            expected_source_meta_keys={RedisKeys.knowledge_source_meta("source-hash")},
+            document_meta_records=[
+                {"key": RedisKeys.knowledge_document_meta("doc-hash"), "mapping": {}}
+            ],
+            source_meta_records=[],
+        )

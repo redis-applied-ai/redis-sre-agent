@@ -1,3 +1,4 @@
+import hashlib
 import json
 from array import array
 from pathlib import Path
@@ -45,6 +46,7 @@ def _write_artifact_batch(root: Path, batch_date: str) -> None:
                 "doc_type": "knowledge",
                 "severity": "medium",
                 "content_hash": "content-hash-1",
+                "metadata": {"source_document_path": "shared/release-doc.md"},
             }
         )
         + "\n",
@@ -60,8 +62,10 @@ async def test_build_and_restore_knowledge_pack_round_trip(
     await create_indices(config=test_settings)
     index = await get_knowledge_index(config=test_settings)
     vector = array("f", [0.0] * test_settings.vector_dim).tobytes()
-    document_hash = "dochash-roundtrip"
+    document_hash = "content-hash-1"
     chunk_key = RedisKeys.knowledge_chunk(document_hash, 0)
+    source_document_path = "shared/release-doc.md"
+    source_path_hash = hashlib.sha256(source_document_path.encode("utf-8")).hexdigest()[:16]
 
     await index.load(
         data=[
@@ -86,9 +90,9 @@ async def test_build_and_restore_knowledge_pack_round_trip(
         mapping={"document_hash": document_hash, "content_hash": "content-hash-1"},
     )
     await async_redis_client.hset(
-        RedisKeys.knowledge_source_meta("sourcehash-1"),
+        RedisKeys.knowledge_source_meta(source_path_hash),
         mapping={
-            "source_document_path": "shared/release-doc.md",
+            "source_document_path": source_document_path,
             "document_hash": document_hash,
         },
     )
@@ -110,6 +114,8 @@ async def test_build_and_restore_knowledge_pack_round_trip(
 
     assert pack_path.exists()
     assert build_result["record_counts"]["chunk_records"] == 1
+    assert build_result["record_counts"]["knowledge_artifact_documents"] == 1
+    assert build_result["record_counts"]["knowledge_source_documents"] == 1
 
     await async_redis_client.flushdb()
     await create_indices(config=test_settings)
