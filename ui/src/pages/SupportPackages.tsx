@@ -434,19 +434,33 @@ const SupportPackages = () => {
                   ref={fileInputRef}
                   type="file"
                   accept=".tar.gz,.tgz,.gz,.zip"
-                  className="w-full px-3 py-2 border rounded-redis-sm focus:outline-none focus:ring-2 focus:ring-redis-blue-03 text-redis-sm"
-                  style={{
-                    backgroundColor: "var(--input)",
-                    color: "var(--input-foreground)",
-                    borderColor: "var(--border)",
-                  }}
+                  className="hidden"
                   onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
                 />
-                {uploadFile && (
-                  <p className="text-redis-xs text-muted-foreground mt-1">
-                    {uploadFile.name} — {formatBytes(uploadFile.size)}
-                  </p>
-                )}
+                <div
+                  className="flex items-center gap-3 w-full px-3 py-2 border rounded-redis-sm text-redis-sm"
+                  style={{
+                    backgroundColor: "var(--input)",
+                    borderColor: "var(--border)",
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {uploadFile ? "Change File" : "Choose File"}
+                  </Button>
+                  <span
+                    className="truncate"
+                    style={{ color: "var(--input-foreground)" }}
+                  >
+                    {uploadFile
+                      ? `${uploadFile.name} — ${formatBytes(uploadFile.size)}`
+                      : "No file selected"}
+                  </span>
+                </div>
               </div>
 
               <div>
