@@ -116,6 +116,12 @@ RUN useradd --create-home --shell /bin/bash app && \
 COPY --from=builder --chown=app:app /app /app
 RUN chown app:app /app
 
+# Pre-create the support package directory owned by "app". Named volumes
+# mounted here inherit this ownership on first use, so the non-root app user
+# can write without a manual chown.
+RUN mkdir -p /tmp/sre_agent/support_packages && \
+    chown -R app:app /tmp/sre_agent
+
 # Add the virtual environment and uv tools to PATH
 # This allows us to run "uvicorn" or "python" directly without "uv run"
 ENV PATH="/app/.venv/bin:/opt/uv/tools/bin:$PATH"
