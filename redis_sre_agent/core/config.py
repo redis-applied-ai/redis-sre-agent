@@ -341,6 +341,40 @@ class Settings(BaseSettings):
         default="gpt-5-nano", description="OpenAI model for very simple classification/triage"
     )
 
+    # Semantic Answer Cache (LangCache) — default OFF; see docs/design/semantic-cache-knowledge-agent.md
+    semantic_cache_enabled: bool = Field(
+        default=False,
+        description="Enable the semantic answer cache in front of the knowledge agent (serve + store).",
+    )
+    semantic_cache_similarity_threshold: float = Field(
+        default=0.9,
+        description="LangCache similarity threshold for a cache hit (higher = stricter).",
+    )
+    semantic_cache_ttl_latest_ms: int = Field(
+        default=60 * 60 * 1000,
+        description="Store-time TTL (ms) for version='latest' entries (moving pointer => short).",
+    )
+    semantic_cache_ttl_pinned_ms: int = Field(
+        default=24 * 60 * 60 * 1000,
+        description="Store-time TTL (ms) for pinned-version entries (stable => longer).",
+    )
+    semantic_cache_inval_tombstone_ttl_seconds: int = Field(
+        default=120,
+        description="TTL (s) for cache_inval write-vs-invalidate tombstones in our Redis.",
+    )
+    langcache_server_url: str = Field(
+        default="https://aws-us-east-1.langcache.redis.io",
+        description="Base URL for the managed LangCache service.",
+    )
+    langcache_cache_id: Optional[SecretStr] = Field(
+        default=None,
+        description="LangCache cache identifier (required when semantic_cache_enabled).",
+    )
+    langcache_api_key: Optional[SecretStr] = Field(
+        default=None,
+        description="LangCache API key (required when semantic_cache_enabled).",
+    )
+
     # Vector Search / Embeddings
     embedding_provider: str = Field(
         default="openai",
