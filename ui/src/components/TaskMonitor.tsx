@@ -393,7 +393,11 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         if (apiBase) {
           const u = new URL(apiBase, window.location.href);
           const proto = u.protocol === "https:" ? "wss:" : "ws:";
-          const basePath = u.pathname.replace(/\/$/, "");
+          // VITE_API_BASE_URL may or may not include the /api/v1 prefix (compose sets it,
+          // .env.example shows host-only). The WS route is always mounted at /api/v1, so
+          // ensure the prefix is present rather than assuming it.
+          let basePath = u.pathname.replace(/\/$/, "");
+          if (!basePath.endsWith("/api/v1")) basePath += "/api/v1";
           return `${proto}//${u.host}${basePath}/ws/tasks/${threadId}`;
         }
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
