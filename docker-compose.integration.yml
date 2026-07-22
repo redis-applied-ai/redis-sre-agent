@@ -17,6 +17,22 @@ services:
     networks:
       - sre-network-test
 
+  # OIDC provider for the auth portability test (T-P1). Proves provider-neutrality:
+  # the agent authenticates against dex (a non-Entra OIDC provider) with only config
+  # changed. Not for production. sre-mcp / sre-mcp-ssl are intentionally untouched.
+  dex:
+    # Opt-in profile: excluded from the default `up` so it never affects other
+    # integration tests. Started explicitly for the auth portability test.
+    profiles: ["auth"]
+    image: ghcr.io/dexidp/dex:v2.41.1
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./tests/integration/dex/dex-test-config.yaml:/etc/dex/config.yaml:ro
+    networks:
+      - sre-network-test
+
 networks:
   sre-network-test:
     driver: bridge

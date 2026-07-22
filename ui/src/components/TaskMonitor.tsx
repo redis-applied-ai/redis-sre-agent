@@ -6,6 +6,8 @@ import sreAgentApi, {
   type PendingApprovalSummary,
   type TaskToolCall,
 } from "../services/sreAgentApi";
+import { isAuthEnabled } from "../auth/oidcConfig";
+import { getAccessToken } from "../auth/tokenStore";
 
 interface TaskUpdate {
   timestamp: string;
@@ -117,6 +119,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
   const lastMessageIdRef = useRef<string | null>(null);
   const lastRenderTimeRef = useRef<number>(0);
   const isIntentionalCloseRef = useRef<boolean>(false);
+  const reconnectAttemptsRef = useRef<number>(0);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -373,6 +376,8 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
   const currentConnIdRef = useRef(0);
   const nextConnIdRef = useRef(1);
 
+  const MAX_RECONNECT_ATTEMPTS = 6;
+
   const connectWebSocket = () => {
     // Close existing connection if any
     if (wsRef.current) {
@@ -385,6 +390,19 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     try {
       // Construct WebSocket URL dynamically based on current location
       const getWebSocketUrl = () => {
+        // Prefer the explicitly configured API origin so the socket targets the same
+        // host the REST calls (and the bearer) go to in split-origin deployments.
+        const apiBase = import.meta.env.VITE_API_BASE_URL;
+        if (apiBase) {
+          // Treat VITE_API_BASE_URL exactly as the REST client (sreAgentApi) does: it is
+          // the full API base (includes /api/v1, as docker-compose sets it) and we append
+          // the sub-path. This keeps REST and WS on the same prefix; a host-only base is a
+          // pre-existing REST limitation, not something WS should diverge on.
+          const u = new URL(apiBase, window.location.href);
+          const proto = u.protocol === "https:" ? "wss:" : "ws:";
+          const basePath = u.pathname.replace(/\/$/, "");
+          return `${proto}//${u.host}${basePath}/ws/tasks/${threadId}`;
+        }
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const hostname = window.location.hostname;
         const isDevelopment =
@@ -404,7 +422,27 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       const myConnId = nextConnIdRef.current++;
       currentConnIdRef.current = myConnId;
       console.log("Connecting to WebSocket:", wsUrl);
-      const ws = new WebSocket(wsUrl);
+      // Read a fresh token at connect time (also on auto-reconnect) so we never
+      // replay a stale token. The server validates it before accept() (subprotocol
+      // transport, since browsers cannot set an Authorization header on a WebSocket).
+      const authToken = isAuthEnabled ? getAccessToken() : null;
+      if (isAuthEnabled && !authToken) {
+        // Auth is enabled but no token yet — don't open an unauthenticated socket
+        // (the server rejects it). Retry shortly (the token lands once react-oidc-context
+        // loads / silently renews), but bound it like the reconnect path so a token that
+        // never arrives doesn't poll forever.
+        if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+          setConnectionError("Authentication required.");
+          return;
+        }
+        reconnectAttemptsRef.current += 1;
+        setConnectionError("Waiting for authentication…");
+        reconnectTimeoutRef.current = setTimeout(() => connectWebSocket(), 1000);
+        return;
+      }
+      const ws = authToken
+        ? new WebSocket(wsUrl, ["bearer", authToken])
+        : new WebSocket(wsUrl);
 
       ws.onopen = () => {
         if (myConnId !== currentConnIdRef.current) return; // stale socket
@@ -412,6 +450,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         setIsConnected(true);
         setConnectionError(null);
         isIntentionalCloseRef.current = false; // Reset flag on successful connection
+        reconnectAttemptsRef.current = 0; // Reset backoff on a good connection
         setIsThinking(true);
         // periodic pings
         const pingInterval = setInterval(() => {
@@ -439,16 +478,33 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.log("WebSocket closed:", event.code, event.reason);
         setIsConnected(false);
-        // Do not reconnect if intentional, normal close, or thread not found (4004)
-        if (
-          !isIntentionalCloseRef.current &&
-          event.code !== 1000 &&
-          event.code !== 4004
-        ) {
+        // Don't reconnect on intentional close, normal close (1000), thread-not-found
+        // (4004), or explicit auth-reject (4401, seen via TestClient). A pre-accept auth
+        // rejection reaches real browsers as 1006 (indistinguishable from a network drop),
+        // so we can't key auth off the close code alone — instead the reconnect is BOUNDED
+        // so a persistent failure (auth or otherwise) stops looping every 3s forever.
+        const noReconnect =
+          isIntentionalCloseRef.current ||
+          event.code === 1000 ||
+          event.code === 4004 ||
+          event.code === 4401;
+        if (!noReconnect && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttemptsRef.current += 1;
+          const delay = Math.min(3000 * reconnectAttemptsRef.current, 15000); // linear backoff, capped
           setConnectionError("Connection lost. Attempting to reconnect...");
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
-          }, 3000);
+          }, delay);
+        } else if (event.code === 4401) {
+          setConnectionError("Authentication required.");
+        } else if (!noReconnect) {
+          // Exhausted attempts — stop looping. If auth is enabled, the likely cause is a
+          // rejected/expired token surfacing as 1006; prompt re-auth rather than retry.
+          setConnectionError(
+            isAuthEnabled
+              ? "Connection failed — you may need to sign in again."
+              : "Connection failed.",
+          );
         } else {
           setConnectionError(null);
         }

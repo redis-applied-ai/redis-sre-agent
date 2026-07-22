@@ -47,6 +47,10 @@ function App() {
       contentClassName="app-content-shell"
     >
       <Routes>
+        {/* OIDC redirect target: react-oidc-context processes the code before this
+            renders (RequireAuth gates on auth), so just hand off into the app. This
+            route is what makes the post-login landing work without a manual reload. */}
+        <Route path="/callback" element={<Navigate to="/" replace />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/chat" element={<Triage />} />
         <Route path="/triage" element={<Navigate to="/chat" replace />} />

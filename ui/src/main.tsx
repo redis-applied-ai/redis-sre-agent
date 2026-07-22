@@ -1,11 +1,18 @@
 import React, { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { AuthProvider } from "react-oidc-context";
 import { ThemeProvider } from "@radar/ui-kit";
 import App from "./App";
+import { isAuthEnabled, oidcConfig } from "./auth/oidcConfig";
+import { installAuthFetch } from "./auth/authFetch";
+import { AuthSync, RequireAuth } from "./auth/AuthSync";
 
 // Import styles (includes UI Kit styles)
 import "./index.css";
+
+// Attach the bearer token to API fetches (no-op until a token is available).
+installAuthFetch();
 
 // Error boundary component
 class ErrorBoundary extends React.Component<
@@ -35,16 +42,23 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-// Try the real App now
-const CurrentApp = App;
+// Wrap in OIDC auth when configured; otherwise run open (backward compatible).
+const AppTree = isAuthEnabled ? (
+  <AuthProvider {...oidcConfig}>
+    <AuthSync />
+    <RequireAuth>
+      <App />
+    </RequireAuth>
+  </AuthProvider>
+) : (
+  <App />
+);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider defaultTheme="system">
       <BrowserRouter>
-        <ErrorBoundary>
-          <CurrentApp />
-        </ErrorBoundary>
+        <ErrorBoundary>{AppTree}</ErrorBoundary>
       </BrowserRouter>
     </ThemeProvider>
   </StrictMode>,

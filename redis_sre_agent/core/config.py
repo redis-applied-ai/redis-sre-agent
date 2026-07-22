@@ -2,15 +2,16 @@
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     InitSettingsSource,
     JsonConfigSettingsSource,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -375,6 +376,68 @@ class Settings(BaseSettings):
         description="LangCache API key (required when semantic_cache_enabled).",
     )
 
+    # OIDC SSO Authentication (authn only) — default OFF; see .omc/plans/entra-sso-implementation-plan.md
+    # Flat fields (NOT nested models): Settings has no env_nested_delimiter, so a nested model
+    # would silently fail to bind from env (worst case: AUTH_ENABLED set but ignored => open agent).
+    # Mirrors the flat semantic_cache_* / langcache_* precedent above.
+    auth_enabled: bool = Field(
+        default=False,
+        description="Enable OIDC SSO authentication on all in-scope surfaces (UI/API/WS/CLI). Default OFF keeps the open agent working; when ON, missing resource config is fail-closed.",
+    )
+    auth_issuer_url: Optional[str] = Field(
+        default=None,
+        description="OIDC issuer URL; discovery is read from {issuer}/.well-known/openid-configuration. REQUIRED when auth_enabled.",
+    )
+    auth_audience: Optional[str] = Field(
+        default=None,
+        description="Expected token audience (the API resource identifier). REQUIRED when auth_enabled.",
+    )
+    # NoDecode: stop pydantic-settings from JSON-decoding this list env var at the source
+    # level, so the validator below can accept an operator-friendly comma/space-separated string.
+    auth_scopes: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: ["openid", "profile", "email"],
+        description="OIDC scopes requested by the login/device-code flows. As an env var, "
+        "give a comma- or space-separated string (e.g. AUTH_SCOPES=openid,profile,email).",
+    )
+
+    @field_validator("auth_scopes", mode="before")
+    @classmethod
+    def _split_auth_scopes(cls, v):
+        # Env vars arrive as a plain string; accept comma/space-separated (operator-friendly).
+        # A real list (config file / default) passes through unchanged.
+        if isinstance(v, str):
+            return [s for s in v.replace(",", " ").split() if s]
+        return v
+
+    auth_ui_client_id: Optional[str] = Field(
+        default=None,
+        description="Public SPA client_id for the UI (auth-code + PKCE). Set => UI login enabled (partial registration).",
+    )
+    auth_cli_client_id: Optional[str] = Field(
+        default=None,
+        description="Public client_id for the CLI device-code flow. Set => CLI login enabled (partial registration).",
+    )
+    auth_api_client_id: Optional[str] = Field(
+        default=None,
+        description="Confidential client_id for the API browser-login flow (/auth/login). Set => API login enabled (partial registration).",
+    )
+    auth_api_client_secret: Optional[SecretStr] = Field(
+        default=None,
+        description="Confidential client secret for the API browser-login flow. Required when auth_api_client_id is set.",
+    )
+    auth_api_public_base_url: Optional[str] = Field(
+        default=None,
+        description="Public base URL the API is reachable at in this deployment (e.g. https://sre-agent.example.com). Server derives /auth/callback and the logout post_logout_redirect_uri from it. REQUIRED when the API login surface (auth_api_client_id) is enabled; never derived from request Host headers.",
+    )
+    auth_jwks_cache_ttl_seconds: int = Field(
+        default=3600,
+        description="TTL (s) for the cached OIDC discovery document / JWKS metadata.",
+    )
+    auth_clock_skew_leeway_seconds: int = Field(
+        default=60,
+        description="Allowed clock-skew leeway (s) when validating token exp/nbf.",
+    )
+
     # Vector Search / Embeddings
     embedding_provider: str = Field(
         default="openai",
@@ -589,7 +652,13 @@ class Settings(BaseSettings):
     grafana_api_key: Optional[str] = Field(default=None, description="Grafana API key")
 
     # Security
-    api_key: Optional[str] = Field(default=None, description="API authentication key")
+    # DEPRECATED / UNUSED: not read by any request path. Do NOT wire this into auth —
+    # authentication is OIDC bearer-JWT only (see core/auth.py). A static/long-lived
+    # API key is explicitly a non-goal (AC-9); adding one here would reintroduce it.
+    api_key: Optional[str] = Field(
+        default=None,
+        description="DEPRECATED, unused. Not an auth path — use OIDC (auth_* settings).",
+    )
     allowed_hosts: list[str] = Field(default=["*"], description="Allowed hosts for CORS")
 
     # Support Package Configuration

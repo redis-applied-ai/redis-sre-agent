@@ -128,3 +128,6 @@ For copy/paste workflows, see [Using the API](../how-to/api.md).
 |---|---|---|
 | `GET` | `/api/v1/feedback` | list_feedback |
 | `GET` | `/api/v1/memory/thread/{thread_id}` | get_thread_memory |
+| `GET` | `/auth/callback` | callback |
+| `GET` | `/auth/login` | login |
+| `GET` | `/auth/logout` | logout |

@@ -101,6 +101,8 @@ Generated from the Click command tree.
 - feedback show — Show current feedback for TASK_ID (joined view with task info).
 - feedback up — Submit a thumbs-up for TASK_ID.
 - feedback withdraw — Withdraw feedback for TASK_ID (sets verdict to 'withdrawn').
+- login — Authenticate via OIDC device-code flow and cache a token (humans only).
+- logout — Delete the cached CLI token.
 - version — Show the Redis SRE Agent version.
 
 See How-to guides for examples.

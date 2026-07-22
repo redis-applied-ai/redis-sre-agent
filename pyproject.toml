@@ -37,6 +37,9 @@ dependencies = [
     # HTTP and async
     "aiohttp>=3.8.0",
     "httpx>=0.25.0",
+    # OIDC SSO (authn only) — provider-neutral, NO Microsoft SDKs (no msal/@azure)
+    "authlib>=1.3.0",
+    "pyjwt[crypto]>=2.8.0",
     "redis-enterprise>=0.8.7",
     "aiofiles>=24.1.0",
     "websockets>=12.0",
