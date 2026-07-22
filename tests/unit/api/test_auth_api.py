@@ -201,6 +201,15 @@ def test_login_disabled_when_api_surface_absent(test_client, auth_on):
     assert resp.status_code == 404
 
 
+def test_login_discovery_down_returns_503(test_client, api_surface):
+    # Discovery unreachable -> fail-closed 503 (not a leaked 500), matching require_auth.
+    api_surface.setattr(
+        core_auth, "get_oidc_metadata", AsyncMock(side_effect=core_auth.DiscoveryError("down"))
+    )
+    resp = test_client.get("/auth/login", follow_redirects=False)
+    assert resp.status_code == 503
+
+
 def test_login_fail_closed_without_base_url(test_client, auth_on):
     auth_on.setattr(settings, "auth_api_client_id", "api-client")
     auth_on.setattr(settings, "auth_api_public_base_url", None)

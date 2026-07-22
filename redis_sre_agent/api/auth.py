@@ -78,6 +78,17 @@ def _require_api_login_surface() -> None:
         )
 
 
+async def _login_metadata() -> dict:
+    """Fetch OIDC discovery for the browser endpoints, mapping failures to fail-closed
+    503s (same contract as require_auth) instead of leaking a 500."""
+    try:
+        return await core_auth.get_oidc_metadata()
+    except core_auth.DiscoveryError as exc:
+        raise HTTPException(status_code=503, detail="auth provider discovery unavailable") from exc
+    except core_auth.AuthConfigError as exc:
+        raise HTTPException(status_code=503, detail="auth misconfigured (fail-closed)") from exc
+
+
 def _redirect_uri() -> str:
     return settings.auth_api_public_base_url.rstrip("/") + "/auth/callback"
 
@@ -86,7 +97,7 @@ def _redirect_uri() -> str:
 async def login():
     """302 -> the provider's discovered authorization_endpoint (auth-code + PKCE)."""
     _require_api_login_surface()
-    meta = await core_auth.get_oidc_metadata()
+    meta = await _login_metadata()
 
     verifier = secrets.token_urlsafe(64)
     challenge = (
@@ -118,7 +129,7 @@ async def callback(request: Request, code: str = "", state: str = ""):
     if not code or not state or state != expected_state or not verifier:
         raise HTTPException(status_code=400, detail="invalid auth callback (state/code mismatch)")
 
-    meta = await core_auth.get_oidc_metadata()
+    meta = await _login_metadata()
     secret = (
         settings.auth_api_client_secret.get_secret_value()
         if settings.auth_api_client_secret
@@ -151,7 +162,7 @@ async def logout():
     its TTL — revocation before expiry would require a denylist (out of scope this phase).
     """
     _require_api_login_surface()
-    meta = await core_auth.get_oidc_metadata()
+    meta = await _login_metadata()
     end_session = meta.get("end_session_endpoint")
     if not end_session:
         raise HTTPException(status_code=501, detail="provider exposes no end_session_endpoint")

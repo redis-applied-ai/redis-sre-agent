@@ -387,6 +387,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     try {
       // Construct WebSocket URL dynamically based on current location
       const getWebSocketUrl = () => {
+        // Prefer the explicitly configured API origin so the socket targets the same
+        // host the REST calls (and the bearer) go to in split-origin deployments.
+        const apiBase = import.meta.env.VITE_API_BASE_URL;
+        if (apiBase) {
+          const u = new URL(apiBase, window.location.href);
+          const proto = u.protocol === "https:" ? "wss:" : "ws:";
+          const basePath = u.pathname.replace(/\/$/, "");
+          return `${proto}//${u.host}${basePath}/ws/tasks/${threadId}`;
+        }
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const hostname = window.location.hostname;
         const isDevelopment =
