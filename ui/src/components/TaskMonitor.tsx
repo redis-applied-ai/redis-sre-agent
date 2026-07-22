@@ -119,6 +119,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
   const lastMessageIdRef = useRef<string | null>(null);
   const lastRenderTimeRef = useRef<number>(0);
   const isIntentionalCloseRef = useRef<boolean>(false);
+  const reconnectAttemptsRef = useRef<number>(0);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -441,6 +442,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         setIsConnected(true);
         setConnectionError(null);
         isIntentionalCloseRef.current = false; // Reset flag on successful connection
+        reconnectAttemptsRef.current = 0; // Reset backoff on a good connection
         setIsThinking(true);
         // periodic pings
         const pingInterval = setInterval(() => {
@@ -468,22 +470,36 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.log("WebSocket closed:", event.code, event.reason);
         setIsConnected(false);
-        // Do not reconnect if intentional, normal close (1000), thread not found
-        // (4004), or auth rejected (4401 — reconnecting would loop; it needs a fresh token).
-        if (
-          !isIntentionalCloseRef.current &&
-          event.code !== 1000 &&
-          event.code !== 4004 &&
-          event.code !== 4401
-        ) {
+        // Don't reconnect on intentional close, normal close (1000), thread-not-found
+        // (4004), or explicit auth-reject (4401, seen via TestClient). A pre-accept auth
+        // rejection reaches real browsers as 1006 (indistinguishable from a network drop),
+        // so we can't key auth off the close code alone — instead the reconnect is BOUNDED
+        // so a persistent failure (auth or otherwise) stops looping every 3s forever.
+        const MAX_RECONNECT_ATTEMPTS = 6;
+        const noReconnect =
+          isIntentionalCloseRef.current ||
+          event.code === 1000 ||
+          event.code === 4004 ||
+          event.code === 4401;
+        if (!noReconnect && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttemptsRef.current += 1;
+          const delay = Math.min(3000 * reconnectAttemptsRef.current, 15000); // linear backoff, capped
           setConnectionError("Connection lost. Attempting to reconnect...");
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
-          }, 3000);
-        } else {
+          }, delay);
+        } else if (event.code === 4401) {
+          setConnectionError("Authentication required.");
+        } else if (!noReconnect) {
+          // Exhausted attempts — stop looping. If auth is enabled, the likely cause is a
+          // rejected/expired token surfacing as 1006; prompt re-auth rather than retry.
           setConnectionError(
-            event.code === 4401 ? "Authentication required." : null,
+            isAuthEnabled
+              ? "Connection failed — you may need to sign in again."
+              : "Connection failed.",
           );
+        } else {
+          setConnectionError(null);
         }
       };
 
