@@ -376,6 +376,8 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
   const currentConnIdRef = useRef(0);
   const nextConnIdRef = useRef(1);
 
+  const MAX_RECONNECT_ATTEMPTS = 6;
+
   const connectWebSocket = () => {
     // Close existing connection if any
     if (wsRef.current) {
@@ -392,13 +394,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         // host the REST calls (and the bearer) go to in split-origin deployments.
         const apiBase = import.meta.env.VITE_API_BASE_URL;
         if (apiBase) {
+          // Treat VITE_API_BASE_URL exactly as the REST client (sreAgentApi) does: it is
+          // the full API base (includes /api/v1, as docker-compose sets it) and we append
+          // the sub-path. This keeps REST and WS on the same prefix; a host-only base is a
+          // pre-existing REST limitation, not something WS should diverge on.
           const u = new URL(apiBase, window.location.href);
           const proto = u.protocol === "https:" ? "wss:" : "ws:";
-          // VITE_API_BASE_URL may or may not include the /api/v1 prefix (compose sets it,
-          // .env.example shows host-only). The WS route is always mounted at /api/v1, so
-          // ensure the prefix is present rather than assuming it.
-          let basePath = u.pathname.replace(/\/$/, "");
-          if (!basePath.endsWith("/api/v1")) basePath += "/api/v1";
+          const basePath = u.pathname.replace(/\/$/, "");
           return `${proto}//${u.host}${basePath}/ws/tasks/${threadId}`;
         }
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -426,8 +428,14 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       const authToken = isAuthEnabled ? getAccessToken() : null;
       if (isAuthEnabled && !authToken) {
         // Auth is enabled but no token yet — don't open an unauthenticated socket
-        // (the server rejects it with 4401). Retry shortly; the token lands once
-        // react-oidc-context finishes loading / silently renews.
+        // (the server rejects it). Retry shortly (the token lands once react-oidc-context
+        // loads / silently renews), but bound it like the reconnect path so a token that
+        // never arrives doesn't poll forever.
+        if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+          setConnectionError("Authentication required.");
+          return;
+        }
+        reconnectAttemptsRef.current += 1;
         setConnectionError("Waiting for authentication…");
         reconnectTimeoutRef.current = setTimeout(() => connectWebSocket(), 1000);
         return;
@@ -475,7 +483,6 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         // rejection reaches real browsers as 1006 (indistinguishable from a network drop),
         // so we can't key auth off the close code alone — instead the reconnect is BOUNDED
         // so a persistent failure (auth or otherwise) stops looping every 3s forever.
-        const MAX_RECONNECT_ATTEMPTS = 6;
         const noReconnect =
           isIntentionalCloseRef.current ||
           event.code === 1000 ||
