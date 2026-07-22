@@ -1,0 +1,26 @@
+# dex config for the OIDC portability test (T-P1). A minimal, standards-compliant
+# OIDC provider used to prove the agent's auth is provider-neutral: pointing
+# auth_issuer_url at dex authenticates end-to-end with NO code change.
+# NOT for production use.
+issuer: http://127.0.0.1:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  passwordConnector: local
+  skipApprovalScreen: true
+enablePasswordDB: true
+staticClients:
+  - id: sre-client
+    secret: sre-secret
+    name: "SRE Agent (test)"
+    public: false
+    redirectURIs:
+      - http://localhost/callback
+staticPasswords:
+  # email admin@example.com / password "password" (dex's documented example bcrypt hash)
+  - email: "admin@example.com"
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: "admin"
+    userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"

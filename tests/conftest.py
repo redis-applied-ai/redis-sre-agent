@@ -16,6 +16,19 @@ if TYPE_CHECKING:
     from redis_sre_agent.core.config import Settings
 
 
+# Default every test to open mode (auth disabled), matching CI where no .env is present.
+# A developer's local .env may set AUTH_ENABLED=true, which would otherwise 401 the many
+# tests that make unauthenticated requests. require_auth reads settings.auth_enabled at
+# request time, so this covers tests regardless of how they build the app/client. Autouse
+# fixtures set up before explicitly-requested ones, so auth-specific tests that re-enable
+# auth via their own monkeypatch still win.
+@pytest.fixture(autouse=True)
+def _default_auth_disabled(monkeypatch):
+    from redis_sre_agent.core.config import settings
+
+    monkeypatch.setattr(settings, "auth_enabled", False)
+
+
 # Apply critical patches at session level BEFORE any app imports
 @pytest.fixture(scope="session", autouse=True)
 def mock_redis_infrastructure():

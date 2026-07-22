@@ -18,6 +18,26 @@ from redis_sre_agent.core.clusters import ClusterQueryResult, RedisCluster, Redi
 from redis_sre_agent.core.migrations.instances_to_clusters import InstanceToClusterMigrationSummary
 
 
+@pytest.fixture(autouse=True)
+def _isolate_enterprise_admin_env(monkeypatch):
+    """Keep REDIS_ENTERPRISE_ADMIN_* out of these tests.
+
+    resolve_enterprise_admin_fields() falls back to these env vars, so a developer's
+    local .env (which may set them) would satisfy the 'missing fields' checks and mask
+    the required-fields behavior under test. CI has no such vars; clearing them here
+    makes local runs deterministic and match CI.
+    """
+    for var in (
+        "REDIS_ENTERPRISE_ADMIN_URL",
+        "REDIS_ENTERPRISE_ADMIN_USERNAME",
+        "REDIS_ENTERPRISE_ADMIN_PASSWORD",
+        "TOOLS_REDIS_ENTERPRISE_ADMIN_URL",
+        "TOOLS_REDIS_ENTERPRISE_ADMIN_USERNAME",
+        "TOOLS_REDIS_ENTERPRISE_ADMIN_PASSWORD",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
 def _cluster(**overrides) -> RedisCluster:
     data = {
         "id": "cluster-1",

@@ -6,6 +6,8 @@ import sreAgentApi, {
   type PendingApprovalSummary,
   type TaskToolCall,
 } from "../services/sreAgentApi";
+import { isAuthEnabled } from "../auth/oidcConfig";
+import { getAccessToken } from "../auth/tokenStore";
 
 interface TaskUpdate {
   timestamp: string;
@@ -404,7 +406,13 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       const myConnId = nextConnIdRef.current++;
       currentConnIdRef.current = myConnId;
       console.log("Connecting to WebSocket:", wsUrl);
-      const ws = new WebSocket(wsUrl);
+      // Read a fresh token at connect time (also on auto-reconnect) so we never
+      // replay a stale token. The server validates it before accept() (subprotocol
+      // transport, since browsers cannot set an Authorization header on a WebSocket).
+      const authToken = isAuthEnabled ? getAccessToken() : null;
+      const ws = authToken
+        ? new WebSocket(wsUrl, ["bearer", authToken])
+        : new WebSocket(wsUrl);
 
       ws.onopen = () => {
         if (myConnId !== currentConnIdRef.current) return; // stale socket

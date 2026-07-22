@@ -1,5 +1,7 @@
 import { useLocation } from "react-router-dom";
 import type { NavigationItem, DropdownMenuItem } from "@radar/ui-kit";
+import { isAuthEnabled } from "../auth/oidcConfig";
+import { signOut } from "../auth/tokenStore";
 
 export const useApp = () => {
   const location = useLocation();
@@ -53,7 +55,7 @@ export const useApp = () => {
     },
     {
       label: "Sign Out",
-      onClick: () => alert("Signing out..."),
+      onClick: isAuthEnabled ? () => signOut() : () => alert("Signing out..."),
       variant: "destructive",
     },
   ];
