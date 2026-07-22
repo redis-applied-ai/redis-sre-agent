@@ -67,6 +67,18 @@ def test_ws_accepts_with_valid_token(test_client, monkeypatch):
         assert ws is not None
 
 
+def test_ws_accepts_with_query_token_no_subprotocol(test_client, monkeypatch):
+    # Non-browser client: token via ?token= query param, no subprotocol offered.
+    # The server must accept WITHOUT echoing a "bearer" subprotocol (which the client
+    # never offered) or the handshake breaks.
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_issuer_url", "https://i/v2.0")
+    monkeypatch.setattr(settings, "auth_audience", "api://x")
+    monkeypatch.setattr(core_auth, "validate_token", AsyncMock(return_value={"sub": "u"}))
+    with test_client.websocket_connect(WS_PATH + "?token=qtok") as ws:
+        assert ws is not None
+
+
 def test_ws_open_mode_accepts_without_token(test_client, monkeypatch):
     monkeypatch.setattr(settings, "auth_enabled", False)
     with test_client.websocket_connect(WS_PATH) as ws:

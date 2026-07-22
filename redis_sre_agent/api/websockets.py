@@ -228,7 +228,11 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
             await websocket.close(code=WS_AUTH_FAILED_CODE)
             logger.info(f"WebSocket auth rejected for thread {thread_id}")
             return
-        await websocket.accept(subprotocol="bearer")
+        # Echo the "bearer" subprotocol only if the client actually offered it. Clients
+        # that authenticated via the ?token= query fallback offer no subprotocol, and
+        # selecting one the client didn't offer breaks the handshake (RFC 6455).
+        offered = websocket.scope.get("subprotocols", [])
+        await websocket.accept(subprotocol="bearer" if "bearer" in offered else None)
     else:
         await websocket.accept()
     logger.info(f"WebSocket client connected for thread {thread_id}")

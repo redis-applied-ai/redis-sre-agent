@@ -47,8 +47,7 @@ are present; otherwise the UI runs open.
 |---|---|
 | `VITE_OIDC_ISSUER` | Same issuer as `AUTH_ISSUER_URL`. |
 | `VITE_OIDC_CLIENT_ID` | The UI (public/PKCE) client id. |
-| `VITE_OIDC_AUDIENCE` | Resource/audience for the access token. |
-| `VITE_OIDC_SCOPE` | Optional scope override. |
+| `VITE_OIDC_SCOPE` | Scopes requested. **Must include the API scope** (e.g. `openid profile email api://<api-app-id>/access_as_user`) — this is what audiences the access token to your API. (Audience is requested via scope, not a `resource` param, which Entra v2 rejects.) |
 | `VITE_OIDC_REDIRECT_URI` | Optional. Defaults to `window.location.origin + /callback` (auto-adapts to wherever the UI is served — register that origin with your provider). |
 | `VITE_API_BASE_URL` | Set when the API is on a different origin so the SPA attaches the bearer to it. |
 

@@ -10,7 +10,6 @@ const env = import.meta.env as Record<string, string | undefined>;
 
 const issuer = env.VITE_OIDC_ISSUER;
 const clientId = env.VITE_OIDC_CLIENT_ID;
-const audience = env.VITE_OIDC_AUDIENCE;
 // Self-deployed: the SPA auto-derives its redirect from wherever it is served,
 // so no per-environment build config is needed. Overridable for path-prefix setups.
 const redirectUri =
@@ -33,8 +32,8 @@ export const oidcConfig: AuthProviderProps = {
     typeof window !== "undefined"
       ? new WebStorageStateStore({ store: window.sessionStorage })
       : undefined,
-  // Some providers (e.g. Entra) scope the access token to a resource/audience.
-  extraQueryParams: audience ? { resource: audience } : undefined,
+  // The access token's audience is requested via `scope` (e.g. api://<id>/access_as_user),
+  // not a `resource` query param — Entra's v2 authorize endpoint rejects `resource`.
   // After the provider redirects back to /callback, clean the URL to "/".
   onSigninCallback: () => {
     if (typeof window !== "undefined") {
