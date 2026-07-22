@@ -104,7 +104,15 @@ async def get_oidc_metadata() -> Dict[str, Any]:
             resp.raise_for_status()
             metadata = resp.json()
     except (httpx.HTTPError, ValueError) as exc:
-        # Transient — do not poison the cache; keep any prior good copy usable until its TTL.
+        # Transient failure. If we have a previously-fetched document, keep serving it
+        # (stale-while-revalidate): issuer/jwks_uri are stable and JWKS keys are fetched
+        # separately by PyJWKClient, so validation stays correct and available through a
+        # discovery blip. Only fail closed when we have nothing cached at all.
+        if _metadata_cache is not None:
+            logger.warning(
+                "OIDC discovery refresh failed (%s); serving cached metadata: %s", url, exc
+            )
+            return _metadata_cache
         logger.warning("OIDC discovery fetch failed (%s): %s", url, exc)
         raise DiscoveryError(str(exc)) from exc
 

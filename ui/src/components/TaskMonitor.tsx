@@ -410,6 +410,14 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
       // replay a stale token. The server validates it before accept() (subprotocol
       // transport, since browsers cannot set an Authorization header on a WebSocket).
       const authToken = isAuthEnabled ? getAccessToken() : null;
+      if (isAuthEnabled && !authToken) {
+        // Auth is enabled but no token yet — don't open an unauthenticated socket
+        // (the server rejects it with 4401). Retry shortly; the token lands once
+        // react-oidc-context finishes loading / silently renews.
+        setConnectionError("Waiting for authentication…");
+        reconnectTimeoutRef.current = setTimeout(() => connectWebSocket(), 1000);
+        return;
+      }
       const ws = authToken
         ? new WebSocket(wsUrl, ["bearer", authToken])
         : new WebSocket(wsUrl);
@@ -447,18 +455,22 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         if (myConnId !== currentConnIdRef.current) return; // stale socket
         console.log("WebSocket closed:", event.code, event.reason);
         setIsConnected(false);
-        // Do not reconnect if intentional, normal close, or thread not found (4004)
+        // Do not reconnect if intentional, normal close (1000), thread not found
+        // (4004), or auth rejected (4401 — reconnecting would loop; it needs a fresh token).
         if (
           !isIntentionalCloseRef.current &&
           event.code !== 1000 &&
-          event.code !== 4004
+          event.code !== 4004 &&
+          event.code !== 4401
         ) {
           setConnectionError("Connection lost. Attempting to reconnect...");
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
           }, 3000);
         } else {
-          setConnectionError(null);
+          setConnectionError(
+            event.code === 4401 ? "Authentication required." : null,
+          );
         }
       };
 

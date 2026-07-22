@@ -121,6 +121,42 @@ async def test_get_oidc_metadata_fails_closed_without_config(monkeypatch, rsa_ke
         await validate_token(_token(priv))
 
 
+class _BoomClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url):
+        import httpx
+
+        raise httpx.ConnectError("discovery down")
+
+
+async def test_discovery_serves_stale_cache_on_refresh_failure(monkeypatch):
+    # Cache present but expired -> refresh attempted; the fetch fails, so the prior
+    # good copy is served (stale-while-revalidate) instead of failing closed.
+    import httpx
+
+    auth_mod._metadata_cache = {"issuer": ISS, "jwks_uri": "https://issuer.example.com/jwks"}
+    auth_mod._metadata_expires_at = time.monotonic() - 1
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _BoomClient())
+    meta = await auth_mod.get_oidc_metadata()
+    assert meta["issuer"] == ISS  # served stale, did not raise
+
+
+async def test_discovery_raises_when_no_cache(monkeypatch):
+    import httpx
+
+    from redis_sre_agent.core.auth import DiscoveryError
+
+    auth_mod.reset_oidc_cache()  # nothing cached
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _BoomClient())
+    with pytest.raises(DiscoveryError):
+        await auth_mod.get_oidc_metadata()
+
+
 # --- T-U4: JWKS rotation / unknown kid → typed error, not a crash ---
 async def test_unknown_kid_maps_to_invalid_key(monkeypatch, rsa_keys):
     priv, pub = rsa_keys
