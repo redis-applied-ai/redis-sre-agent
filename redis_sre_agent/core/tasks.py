@@ -723,7 +723,7 @@ async def list_tasks(
 
         fetch_size = max(limit * 10, 200)
         raw_summaries = await thread_manager.list_threads(
-            user_id=user_id, status_filter=None, limit=fetch_size, offset=0
+            user_id=user_id, limit=fetch_size, offset=0
         )
         if statuses is None:
             thread_summaries = raw_summaries[:limit]

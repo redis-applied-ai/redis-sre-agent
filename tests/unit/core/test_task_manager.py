@@ -1124,6 +1124,11 @@ class TestListTasksFunction:
 
             assert len(result) == 1
             assert result[0]["thread_id"] == "thread-1"
+            mock_thread_manager.list_threads.assert_awaited_once_with(
+                user_id=None,
+                limit=500,
+                offset=0,
+            )
 
 
 class TestDeleteTaskFunction:
