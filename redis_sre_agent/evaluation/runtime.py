@@ -425,10 +425,30 @@ def _target_registry_override_scope(
     catalog_docs = _build_eval_target_catalog_docs(scenario)
     target_handle_lookup = _build_eval_target_handle_lookup(scenario)
 
-    async def _get_eval_target_catalog(*, user_id: str | None = None) -> list[TargetCatalogDoc]:
-        if not user_id:
-            return list(catalog_docs)
-        return [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+    async def _get_eval_target_catalog(
+        *, user_id: str | None = None, apply_scope: bool = True
+    ) -> list[TargetCatalogDoc]:
+        docs = (
+            list(catalog_docs)
+            if not user_id
+            else [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+        )
+        # Mirror the real get_target_catalog: apply infrastructure-authorization scoping unless
+        # the caller opts out (apply_scope=False, the deep-triage unscoped-detection pass). This
+        # lets authz behavioral scenarios exercise scoped vs unscoped resolution in the fixture.
+        if apply_scope:
+            from redis_sre_agent.core.authorization import TargetRef, scope_models
+
+            docs = await scope_models(
+                docs,
+                lambda d: TargetRef(
+                    str(d.target_kind or ""),
+                    str(d.resource_id or ""),
+                    getattr(d, "name", "") or "",
+                    getattr(d, "environment", None),
+                ),
+            )
+        return docs
 
     original_build_public_binding = TargetBindingService.build_public_binding
 
