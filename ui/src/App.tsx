@@ -13,11 +13,10 @@ import KnowledgeDocumentChunks from "./pages/KnowledgeDocumentChunks";
 import Schedules from "./pages/Schedules";
 import Settings from "./pages/Settings";
 import { useApp } from "./hooks/useApp";
-import { useInfraAuthzDisabled } from "./hooks/useInfraAuthzDisabled";
 
 function App() {
-  const { currentUser, navigationItems, userMenuItems } = useApp();
-  const schedulesDisabled = useInfraAuthzDisabled();
+  const { currentUser, navigationItems, userMenuItems, schedulesDisabled } =
+    useApp();
 
   return (
     <Layout

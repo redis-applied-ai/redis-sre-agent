@@ -62,5 +62,6 @@ export const useApp = () => {
     currentUser,
     navigationItems,
     userMenuItems,
+    schedulesDisabled,
   };
 };
