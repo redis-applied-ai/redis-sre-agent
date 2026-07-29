@@ -2,9 +2,11 @@ import { useLocation } from "react-router-dom";
 import type { NavigationItem, DropdownMenuItem } from "@radar/ui-kit";
 import { isAuthEnabled } from "../auth/oidcConfig";
 import { signOut } from "../auth/tokenStore";
+import { useInfraAuthzDisabled } from "./useInfraAuthzDisabled";
 
 export const useApp = () => {
   const location = useLocation();
+  const schedulesDisabled = useInfraAuthzDisabled();
 
   const currentUser = {
     name: "SRE Admin",
@@ -42,7 +44,7 @@ export const useApp = () => {
         location.pathname === "/instances" ||
         location.pathname === "/clusters",
     },
-  ];
+  ].filter((item) => !(schedulesDisabled && item.href === "/schedules"));
 
   const userMenuItems: DropdownMenuItem[] = [
     {
