@@ -2424,13 +2424,10 @@ async def _process_agent_turn_impl(
                     _denied_names.append(str(getattr(_m, "display_name", None) or _rid))
             if _denied_ids:
                 _names = ", ".join(_denied_names)
-                await task_manager.add_task_update(
-                    task_id,
-                    f"Not authorized for: {_names}. Continuing with the targets you can access.",
-                    "authorization_scoped",
-                    metadata={"unauthorized_targets": _denied_ids},
-                )
                 if not _allowed_named:
+                    # Every named target is denied -> hard-deny. Return BEFORE any "continuing"
+                    # update (_complete_turn_authorization_denied logs its own) so the audit trail
+                    # isn't contradicted by a "continuing with the targets you can access" line.
                     result = await _complete_turn_authorization_denied(
                         task_manager=task_manager,
                         thread_manager=thread_manager,
@@ -2445,6 +2442,13 @@ async def _process_agent_turn_impl(
                     except Exception:
                         pass
                     return result
+                # Some denied, some allowed -> note the denied set and continue with the allowed one.
+                await task_manager.add_task_update(
+                    task_id,
+                    f"Not authorized for: {_names}. Continuing with the targets you can access.",
+                    "authorization_scoped",
+                    metadata={"unauthorized_targets": _denied_ids},
+                )
 
         if (
             agent_type == AgentType.REDIS_TRIAGE
