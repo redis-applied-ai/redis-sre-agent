@@ -48,10 +48,6 @@ export const useApp = () => {
 
   const userMenuItems: DropdownMenuItem[] = [
     {
-      label: "Profile",
-      onClick: () => alert("Profile clicked"),
-    },
-    {
       label: "Account Settings",
       href: "/settings",
     },
