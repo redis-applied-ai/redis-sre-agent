@@ -46,3 +46,16 @@ def test_auth_status_exposes_authz_flag(authz_on):
 def test_auth_status_flag_false_by_default(monkeypatch):
     monkeypatch.setattr(settings, "infrastructure_authorization_enabled", False)
     assert auth_status()["infrastructure_authorization_enabled"] is False
+
+
+def test_mcp_refuses_to_serve_when_authz_enabled(monkeypatch):
+    # MCP has no authenticated principal this phase -> it must refuse to serve under authz
+    # rather than run unscoped or silently fail-closed.
+    from redis_sre_agent.mcp_server import server as mcp_server
+
+    monkeypatch.setattr(settings, "infrastructure_authorization_enabled", True)
+    with pytest.raises(RuntimeError):
+        mcp_server._refuse_if_authz_enabled()
+
+    monkeypatch.setattr(settings, "infrastructure_authorization_enabled", False)
+    mcp_server._refuse_if_authz_enabled()  # authz off -> serves normally (no raise)

@@ -4,12 +4,18 @@ Delegates "which clusters/instances may this principal access" to a deployment-s
 hook. This repo owns no principal->target mapping. Fail-closed when enabled: no principal,
 hook error/timeout, or an unresolvable identity -> empty allowed set.
 
-Identity flows via a trust-boundary ContextVar (`set_principal`), set once where trust is
+The hook receives the VALIDATED JWT (a bearer token string) plus the candidate targets and
+returns the allowed subset. Passing the raw validated token (not pre-parsed claims) lets the
+hook decode it OR forward it to an external authz service. The token is authn-validated
+(signature/iss/aud/exp, via the single `validate_token` path) BEFORE the hook runs — the hook
+never sees an unverified token.
+
+Identity flows via a trust-boundary ContextVar (`set_auth_token`), set once where trust is
 established (the `require_auth` API dependency, and the top of each agent-running worker
 task). Enforcement then lives inside the base target loaders (`get_cluster_by_id`,
-`get_instance_by_id`, `materialize_bound_target_scope`) and the listing paths, which read
-the ContextVar via `current_principal()` — so claims are never threaded through every
-signature, and a target object cannot be produced without passing a guarded loader.
+`get_instance_by_id`, `materialize_bound_target_scope`) and the listing paths, which read the
+token via `current_auth_token()` — so it is never threaded through every signature, and a
+target object cannot be produced without passing a guarded loader.
 
 Passthrough when `infrastructure_authorization_enabled` is False (zero behavior change).
 """
@@ -72,37 +78,30 @@ class TargetRef:
         )
 
 
-# hook(claims, targets) -> allowed subset of targets (sync or async).
-ScopeHook = Callable[[dict, List[TargetRef]], Union[List[TargetRef], Awaitable[List[TargetRef]]]]
+# hook(auth_token, targets) -> allowed subset of targets (sync or async). `auth_token` is the
+# VALIDATED JWT bearer string; the hook may decode it or forward it to an external service.
+ScopeHook = Callable[[str, List[TargetRef]], Union[List[TargetRef], Awaitable[List[TargetRef]]]]
 
 
-# --- trust-boundary principal (validated JWT claims; None => no authenticated principal) ---
-_principal: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
-    "infra_authz_principal", default=None
+# --- trust-boundary auth token (validated JWT bearer; None => no authenticated identity) ---
+_auth_token: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "infra_authz_token", default=None
 )
 
-_SYSTEM_PRINCIPAL = {"sub": "system", "infra_authz_kind": "system"}
+
+def set_auth_token(token: Optional[str]) -> "contextvars.Token[Optional[str]]":
+    """Set the current validated auth token for this async context. Returns a reset token."""
+    return _auth_token.set(token)
 
 
-def set_principal(claims: Optional[dict]) -> "contextvars.Token[Optional[dict]]":
-    """Set the current principal for this async context. Returns a token for reset()."""
-    return _principal.set(claims)
+def reset_auth_token(token: "contextvars.Token[Optional[str]]") -> None:
+    """Reset the auth token (call in a finally at each worker task top, so a reused context
+    cannot inherit a prior task's token — the None default must hold)."""
+    _auth_token.reset(token)
 
 
-def reset_principal(token: "contextvars.Token[Optional[dict]]") -> None:
-    """Reset the principal (call in a finally at each task top, so a missing boundary
-    cannot inherit a prior task's principal — the None default must hold)."""
-    _principal.reset(token)
-
-
-def current_principal() -> Optional[dict]:
-    return _principal.get()
-
-
-def system_principal() -> dict:
-    """A fixed machine principal for trusted non-user paths (continuation/eval). The hook
-    decides what 'system' may access; fail-closed still holds if it grants nothing (AC-9)."""
-    return dict(_SYSTEM_PRINCIPAL)
+def current_auth_token() -> Optional[str]:
+    return _auth_token.get()
 
 
 # --- pluggable hook resolution (import path "module:callable", cached) ---
@@ -135,20 +134,20 @@ async def scope_targets(targets: List[TargetRef]) -> List[TargetRef]:
     """Return the subset of `targets` the current principal may access.
 
     - authz disabled -> passthrough (zero behavior change).
-    - no principal / hook error / timeout -> [] (fail closed).
+    - no validated token / hook error / timeout -> [] (fail closed).
     - intersect the hook's result with the input by identity, returning the ORIGINAL input
       objects: a buggy or hostile hook can only ever REMOVE access, never add or mutate.
     """
     if not settings.infrastructure_authorization_enabled:
         return list(targets)
-    principal = current_principal()
-    if not principal:
-        return []  # fail closed: no verified identity in scope
+    token = current_auth_token()
+    if not token:
+        return []  # fail closed: no verified token in scope
     if not targets:
         return []
     try:
         hook = _load_hook()
-        result = hook(principal, list(targets))
+        result = hook(token, list(targets))
         if inspect.isawaitable(result):
             result = await asyncio.wait_for(result, timeout=_HOOK_TIMEOUT_SECONDS)
         allowed_keys = {t.key for t in (result or [])}

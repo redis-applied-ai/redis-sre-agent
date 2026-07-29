@@ -84,61 +84,61 @@ async def test_passthrough_when_disabled(monkeypatch):
 
 
 async def test_fail_closed_no_principal(authz_on):
-    # No set_principal() -> current_principal() is None -> deny all.
+    # No set_auth_token() -> current_auth_token() is None -> deny all.
     assert await scope_targets([C1, I1]) == []
 
 
 async def test_fail_closed_hook_exception(authz_on, monkeypatch):
-    def boom(claims, targets):
+    def boom(token, targets):
         raise RuntimeError("authz service down")
 
     _use_hook(monkeypatch, boom)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert await scope_targets([C1, I1]) == []
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_fail_closed_hook_timeout(authz_on, monkeypatch):
-    async def slow(claims, targets):
+    async def slow(token, targets):
         await asyncio.sleep(10)
         return targets
 
     _use_hook(monkeypatch, slow)
     monkeypatch.setattr(authz, "_HOOK_TIMEOUT_SECONDS", 0.05)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert await scope_targets([C1]) == []
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 # --- allowed subset, sync + async (AC-5/AC-10 core) ---
 
 
 async def test_sync_hook_returns_subset(authz_on, monkeypatch):
-    def only_i1(claims, targets):
+    def only_i1(token, targets):
         return [t for t in targets if t.resource_id == "i1"]
 
     _use_hook(monkeypatch, only_i1)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert await scope_targets([C1, I1, I2]) == [I1]
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_async_hook_returns_subset(authz_on, monkeypatch):
-    async def only_clusters(claims, targets):
+    async def only_clusters(token, targets):
         return [t for t in targets if t.kind == "cluster"]
 
     _use_hook(monkeypatch, only_clusters)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert await scope_targets([C1, I1]) == [C1]
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 # --- the hook can only REMOVE access, never add (intersect invariant) ---
@@ -147,60 +147,56 @@ async def test_async_hook_returns_subset(authz_on, monkeypatch):
 async def test_hook_superset_is_intersected(authz_on, monkeypatch):
     rogue = TargetRef("instance", "i999", "secret-prod", "prod")
 
-    def add_rogue(claims, targets):
+    def add_rogue(token, targets):
         return list(targets) + [rogue]  # buggy/hostile hook tries to grant extra
 
     _use_hook(monkeypatch, add_rogue)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         out = await scope_targets([I1])
         assert out == [I1]  # rogue was not in the input set -> dropped
         assert rogue not in out
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_scope_targets_returns_original_objects(authz_on, monkeypatch):
     # Hook returns a mutated copy; we must return the ORIGINAL input object, not the hook's.
-    def mutated(claims, targets):
+    def mutated(token, targets):
         return [TargetRef(t.kind, t.resource_id, "HOOK-RENAMED", "evil") for t in targets]
 
     _use_hook(monkeypatch, mutated)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         out = await scope_targets([I1])
         assert out == [I1]
         assert out[0].name == "billing"  # original, not the hook's "HOOK-RENAMED"
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_assert_target_allowed(authz_on, monkeypatch):
-    def only_i1(claims, targets):
+    def only_i1(token, targets):
         return [t for t in targets if t.resource_id == "i1"]
 
     _use_hook(monkeypatch, only_i1)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert await assert_target_allowed(I1) is True
         assert await assert_target_allowed(I2) is False
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 # --- ContextVar isolation (M-2): a task that sets no principal sees None, not a bleed ---
 
 
-def test_principal_reset_isolation():
-    assert authz.current_principal() is None
-    tok = authz.set_principal({"sub": "x"})
-    assert authz.current_principal() == {"sub": "x"}
-    authz.reset_principal(tok)
-    assert authz.current_principal() is None
-
-
-def test_system_principal_shape():
-    assert authz.system_principal()["sub"] == "system"
+def test_auth_token_reset_isolation():
+    assert authz.current_auth_token() is None
+    tok = authz.set_auth_token("tok-x")
+    assert authz.current_auth_token() == "tok-x"
+    authz.reset_auth_token(tok)
+    assert authz.current_auth_token() is None
 
 
 # --- hook import-path resolution ---

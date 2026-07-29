@@ -1,7 +1,7 @@
-"""Worker-side identity resolution (US-002 Part C): _set_worker_authz_principal.
+"""Worker-side identity resolution (US-002, token contract): _set_worker_auth_token.
 
-A deferred worker turn resolves its principal from the persisted bearer (re-validated live),
-falls back to a system principal for explicit machine paths, and fails closed otherwise.
+A deferred worker turn resolves its auth token from the persisted bearer, RE-VALIDATES it
+(authn), and sets the validated token; anything else fails closed. No system principal.
 """
 
 import pytest
@@ -9,7 +9,7 @@ import pytest
 from redis_sre_agent.core import auth as core_auth
 from redis_sre_agent.core import authorization as authz
 from redis_sre_agent.core.config import settings
-from redis_sre_agent.core.docket_tasks import _set_worker_authz_principal
+from redis_sre_agent.core.docket_tasks import _set_worker_auth_token
 
 
 @pytest.fixture
@@ -20,22 +20,22 @@ def authz_on(monkeypatch):
 
 async def test_off_is_noop(monkeypatch):
     monkeypatch.setattr(settings, "infrastructure_authorization_enabled", False)
-    tok = await _set_worker_authz_principal({"_authz_bearer": "x"})
+    tok = await _set_worker_auth_token({"_authz_bearer": "x"})
     assert tok is None
-    assert authz.current_principal() is None
+    assert authz.current_auth_token() is None
 
 
-async def test_valid_bearer_sets_claims(authz_on, monkeypatch):
+async def test_valid_bearer_sets_token(authz_on, monkeypatch):
     async def fake_validate(token):
-        assert token == "good"
-        return {"sub": "u1", "groups": ["g"]}
+        assert token == "good-jwt"
+        return {"sub": "u1"}  # claims returned by validate_token; we set the TOKEN, not these
 
     monkeypatch.setattr(core_auth, "validate_token", fake_validate)
-    tok = await _set_worker_authz_principal({"_authz_bearer": "good"})
+    tok = await _set_worker_auth_token({"_authz_bearer": "good-jwt"})
     try:
-        assert authz.current_principal() == {"sub": "u1", "groups": ["g"]}
+        assert authz.current_auth_token() == "good-jwt"
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_invalid_bearer_fail_closed(authz_on, monkeypatch):
@@ -43,27 +43,19 @@ async def test_invalid_bearer_fail_closed(authz_on, monkeypatch):
         raise core_auth.AuthError("expired")
 
     monkeypatch.setattr(core_auth, "validate_token", boom)
-    tok = await _set_worker_authz_principal({"_authz_bearer": "bad"})
+    tok = await _set_worker_auth_token({"_authz_bearer": "bad"})
     try:
-        assert authz.current_principal() is None
+        assert authz.current_auth_token() is None
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
-async def test_system_marker_gets_system_principal(authz_on):
-    tok = await _set_worker_authz_principal({"_authz_system": True})
+async def test_no_bearer_fail_closed(authz_on):
+    tok = await _set_worker_auth_token({})
     try:
-        assert authz.current_principal()["sub"] == "system"
+        assert authz.current_auth_token() is None
     finally:
-        authz.reset_principal(tok)
-
-
-async def test_no_identity_fail_closed(authz_on):
-    tok = await _set_worker_authz_principal({})
-    try:
-        assert authz.current_principal() is None
-    finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_reset_restores_none(authz_on, monkeypatch):
@@ -71,8 +63,8 @@ async def test_reset_restores_none(authz_on, monkeypatch):
         return {"sub": "u1"}
 
     monkeypatch.setattr(core_auth, "validate_token", fake_validate)
-    assert authz.current_principal() is None
-    tok = await _set_worker_authz_principal({"_authz_bearer": "good"})
-    assert authz.current_principal() == {"sub": "u1"}
-    authz.reset_principal(tok)
-    assert authz.current_principal() is None
+    assert authz.current_auth_token() is None
+    tok = await _set_worker_auth_token({"_authz_bearer": "good-jwt"})
+    assert authz.current_auth_token() == "good-jwt"
+    authz.reset_auth_token(tok)
+    assert authz.current_auth_token() is None

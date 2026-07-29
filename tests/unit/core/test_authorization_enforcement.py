@@ -77,32 +77,32 @@ async def test_loaders_passthrough_when_authz_off(fake_redis, monkeypatch):
 
 
 async def test_loaders_resolve_when_allowed(fake_redis, authz_on, monkeypatch):
-    def allow_all(claims, targets):
+    def allow_all(token, targets):
         return list(targets)
 
     _use_hook(monkeypatch, allow_all)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert (await get_cluster_by_id("c1")).id == "c1"
         assert (await get_instance_by_id("i1")).id == "i1"
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 # --- authz on: disallowed principal gets None (deny == not-found) ---
 
 
 async def test_loaders_deny_when_not_allowed(fake_redis, authz_on, monkeypatch):
-    def deny_all(claims, targets):
+    def deny_all(token, targets):
         return []
 
     _use_hook(monkeypatch, deny_all)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert await get_cluster_by_id("c1") is None
         assert await get_instance_by_id("i1") is None
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 # --- authz on, no principal -> fail closed (None) even though the record exists ---
@@ -117,16 +117,16 @@ async def test_loaders_fail_closed_without_principal(fake_redis, authz_on):
 
 
 async def test_loaders_selective(fake_redis, authz_on, monkeypatch):
-    def clusters_only(claims, targets):
+    def clusters_only(token, targets):
         return [t for t in targets if t.kind == "cluster"]
 
     _use_hook(monkeypatch, clusters_only)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         assert (await get_cluster_by_id("c1")).id == "c1"
         assert await get_instance_by_id("i1") is None
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 # --- adapters map model -> TargetRef correctly ---
@@ -186,13 +186,13 @@ async def test_agent_scoped_instances_filters(authz_on, monkeypatch):
         return fakes
 
     monkeypatch.setattr(_lg, "get_instances", fake_get_instances)
-    _use_hook(monkeypatch, lambda claims, targets: [t for t in targets if t.resource_id == "i2"])
-    tok = authz.set_principal({"sub": "u1"})
+    _use_hook(monkeypatch, lambda token, targets: [t for t in targets if t.resource_id == "i2"])
+    tok = authz.set_auth_token("tok-u1")
     try:
         out = await _lg._scoped_instances()
         assert [i.id for i in out] == ["i2"]
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_agent_scoped_instances_fail_closed_no_principal(authz_on, monkeypatch):
@@ -232,16 +232,16 @@ async def test_scope_candidates_passthrough_when_off(monkeypatch):
 
 
 async def test_scope_candidates_filters_when_on(authz_on, monkeypatch):
-    def clusters_only(claims, targets):
+    def clusters_only(token, targets):
         return [t for t in targets if t.kind == "cluster"]
 
     _use_hook(monkeypatch, clusters_only)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         out = await scope_candidates([_cand("cluster", "c1"), _cand("instance", "i1")])
         assert [c.resource_id for c in out] == ["c1"]
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_scope_candidates_fail_closed_no_principal(authz_on):
@@ -249,16 +249,16 @@ async def test_scope_candidates_fail_closed_no_principal(authz_on):
 
 
 async def test_scope_candidates_drops_candidate_without_resource_id(authz_on, monkeypatch):
-    def allow_all(claims, targets):
+    def allow_all(token, targets):
         return list(targets)
 
     _use_hook(monkeypatch, allow_all)
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         out = await scope_candidates([_cand("instance", None), _cand("instance", "i1")])
         assert [c.resource_id for c in out] == ["i1"]  # unidentifiable candidate dropped
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 # --- listing: scope-before-count/paginate (US-003, no hidden-count leak) ---
@@ -280,12 +280,12 @@ async def test_scope_and_paginate_total_and_page_reflect_allowed(authz_on, monke
     # 5 clusters exist; hook allows only c1/c3/c5 -> total must be 3 (not 5), page bounded.
     allowed = {"c1", "c3", "c5"}
 
-    def hook(claims, targets):
+    def hook(token, targets):
         return [t for t in targets if t.resource_id in allowed]
 
     _use_hook(monkeypatch, hook)
     models = [_model(f"c{i}") for i in range(1, 6)]
-    tok = authz.set_principal({"sub": "u1"})
+    tok = authz.set_auth_token("tok-u1")
     try:
         page, total = await scope_and_paginate(models, TargetRef.from_cluster, offset=0, limit=2)
         assert total == 3  # hidden count (5) never leaks
@@ -294,7 +294,7 @@ async def test_scope_and_paginate_total_and_page_reflect_allowed(authz_on, monke
         assert total2 == 3
         assert [m.id for m in page2] == ["c5"]  # full page across the allowed set, not short
     finally:
-        authz.reset_principal(tok)
+        authz.reset_auth_token(tok)
 
 
 async def test_scope_and_paginate_fail_closed_no_principal(authz_on):
