@@ -60,6 +60,25 @@ def scope(auth_token: str, targets):
   *same* message as a nonexistent target, so denials aren't an enumeration oracle.
 - **Deep-triage** reports any scoped-out targets rather than silently dropping them.
 
+## Which surfaces are scoped
+
+Authorization is enforced at the **API trust boundary** — where the validated token is
+established and the scoped loaders (`query_*`, guarded `get_*_by_id`) run. That covers the
+**REST API, WebSockets, UI, and the agent** (turns and their tools).
+
+The **CLI's in-process commands** (`instance list/get`, `cluster list/get`) are **not**
+scoped: they read Redis directly via the core loaders, without crossing the API boundary or
+carrying a principal, so they return the **full registry**. This is intentional — the CLI
+already holds the Redis connection (`REDIS_URL`), so anyone who can run it can read Redis
+directly regardless. Treat the CLI's in-process commands as an **operator/admin** surface;
+authorization scoping applies to the user-facing API/UI/agent surfaces, not to operators who
+already have direct infrastructure access.
+
+> **Token cache is per-container.** The CLI caches its token at
+> `~/.config/redis-sre-agent/token.json` inside the container's writable layer. Recreating the
+> container (`docker compose up --force-recreate`) clears it — you'll need to `login` again.
+> Bind-mount `~/.config` or run the CLI on the host if you want the token to persist.
+
 ## Running via Docker
 
 The dotted `module:callable` path is resolved by `importlib` **inside the container**, so the
