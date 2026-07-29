@@ -117,6 +117,7 @@ async def _enqueue_resume_task(
     decision,
     decision_by: str | None,
     decision_comment: str | None,
+    authz_bearer: str | None = None,
 ):
     """Schedule the resume worker using Docket's returned scheduler callable."""
 
@@ -128,6 +129,7 @@ async def _enqueue_resume_task(
         decision=decision_value,
         decision_by=decision_by,
         decision_comment=decision_comment,
+        authz_bearer=authz_bearer,
     )
 
 
@@ -201,7 +203,15 @@ async def list_task_approvals(task_id: str) -> TaskApprovalListResponse:
 
 
 @router.post("/tasks/{task_id}/resume", response_model=TaskResponse)
-async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
+async def resume_task(task_id: str, req: TaskResumeRequest, request: Request) -> TaskResponse:
+    # Capture the approver's fresh bearer: the approver authorizes this resume, so their
+    # current access governs whether the gated tool may re-run (see resume_task_after_approval).
+    _auth_header = request.headers.get("authorization") or ""
+    _authz_bearer = (
+        _auth_header.split(" ", 1)[1].strip()
+        if _auth_header.lower().startswith("bearer ")
+        else None
+    )
     redis_client = get_redis_client()
     task_manager = TaskManager(redis_client=redis_client)
     state = await task_manager.get_task_state(task_id)
@@ -233,6 +243,7 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
                 decision=req.decision,
                 decision_by=req.decision_by,
                 decision_comment=req.decision_comment,
+                authz_bearer=_authz_bearer,
             )
     except ValueError as exc:
         message = str(exc)

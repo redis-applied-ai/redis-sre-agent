@@ -895,6 +895,65 @@ async def _complete_deep_triage_target_limit_response(
     return result
 
 
+async def _complete_turn_authorization_denied(
+    *,
+    task_manager: TaskManager,
+    thread_manager: ThreadManager,
+    thread_id: str,
+    task_id: str,
+    user_message: str,
+) -> Dict[str, Any]:
+    """Complete a turn denied by infrastructure authorization for an explicitly-attached target.
+
+    The response is IDENTICAL for 'exists-but-denied' and 'does-not-exist' so it cannot be used
+    as an enumeration oracle.
+    """
+    response_text = "You are not authorized to access the requested target, or it does not exist."
+    user_timestamp = datetime.now(timezone.utc).isoformat()
+    assistant_message_id = str(ULID())
+    assistant_metadata = {
+        "agent_type": "authorization",
+        "task_id": task_id,
+        "message_id": assistant_message_id,
+        "authorization_denied": True,
+    }
+    await task_manager.add_task_update(
+        task_id,
+        "Authorization denied for the requested target",
+        "authorization_denied",
+        metadata=assistant_metadata,
+    )
+    await thread_manager.append_messages(
+        thread_id,
+        [
+            {"role": "user", "content": user_message, "metadata": {"timestamp": user_timestamp}},
+            {
+                "message_id": assistant_message_id,
+                "role": "assistant",
+                "content": response_text,
+                "metadata": assistant_metadata,
+            },
+        ],
+    )
+    result = {
+        "response": response_text,
+        "metadata": assistant_metadata,
+        "thread_id": thread_id,
+        "task_id": task_id,
+        "message_id": assistant_message_id,
+        "turn_completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    completed = await _complete_task_if_open(
+        task_manager=task_manager, task_id=task_id, thread_id=thread_id, result=result
+    )
+    if not completed:
+        return _build_terminal_task_result(task_id, thread_id, TaskStatus.CANCELLED)
+    await task_manager._publish_stream_update(
+        thread_id, "turn_complete", {"task_id": task_id, "message": "Task completed successfully"}
+    )
+    return result
+
+
 async def _run_single_target_triage_child(
     *,
     agent: Any,
@@ -2045,6 +2104,28 @@ async def _process_agent_turn_impl(
         if instance_id_from_client and cluster_id_from_client:
             raise ValueError("Please provide only one of instance_id or cluster_id")
 
+        # Explicit-attach authorization hard-deny: if the client explicitly named a target and
+        # it is not accessible (denied OR nonexistent -> identical response, no oracle), stop the
+        # turn now rather than silently running with no/other scope. The guarded base loaders
+        # return None on deny.
+        if settings.infrastructure_authorization_enabled and (
+            instance_id_from_client or cluster_id_from_client
+        ):
+            from redis_sre_agent.core.instances import get_instance_by_id as _get_instance_by_id
+
+            if instance_id_from_client:
+                _resolved = await _get_instance_by_id(instance_id_from_client)
+            else:
+                _resolved = await get_cluster_by_id(cluster_id_from_client)
+            if _resolved is None:
+                return await _complete_turn_authorization_denied(
+                    task_manager=task_manager,
+                    thread_manager=thread_manager,
+                    thread_id=thread_id,
+                    task_id=task_id,
+                    user_message=message,
+                )
+
         def _clear_attached_scope(target_context: Dict[str, Any]) -> None:
             target_context["attached_target_handles"] = []
             target_context["target_bindings"] = []
@@ -2787,11 +2868,43 @@ async def resume_task_after_approval(
     decision: ApprovalDecisionType | str,
     decision_by: Optional[str] = None,
     decision_comment: Optional[str] = None,
+    authz_bearer: Optional[str] = None,
     redis_client=None,
     concurrency: ConcurrencyLimit = ConcurrencyLimit(
         "task_id", max_concurrent=1, scope="task_approval_resume"
     ),
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
+    """Set the authz principal (the approver's bearer) around the resume impl, then reset it.
+
+    Resume re-runs a previously-gated tool against a target; access may have been revoked
+    during the approval wait, so the principal must be live here. Reset-in-finally is required
+    so a reused worker context cannot leak this principal into a later task (e.g. process_chat_turn
+    must stay fail-closed)."""
+    from redis_sre_agent.core.authorization import reset_principal
+
+    _authz_token = await _set_worker_authz_principal({"_authz_bearer": authz_bearer})
+    try:
+        return await _resume_task_after_approval_impl(
+            task_id=task_id,
+            approval_id=approval_id,
+            decision=decision,
+            decision_by=decision_by,
+            decision_comment=decision_comment,
+            redis_client=redis_client,
+        )
+    finally:
+        if _authz_token is not None:
+            reset_principal(_authz_token)
+
+
+async def _resume_task_after_approval_impl(
+    task_id: str,
+    approval_id: str,
+    decision: ApprovalDecisionType | str,
+    decision_by: Optional[str] = None,
+    decision_comment: Optional[str] = None,
+    redis_client=None,
 ) -> Dict[str, Any]:
     """Resume a paused task after recording a human approval decision."""
 
@@ -2913,6 +3026,19 @@ async def resume_task_after_approval(
             resume_state=resume_state,
         )
         redis_cluster = await get_cluster_by_id(cluster_id) if cluster_id else None
+
+        # Authorization: the gated tool re-runs against this target; if access was revoked
+        # during the approval wait, the guarded loaders return None -> deny, do not resume.
+        if settings.infrastructure_authorization_enabled and (
+            (instance_id and redis_instance is None) or (cluster_id and redis_cluster is None)
+        ):
+            return await _complete_turn_authorization_denied(
+                task_manager=task_manager,
+                thread_manager=thread_manager,
+                thread_id=thread_id,
+                task_id=task_id,
+                user_message=str(resume_context.get("original_query") or "resume"),
+            )
 
         excluded_categories = resume_context.get("exclude_mcp_categories") or []
         mcp_categories = []
@@ -3037,6 +3163,18 @@ async def resume_task_after_approval(
         resume_state=resume_state,
     )
     target_cluster = await get_cluster_by_id(cluster_id) if cluster_id else None
+
+    # Authorization: same live re-check for the deep-triage resume branch.
+    if settings.infrastructure_authorization_enabled and (
+        (instance_id and target_instance is None) or (cluster_id and target_cluster is None)
+    ):
+        return await _complete_turn_authorization_denied(
+            task_manager=task_manager,
+            thread_manager=thread_manager,
+            thread_id=thread_id,
+            task_id=task_id,
+            user_message=str(resume_context.get("original_query") or "resume"),
+        )
 
     agent = get_sre_agent(
         redis_instance=target_instance,
