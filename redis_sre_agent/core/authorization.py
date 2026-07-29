@@ -209,7 +209,9 @@ async def scope_models(models: list, ref_adapter) -> list:
         return list(models)
     refs = [ref_adapter(m) for m in models]
     allowed_keys = {r.key for r in await scope_targets(refs)}
-    return [m for m in models if ref_adapter(m).key in allowed_keys]
+    # Reuse `refs` (zip) instead of calling ref_adapter again per model — one pass on listing
+    # paths that can carry up to 1000 models.
+    return [m for m, r in zip(models, refs) if r.key in allowed_keys]
 
 
 async def scope_and_paginate(models: list, ref_adapter, offset: int, limit: int):

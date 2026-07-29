@@ -55,7 +55,7 @@ async def test_mcp_module_app_refuses_to_serve_when_authz_enabled(monkeypatch):
     async def _noop(*a, **k):
         return {}
 
-    for scope_type in ("lifespan", "http"):
+    for scope_type in ("lifespan", "http", "websocket"):
         with pytest.raises(RuntimeError):
             await mcp_server.app({"type": scope_type}, _noop, _noop)
 

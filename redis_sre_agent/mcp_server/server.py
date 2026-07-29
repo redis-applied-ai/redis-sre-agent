@@ -3179,6 +3179,7 @@ _mcp_http_app = mcp.streamable_http_app()
 
 
 async def app(scope, receive, send):
-    if scope.get("type") in ("lifespan", "http"):
-        _refuse_if_authz_enabled()
+    # Refuse on EVERY scope type (lifespan/http/websocket/...) so no connection kind can reach
+    # the unguarded MCP app under authz.
+    _refuse_if_authz_enabled()
     await _mcp_http_app(scope, receive, send)
