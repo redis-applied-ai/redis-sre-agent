@@ -58,6 +58,22 @@ async def test_no_bearer_fail_closed(authz_on):
         authz.reset_auth_token(tok)
 
 
+def test_all_agent_tasks_set_and_reset_worker_token():
+    """Regression (Bugbot): every @sre_task that runs the agent / hits guarded loaders must set
+    the worker auth token at the top and reset it in a finally, or a reused worker context can
+    leak a prior task's principal. process_chat_turn was missing this.
+    """
+    import inspect
+
+    from redis_sre_agent.core import docket_tasks
+
+    for name in ("process_agent_turn", "resume_task_after_approval", "process_chat_turn"):
+        src = inspect.getsource(getattr(docket_tasks, name))
+        assert "_set_worker_auth_token" in src, f"{name} does not set the worker auth token"
+        assert "reset_auth_token" in src, f"{name} does not reset the worker auth token"
+        assert "finally" in src, f"{name} does not reset the worker token in a finally"
+
+
 async def test_reset_restores_none(authz_on, monkeypatch):
     async def fake_validate(token):
         return {"sub": "u1"}

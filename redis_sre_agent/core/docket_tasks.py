@@ -1450,6 +1450,41 @@ async def process_chat_turn(
     exclude_mcp_categories: Optional[List[str]] = None,
     retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
+    """Docket task wrapper for the chat turn.
+
+    This task carries no authenticated principal (its only caller, MCP, is disabled under
+    authz), so clear the worker auth token and reset it in a finally — a reused worker context
+    must not leak a prior task's principal into the guarded loaders this turn hits (fail-closed
+    by construction, matching process_agent_turn / resume_task_after_approval).
+    """
+    from redis_sre_agent.core.authorization import reset_auth_token
+
+    _authz_token = await _set_worker_auth_token(None)
+    try:
+        return await _process_chat_turn_impl(
+            query=query,
+            task_id=task_id,
+            thread_id=thread_id,
+            instance_id=instance_id,
+            cluster_id=cluster_id,
+            user_id=user_id,
+            exclude_mcp_categories=exclude_mcp_categories,
+        )
+    finally:
+        if _authz_token is not None:
+            reset_auth_token(_authz_token)
+
+
+async def _process_chat_turn_impl(
+    query: str,
+    task_id: str,
+    thread_id: str,
+    instance_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    exclude_mcp_categories: Optional[List[str]] = None,
+    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
+) -> Dict[str, Any]:
     """
     Process a chat query using the ChatAgent (background task).
 
