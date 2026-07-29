@@ -66,6 +66,11 @@ def _use_hook(monkeypatch, fn):
     monkeypatch.setattr(authz, "_load_hook", lambda: fn)
 
 
+def _allow(records):
+    """Wrap an allowed subset in the hook's dict return contract ({"allowed_targets": [...]})."""
+    return {"allowed_targets": list(records)}
+
+
 # --- passthrough when authz off: loaders behave exactly as before ---
 
 
@@ -82,7 +87,7 @@ async def test_loaders_passthrough_when_authz_off(fake_redis, monkeypatch):
 
 async def test_loaders_resolve_when_allowed(fake_redis, authz_on, monkeypatch):
     def allow_all(token, targets):
-        return list(targets)
+        return _allow(targets)
 
     _use_hook(monkeypatch, allow_all)
     tok = authz.set_auth_token("tok-u1")
@@ -98,7 +103,7 @@ async def test_loaders_resolve_when_allowed(fake_redis, authz_on, monkeypatch):
 
 async def test_loaders_deny_when_not_allowed(fake_redis, authz_on, monkeypatch):
     def deny_all(token, targets):
-        return []
+        return _allow([])
 
     _use_hook(monkeypatch, deny_all)
     tok = authz.set_auth_token("tok-u1")
@@ -122,7 +127,7 @@ async def test_loaders_fail_closed_without_principal(fake_redis, authz_on):
 
 async def test_loaders_selective(fake_redis, authz_on, monkeypatch):
     def clusters_only(token, targets):
-        return [t for t in targets if t.kind == "cluster"]
+        return _allow(t for t in targets if t["type"] == "cluster")
 
     _use_hook(monkeypatch, clusters_only)
     tok = authz.set_auth_token("tok-u1")
@@ -215,7 +220,7 @@ async def test_agent_scoped_instances_filters(authz_on, monkeypatch):
         return fakes
 
     monkeypatch.setattr(_lg, "get_instances", fake_get_instances)
-    _use_hook(monkeypatch, lambda token, targets: [t for t in targets if t.resource_id == "i2"])
+    _use_hook(monkeypatch, lambda token, targets: _allow(t for t in targets if t["id"] == "i2"))
     tok = authz.set_auth_token("tok-u1")
     try:
         out = await _lg._scoped_instances()
@@ -262,7 +267,7 @@ async def test_scope_candidates_passthrough_when_off(monkeypatch):
 
 async def test_scope_candidates_filters_when_on(authz_on, monkeypatch):
     def clusters_only(token, targets):
-        return [t for t in targets if t.kind == "cluster"]
+        return _allow(t for t in targets if t["type"] == "cluster")
 
     _use_hook(monkeypatch, clusters_only)
     tok = authz.set_auth_token("tok-u1")
@@ -279,7 +284,7 @@ async def test_scope_candidates_fail_closed_no_principal(authz_on):
 
 async def test_scope_candidates_drops_candidate_without_resource_id(authz_on, monkeypatch):
     def allow_all(token, targets):
-        return list(targets)
+        return _allow(targets)
 
     _use_hook(monkeypatch, allow_all)
     tok = authz.set_auth_token("tok-u1")
@@ -310,7 +315,7 @@ async def test_scope_and_paginate_total_and_page_reflect_allowed(authz_on, monke
     allowed = {"c1", "c3", "c5"}
 
     def hook(token, targets):
-        return [t for t in targets if t.resource_id in allowed]
+        return _allow(t for t in targets if t["id"] in allowed)
 
     _use_hook(monkeypatch, hook)
     models = [_model(f"c{i}") for i in range(1, 6)]

@@ -35,15 +35,27 @@ can't scope by an identity you haven't verified.
 
 ## The hook contract
 
+The hook exchanges **plain data** (JSON-shaped dicts) — no internal classes cross the boundary,
+so an external authz service can consume the request and return its response directly.
+
 ```python
-def scope(auth_token: str, targets):
-    # auth_token: the validated JWT bearer STRING (signature/iss/aud/exp already checked).
-    #             Decode it, or forward it to an external authz service.
-    # targets:    list of TargetRef(kind="cluster"|"instance", resource_id, name, environment)
-    # return:     the allowed subset (same objects). Sync or async both work.
-    ...
+def scope(auth_token: str, candidate_targets: list[dict]) -> dict:
+    # auth_token:        the validated JWT bearer STRING (signature/iss/aud/exp already checked).
+    #                    Decode it, or forward it to an external authz service.
+    # candidate_targets: [{"type": "instance"|"cluster", "id": ..., "name": ..., "environment": ...}]
+    # return:            {"allowed_targets": [{"type": ..., "id": ...}, ...]}  — ALLOWED-ONLY.
+    ...                  #  A target's absence means denied. Sync or async both work.
 ```
 
+- **`type` + `id` identify each target** unambiguously — `type` (`"instance"` | `"cluster"`,
+  matching `instance_id`/`cluster_id`) is what disambiguates an `id` a cluster and an instance
+  could share. Both are required on every returned record; extra fields (`name`, and a reserved
+  `access_level` for a future read-vs-admin phase) are accepted and ignored.
+- **Intersect-only:** a target is granted only if it's in *both* the candidate set *and*
+  `allowed_targets` (matched by `(type, id)`). Returning extra targets can't grant access beyond
+  the registry — the hook can only remove.
+- **Fail-closed on a bad shape:** a non-dict return, a missing/non-list `allowed_targets`, or a
+  record missing `type`/`id` yields an empty allowed set (denied), logged.
 - The token is authn-validated **before** the hook runs — the hook never sees an unverified
   token.
 - The hook is called **live** on every resolution/listing, so access changes (and

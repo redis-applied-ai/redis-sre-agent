@@ -78,9 +78,11 @@ class TargetRef:
         )
 
 
-# hook(auth_token, targets) -> allowed subset of targets (sync or async). `auth_token` is the
-# VALIDATED JWT bearer string; the hook may decode it or forward it to an external service.
-ScopeHook = Callable[[str, List[TargetRef]], Union[List[TargetRef], Awaitable[List[TargetRef]]]]
+# hook(auth_token, candidate_targets) -> {"allowed_targets": [{"type","id",...}], ...}  (sync or
+# async). `auth_token` is the VALIDATED JWT bearer string; the hook may decode it or forward it to
+# an external service. `candidate_targets` are plain {type,id,name,environment} dicts and the
+# return is a plain dict, so no internal class crosses the boundary (external services speak JSON).
+ScopeHook = Callable[[str, List[dict]], Union[dict, Awaitable[dict]]]
 
 
 # --- trust-boundary auth token (validated JWT bearer; None => no authenticated identity) ---
@@ -132,13 +134,42 @@ def reset_hook_cache() -> None:
     _hook_cache = None
 
 
+def _to_wire(t: TargetRef) -> dict:
+    """The plain-data shape a target takes when handed to the hook, so no internal class crosses
+    the boundary (an external authz service consumes/returns JSON directly)."""
+    return {"type": t.kind, "id": t.resource_id, "name": t.name, "environment": t.environment}
+
+
+def _allowed_keys_from_hook_result(result) -> set:
+    """Parse the hook's dict return into a set of (type, id) keys. Fail-closed by construction:
+    a non-dict return or a missing/non-list `allowed_targets` raises (-> deny all); a record
+    missing `type`/`id` is skipped (-> that target denied). Extra fields (name, access_level, ...)
+    are ignored this phase."""
+    if not isinstance(result, dict):
+        raise ValueError("authorization hook must return a dict")
+    allowed = result.get("allowed_targets")
+    if not isinstance(allowed, list):
+        raise ValueError("authorization hook result missing an 'allowed_targets' list")
+    keys = set()
+    for rec in allowed:
+        if not isinstance(rec, dict):
+            continue
+        typ, rid = rec.get("type"), rec.get("id")
+        if not typ or not rid:
+            continue  # a target must be identified unambiguously by type + id
+        keys.add((str(typ), str(rid)))
+    return keys
+
+
 async def scope_targets(targets: List[TargetRef]) -> List[TargetRef]:
     """Return the subset of `targets` the current principal may access.
 
     - authz disabled -> passthrough (zero behavior change).
-    - no validated token / hook error / timeout -> [] (fail closed).
-    - intersect the hook's result with the input by identity, returning the ORIGINAL input
-      objects: a buggy or hostile hook can only ever REMOVE access, never add or mutate.
+    - no validated token / hook error / timeout / invalid return shape -> [] (fail closed).
+    - the hook receives plain `{type,id,name,environment}` dicts and returns
+      `{"allowed_targets": [{"type","id",...}], ...}`; we intersect the returned (type,id) keys
+      with the input by identity and return the ORIGINAL input objects. A buggy or hostile hook
+      can only ever REMOVE access, never add or mutate.
     """
     if not settings.infrastructure_authorization_enabled:
         return list(targets)
@@ -149,12 +180,14 @@ async def scope_targets(targets: List[TargetRef]) -> List[TargetRef]:
         return []
     try:
         hook = _load_hook()
-        result = hook(token, list(targets))
+        result = hook(token, [_to_wire(t) for t in targets])
         if inspect.isawaitable(result):
             result = await asyncio.wait_for(result, timeout=_HOOK_TIMEOUT_SECONDS)
-        allowed_keys = {t.key for t in (result or [])}
+        allowed_keys = _allowed_keys_from_hook_result(result)
     except Exception:
-        logger.exception("infrastructure authorization hook failed; denying (fail-closed)")
+        logger.exception(
+            "infrastructure authorization hook failed or returned an invalid shape; denying (fail-closed)"
+        )
         return []
     # Intersect: keep only inputs the hook allowed; never trust the hook to add targets.
     return [t for t in targets if t.key in allowed_keys]

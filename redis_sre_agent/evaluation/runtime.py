@@ -623,9 +623,10 @@ def _apply_eval_authz(scenario: EvalScenario):
         }
 
     def _hook(auth_token, targets):
+        # targets are {type,id,name,environment} dicts; return the {"allowed_targets": [...]} dict.
         if allowed_ids is None:
-            return list(targets)
-        return [t for t in targets if t.resource_id in allowed_ids]
+            return {"allowed_targets": list(targets)}
+        return {"allowed_targets": [t for t in targets if t["id"] in allowed_ids]}
 
     prev_enabled = _settings.infrastructure_authorization_enabled
     _authz._hook_cache = _hook

@@ -38,6 +38,11 @@ def _use_hook(monkeypatch, fn):
     monkeypatch.setattr(authz, "_load_hook", lambda: fn)
 
 
+def _allow(records):
+    """Wrap an allowed subset in the hook's dict return contract ({"allowed_targets": [...]})."""
+    return {"allowed_targets": list(records)}
+
+
 # --- config validator (AC-2, AC-3) ---
 
 
@@ -103,7 +108,7 @@ async def test_fail_closed_hook_exception(authz_on, monkeypatch):
 async def test_fail_closed_hook_timeout(authz_on, monkeypatch):
     async def slow(token, targets):
         await asyncio.sleep(10)
-        return targets
+        return _allow(targets)
 
     _use_hook(monkeypatch, slow)
     monkeypatch.setattr(authz, "_HOOK_TIMEOUT_SECONDS", 0.05)
@@ -119,7 +124,7 @@ async def test_fail_closed_hook_timeout(authz_on, monkeypatch):
 
 async def test_sync_hook_returns_subset(authz_on, monkeypatch):
     def only_i1(token, targets):
-        return [t for t in targets if t.resource_id == "i1"]
+        return _allow(t for t in targets if t["id"] == "i1")
 
     _use_hook(monkeypatch, only_i1)
     tok = authz.set_auth_token("tok-u1")
@@ -131,7 +136,7 @@ async def test_sync_hook_returns_subset(authz_on, monkeypatch):
 
 async def test_async_hook_returns_subset(authz_on, monkeypatch):
     async def only_clusters(token, targets):
-        return [t for t in targets if t.kind == "cluster"]
+        return _allow(t for t in targets if t["type"] == "cluster")
 
     _use_hook(monkeypatch, only_clusters)
     tok = authz.set_auth_token("tok-u1")
@@ -148,7 +153,8 @@ async def test_hook_superset_is_intersected(authz_on, monkeypatch):
     rogue = TargetRef("instance", "i999", "secret-prod", "prod")
 
     def add_rogue(token, targets):
-        return list(targets) + [rogue]  # buggy/hostile hook tries to grant extra
+        # buggy/hostile hook tries to grant an extra target not in the candidate set
+        return _allow(list(targets) + [{"type": rogue.kind, "id": rogue.resource_id}])
 
     _use_hook(monkeypatch, add_rogue)
     tok = authz.set_auth_token("tok-u1")
@@ -163,7 +169,10 @@ async def test_hook_superset_is_intersected(authz_on, monkeypatch):
 async def test_scope_targets_returns_original_objects(authz_on, monkeypatch):
     # Hook returns a mutated copy; we must return the ORIGINAL input object, not the hook's.
     def mutated(token, targets):
-        return [TargetRef(t.kind, t.resource_id, "HOOK-RENAMED", "evil") for t in targets]
+        return _allow(
+            {"type": t["type"], "id": t["id"], "name": "HOOK-RENAMED", "environment": "evil"}
+            for t in targets
+        )
 
     _use_hook(monkeypatch, mutated)
     tok = authz.set_auth_token("tok-u1")
@@ -177,7 +186,7 @@ async def test_scope_targets_returns_original_objects(authz_on, monkeypatch):
 
 async def test_assert_target_allowed(authz_on, monkeypatch):
     def only_i1(token, targets):
-        return [t for t in targets if t.resource_id == "i1"]
+        return _allow(t for t in targets if t["id"] == "i1")
 
     _use_hook(monkeypatch, only_i1)
     tok = authz.set_auth_token("tok-u1")
@@ -223,3 +232,43 @@ def test_load_hook_invalid_path(monkeypatch):
             authz._load_hook()
     finally:
         authz.reset_hook_cache()
+
+
+# --- dict-return contract (type+id disambiguation, fail-closed on bad shape) ---
+
+
+async def test_dict_contract_fail_closed_on_wrong_shape(authz_on, monkeypatch):
+    # A non-dict return (e.g. the old bare-list contract) or a dict missing allowed_targets
+    # fails closed -> deny all.
+    for bad in (lambda token, targets: list(targets), lambda token, targets: {"nope": []}):
+        _use_hook(monkeypatch, bad)
+        tok = authz.set_auth_token("tok-u1")
+        try:
+            assert await scope_targets([C1, I1]) == []
+        finally:
+            authz.reset_auth_token(tok)
+
+
+async def test_dict_contract_type_disambiguates(authz_on, monkeypatch):
+    # Same id, wrong type must NOT match: allowing instance "c1" does not grant cluster "c1".
+    _use_hook(
+        monkeypatch, lambda token, targets: {"allowed_targets": [{"type": "instance", "id": "c1"}]}
+    )
+    tok = authz.set_auth_token("tok-u1")
+    try:
+        assert await scope_targets([C1]) == []  # C1 is a CLUSTER -> (cluster,c1) != (instance,c1)
+    finally:
+        authz.reset_auth_token(tok)
+
+
+async def test_dict_contract_record_missing_type_or_id_skipped(authz_on, monkeypatch):
+    # A record lacking type or id can't be matched -> that target is denied (fail-closed).
+    _use_hook(
+        monkeypatch,
+        lambda token, targets: {"allowed_targets": [{"id": "i1"}, {"type": "instance"}]},
+    )
+    tok = authz.set_auth_token("tok-u1")
+    try:
+        assert await scope_targets([I1]) == []
+    finally:
+        authz.reset_auth_token(tok)
