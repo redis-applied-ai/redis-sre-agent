@@ -15,7 +15,9 @@ const clientId = env.VITE_OIDC_CLIENT_ID;
 const redirectUri =
   env.VITE_OIDC_REDIRECT_URI ||
   (typeof window !== "undefined" ? `${window.location.origin}/callback` : undefined);
-const scope = env.VITE_OIDC_SCOPE || "openid profile email";
+// Accept comma- or space-separated (the backend AUTH_SCOPES is comma-separated; OIDC wants
+// spaces) so the UI can reuse the same value the backend uses.
+const scope = (env.VITE_OIDC_SCOPE || "openid profile email").replace(/[,\s]+/g, " ").trim();
 
 export const isAuthEnabled = Boolean(issuer && clientId);
 

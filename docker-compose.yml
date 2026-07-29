@@ -329,6 +329,15 @@ services:
       - NODE_ENV=development
       - VITE_API_URL=http://sre-agent:8000
       - VITE_API_BASE_URL=http://localhost:8080/api/v1
+      # OIDC SSO for the SPA — derived from the same AUTH_* the backend uses, so you set the
+      # values ONCE. The SPA is a separate Vite build and can only read VITE_-prefixed,
+      # build-time vars, hence the remap. Unset AUTH_* -> UI runs open (same as before).
+      # AUTH_SCOPES already includes api://<api-app-id>/access_as_user, which audiences the
+      # UI's access token to the API (the UI normalizes its comma/space separators).
+      - VITE_OIDC_ISSUER=${AUTH_ISSUER_URL:-}
+      - VITE_OIDC_CLIENT_ID=${AUTH_UI_CLIENT_ID:-}
+      - VITE_OIDC_SCOPE=${AUTH_SCOPES:-}
+      - VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI:-}
     depends_on:
       - sre-agent
     volumes:
