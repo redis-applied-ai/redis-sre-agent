@@ -1483,7 +1483,6 @@ async def _process_chat_turn_impl(
     cluster_id: Optional[str] = None,
     user_id: Optional[str] = None,
     exclude_mcp_categories: Optional[List[str]] = None,
-    retry: Retry = Retry(attempts=2, delay=timedelta(seconds=2)),
 ) -> Dict[str, Any]:
     """
     Process a chat query using the ChatAgent (background task).
@@ -1502,7 +1501,6 @@ async def _process_chat_turn_impl(
         exclude_mcp_categories: Optional list of MCP tool category names to exclude.
             Valid values: "metrics", "logs", "tickets", "repos", "traces",
             "diagnostics", "knowledge", "utilities".
-        retry: Retry configuration
 
     Returns:
         Dictionary with the chat response
@@ -2380,17 +2378,23 @@ async def _process_agent_turn_impl(
         # UNSCOPED so denied targets still resolve; a reference that resolves to nothing needs no
         # authz. Some denied -> note + continue with the allowed subset; all denied -> deny.
         if agent_type == AgentType.REDIS_TRIAGE and settings.infrastructure_authorization_enabled:
-            try:
-                from redis_sre_agent.core.authorization import (
-                    TargetRef as _TargetRef,
-                )
-                from redis_sre_agent.core.authorization import (
-                    assert_target_allowed as _assert_target_allowed,
-                )
-                from redis_sre_agent.core.targets import (
-                    resolve_target_query as _resolve_named_targets,
-                )
+            from redis_sre_agent.core.authorization import (
+                TargetRef as _TargetRef,
+            )
+            from redis_sre_agent.core.authorization import (
+                assert_target_allowed as _assert_target_allowed,
+            )
+            from redis_sre_agent.core.targets import (
+                resolve_target_query as _resolve_named_targets,
+            )
 
+            # ONLY the discovery step is wrapped: if resolution fails we can't identify a named
+            # target, so there's nothing to deny and the base loaders still enforce access. The
+            # authorization DECISION below runs OUTSIDE the try on purpose — assert_target_allowed
+            # fail-closes internally (scope_targets returns [] on hook error/timeout, never raises),
+            # so a denied named target is never silently swallowed by a broad catch-all.
+            _named = None
+            try:
                 _named = await _resolve_named_targets(
                     query=message,
                     user_id=thread.metadata.user_id,
@@ -2399,45 +2403,48 @@ async def _process_agent_turn_impl(
                     preferred_capabilities=["diagnostics", "admin", "cloud"],
                     apply_scope=False,
                 )
-                _denied_ids: list[str] = []
-                _denied_names: list[str] = []
-                _allowed_named = 0
-                for _m in getattr(_named, "matches", None) or []:
-                    _rid = getattr(_m, "resource_id", None)
-                    if not _rid:
-                        continue  # unresolved reference -> no target to authorize
-                    if await _assert_target_allowed(
-                        _TargetRef(str(getattr(_m, "target_kind", "") or ""), str(_rid))
-                    ):
-                        _allowed_named += 1
-                    else:
-                        _denied_ids.append(str(_rid))
-                        _denied_names.append(str(getattr(_m, "display_name", None) or _rid))
-                if _denied_ids:
-                    _names = ", ".join(_denied_names)
-                    await task_manager.add_task_update(
-                        task_id,
-                        f"Not authorized for: {_names}. Continuing with the targets you can access.",
-                        "authorization_scoped",
-                        metadata={"unauthorized_targets": _denied_ids},
-                    )
-                    if not _allowed_named:
-                        result = await _complete_turn_authorization_denied(
-                            task_manager=task_manager,
-                            thread_manager=thread_manager,
-                            thread_id=thread_id,
-                            task_id=task_id,
-                            user_message=message,
-                            response_text=f"You are not authorized to access the requested target(s): {_names}.",
-                        )
-                        try:
-                            if _root_span is not None:
-                                _root_span.end()
-                        except Exception:
-                            pass
-                        return result
             except Exception:
-                logger.exception("Failed to authorize named targets for triage turn")
+                logger.exception(
+                    "named-target resolution failed for triage turn; base loaders still enforce access"
+                )
+
+            _denied_ids: list[str] = []
+            _denied_names: list[str] = []
+            _allowed_named = 0
+            for _m in getattr(_named, "matches", None) or []:
+                _rid = getattr(_m, "resource_id", None)
+                if not _rid:
+                    continue  # unresolved reference -> no target to authorize
+                if await _assert_target_allowed(
+                    _TargetRef(str(getattr(_m, "target_kind", "") or ""), str(_rid))
+                ):
+                    _allowed_named += 1
+                else:
+                    _denied_ids.append(str(_rid))
+                    _denied_names.append(str(getattr(_m, "display_name", None) or _rid))
+            if _denied_ids:
+                _names = ", ".join(_denied_names)
+                await task_manager.add_task_update(
+                    task_id,
+                    f"Not authorized for: {_names}. Continuing with the targets you can access.",
+                    "authorization_scoped",
+                    metadata={"unauthorized_targets": _denied_ids},
+                )
+                if not _allowed_named:
+                    result = await _complete_turn_authorization_denied(
+                        task_manager=task_manager,
+                        thread_manager=thread_manager,
+                        thread_id=thread_id,
+                        task_id=task_id,
+                        user_message=message,
+                        response_text=f"You are not authorized to access the requested target(s): {_names}.",
+                    )
+                    try:
+                        if _root_span is not None:
+                            _root_span.end()
+                    except Exception:
+                        pass
+                    return result
 
         if (
             agent_type == AgentType.REDIS_TRIAGE

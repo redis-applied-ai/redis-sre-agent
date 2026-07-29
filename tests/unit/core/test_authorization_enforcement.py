@@ -193,7 +193,7 @@ def test_named_target_authz_deny_runs_on_every_triage_turn():
     from redis_sre_agent.core import docket_tasks
 
     src = inspect.getsource(docket_tasks)
-    deny_marker = "Failed to authorize named targets for triage turn"
+    deny_marker = "_resolve_named_targets"
     zero_scope_gate = 'current_scope.scope_kind == "zero_scope"'
     assert deny_marker in src, "named-target authz deny block missing"
     assert zero_scope_gate in src, "zero_scope gate missing (test anchor stale)"
