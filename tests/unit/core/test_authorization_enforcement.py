@@ -158,6 +158,62 @@ def test_chokepoint_guards_present():
     assert "assert_target_allowed" in inspect.getsource(get_instance_by_id)
 
 
+def test_agent_does_not_call_unscoped_bulk_loaders():
+    """Regression for the fail-open the architect caught (US-008): the agent must NOT call the
+    unscoped bulk loaders get_instances()/get_clusters() directly — only via the authz-scoped
+    _scoped_instances() helper or the guarded get_*_by_id loaders. A new unguarded bulk call in
+    the agent bumps the count and fails here.
+    """
+    import inspect
+
+    from redis_sre_agent.agent import langgraph_agent
+
+    src = inspect.getsource(langgraph_agent)
+    # get_instances() may appear ONLY inside the _scoped_instances helper (exactly once).
+    assert src.count("await get_instances()") == 1, "unscoped get_instances() call in agent module"
+    assert "await get_clusters()" not in src, "unscoped get_clusters() call in agent module"
+
+
+# --- the agent's scoped bulk-instance loader (US-008 fix) ---
+
+from redis_sre_agent.agent import langgraph_agent as _lg  # noqa: E402
+
+
+async def test_agent_scoped_instances_filters(authz_on, monkeypatch):
+    fakes = [_model("i1"), _model("i2"), _model("i3")]
+
+    async def fake_get_instances():
+        return fakes
+
+    monkeypatch.setattr(_lg, "get_instances", fake_get_instances)
+    _use_hook(monkeypatch, lambda claims, targets: [t for t in targets if t.resource_id == "i2"])
+    tok = authz.set_principal({"sub": "u1"})
+    try:
+        out = await _lg._scoped_instances()
+        assert [i.id for i in out] == ["i2"]
+    finally:
+        authz.reset_principal(tok)
+
+
+async def test_agent_scoped_instances_fail_closed_no_principal(authz_on, monkeypatch):
+    async def fake_get_instances():
+        return [_model("i1")]
+
+    monkeypatch.setattr(_lg, "get_instances", fake_get_instances)
+    assert await _lg._scoped_instances() == []  # no principal -> deny all
+
+
+async def test_agent_scoped_instances_passthrough_off(monkeypatch):
+    monkeypatch.setattr(settings, "infrastructure_authorization_enabled", False)
+    fakes = [_model("i1"), _model("i2")]
+
+    async def fake_get_instances():
+        return fakes
+
+    monkeypatch.setattr(_lg, "get_instances", fake_get_instances)
+    assert await _lg._scoped_instances() == fakes
+
+
 # --- scope_candidates: drop denied bindings before materialization (US-001b) ---
 
 from types import SimpleNamespace  # noqa: E402
