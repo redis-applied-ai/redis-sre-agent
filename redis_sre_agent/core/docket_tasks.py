@@ -2355,10 +2355,11 @@ async def _process_agent_turn_impl(
                     max_results=5,
                     preferred_capabilities=["diagnostics", "admin", "cloud"],
                 )
-                # Authorization report (US-005): never silently drop a matched target. Resolve
-                # UNSCOPED to detect matches the principal may NOT access; name only HIGH-confidence
-                # matches (bounds the enumeration oracle). Some denied -> note + continue with the
-                # allowed subset; all denied -> reply-and-stop naming them.
+                # Authorization report (US-005): never silently drop a RESOLVED target. Rule: if
+                # discovery resolves a reference to a target, validate that target; a reference
+                # that resolves to nothing needs no authz. Resolve UNSCOPED (so denied targets
+                # still resolve), then validate each resolved match. Some denied -> note + continue
+                # with the allowed subset; all denied -> reply-and-stop naming them.
                 if settings.infrastructure_authorization_enabled:
                     from redis_sre_agent.core.authorization import (
                         TargetRef as _TargetRef,
@@ -2378,8 +2379,8 @@ async def _process_agent_turn_impl(
                     _denied = []
                     for _m in getattr(_unscoped, "matches", None) or []:
                         _rid = getattr(_m, "resource_id", None)
-                        if not _rid or float(getattr(_m, "confidence", 0) or 0) < 0.8:
-                            continue
+                        if not _rid:
+                            continue  # unresolved reference -> no target to authorize
                         if not await _assert_target_allowed(
                             _TargetRef(str(getattr(_m, "target_kind", "") or ""), str(_rid))
                         ):

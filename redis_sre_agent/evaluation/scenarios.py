@@ -155,6 +155,22 @@ class EvalTargetCatalogEntry(BaseModel):
     public_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvalAuthzConfig(BaseModel):
+    """Per-scenario infrastructure-authorization injection (behavioral authz evals).
+
+    When `enabled`, the runner turns on authz and installs a stub hook that allows ONLY the
+    resource_ids of `allowed_handles` (None => allow all), and sets a stub validated token —
+    so the turn is scoped exactly like a real authorized user. Off by default, so existing
+    scenarios are unaffected.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    allowed_handles: list[str] | None = None
+    token: str = "eval-authz-token"
+
+
 class EvalScopeConfig(BaseModel):
     """Target scope and binding declarations for a scenario."""
 
@@ -163,6 +179,7 @@ class EvalScopeConfig(BaseModel):
     turn_scope: EvalTurnScopeConfig = Field(default_factory=EvalTurnScopeConfig)
     target_catalog: list[EvalTargetCatalogEntry] = Field(default_factory=list)
     bound_targets: list[str] = Field(default_factory=list)
+    authz: EvalAuthzConfig = Field(default_factory=EvalAuthzConfig)
 
     @model_validator(mode="after")
     def _validate_target_bindings(self) -> "EvalScopeConfig":
@@ -178,6 +195,13 @@ class EvalScopeConfig(BaseModel):
                 "scope.bound_targets must reference handles declared in scope.target_catalog: "
                 + ", ".join(missing)
             )
+        if self.authz.allowed_handles:
+            authz_missing = [h for h in self.authz.allowed_handles if h not in seen_handles]
+            if authz_missing:
+                raise ValueError(
+                    "scope.authz.allowed_handles must reference handles declared in "
+                    "scope.target_catalog: " + ", ".join(authz_missing)
+                )
         return self
 
 
