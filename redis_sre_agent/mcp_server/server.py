@@ -3172,4 +3172,13 @@ def get_http_app():
 
 # ASGI app for uvicorn deployment
 # Usage: uvicorn redis_sre_agent.mcp_server.server:app --host 0.0.0.0 --port 8081
-app = mcp.streamable_http_app()
+# Serving is refused under infrastructure authorization (MCP has no authenticated principal).
+# The guard runs at ASGI startup/request time, NOT import time, so the module stays importable
+# by the CLI and other code that only needs `mcp` / `run_*` (importing must not raise).
+_mcp_http_app = mcp.streamable_http_app()
+
+
+async def app(scope, receive, send):
+    if scope.get("type") in ("lifespan", "http"):
+        _refuse_if_authz_enabled()
+    await _mcp_http_app(scope, receive, send)

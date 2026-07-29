@@ -173,8 +173,11 @@ def test_agent_does_not_call_unscoped_bulk_loaders():
     from redis_sre_agent.agent import langgraph_agent
 
     src = inspect.getsource(langgraph_agent)
-    # get_instances() may appear ONLY inside the _scoped_instances helper (exactly once).
-    assert src.count("await get_instances()") == 1, "unscoped get_instances() call in agent module"
+    # Unscoped get_instances() is allowed in EXACTLY two places: (1) inside the _scoped_instances
+    # helper, and (2) the instance-type persist path, which feeds save_instances() (REPLACE
+    # semantics) and MUST see the full registry or it deletes instances the principal can't access
+    # (Bugbot). A NEW unguarded bulk call for an authz-relevant read bumps this and fails here.
+    assert src.count("await get_instances()") == 2, "unexpected unscoped get_instances() call count"
     assert "await get_clusters()" not in src, "unscoped get_clusters() call in agent module"
 
 

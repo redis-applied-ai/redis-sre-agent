@@ -2274,7 +2274,10 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
 
                 # Save the updated instance type
                 try:
-                    instances = await _scoped_instances()
+                    # Persist path: save_instances() has REPLACE semantics (it deletes any stored
+                    # instance not in this list), so it MUST see the FULL registry. Scoping here
+                    # would permanently delete every instance the principal can't access.
+                    instances = await get_instances()
                     for i, inst in enumerate(instances):
                         if inst.id == target_instance.id:
                             instances[i] = target_instance

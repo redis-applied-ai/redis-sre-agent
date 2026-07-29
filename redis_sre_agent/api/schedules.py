@@ -138,6 +138,7 @@ async def get_schedule(schedule_id: str):
 @router.put("/{schedule_id}", response_model=Schedule)
 async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
     """Update a schedule."""
+    _reject_scheduling_if_authz_enabled()
     try:
         # Get existing schedule from Redis
         schedule_data = await _get_schedule(schedule_id)

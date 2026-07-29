@@ -9,7 +9,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from redis_sre_agent.api.schedules import create_schedule, trigger_schedule_now
+from redis_sre_agent.api.schedules import (
+    create_schedule,
+    trigger_schedule_now,
+    update_schedule,
+)
 from redis_sre_agent.core.auth import auth_status
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import scheduler_task
@@ -31,6 +35,29 @@ async def test_trigger_schedule_refused_when_authz_on(authz_on):
     with pytest.raises(HTTPException) as ei:
         await trigger_schedule_now("sched-1")
     assert ei.value.status_code == 400
+
+
+async def test_update_schedule_refused_when_authz_on(authz_on):
+    # Modifying an existing schedule is a scheduling surface too -> refuse under authz (Bugbot).
+    # Guard fires before touching the request body or Redis.
+    with pytest.raises(HTTPException) as ei:
+        await update_schedule("sched-1", SimpleNamespace())
+    assert ei.value.status_code == 400
+
+
+async def test_mcp_module_app_refuses_to_serve_when_authz_enabled(monkeypatch):
+    # The module-level ASGI `app` (uvicorn ...:app) must also refuse under authz, not just
+    # get_http_app(). The guard runs at ASGI startup/request time (Bugbot).
+    from redis_sre_agent.mcp_server import server as mcp_server
+
+    monkeypatch.setattr(settings, "infrastructure_authorization_enabled", True)
+
+    async def _noop(*a, **k):
+        return {}
+
+    for scope_type in ("lifespan", "http"):
+        with pytest.raises(RuntimeError):
+            await mcp_server.app({"type": scope_type}, _noop, _noop)
 
 
 async def test_scheduler_task_noops_when_authz_on(authz_on):
