@@ -117,7 +117,9 @@ def _load_hook() -> ScopeHook:
         raise RuntimeError("infrastructure_authorization_hook is not configured")
     module_path, sep, attr = path.partition(":")
     if not module_path or not sep or not attr:
-        raise RuntimeError(f"invalid infrastructure_authorization_hook {path!r}; expected 'module:callable'")
+        raise RuntimeError(
+            f"invalid infrastructure_authorization_hook {path!r}; expected 'module:callable'"
+        )
     module = importlib.import_module(module_path)
     hook = getattr(module, attr)
     _hook_cache = hook

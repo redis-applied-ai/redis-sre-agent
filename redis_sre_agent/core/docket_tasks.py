@@ -911,7 +911,8 @@ async def _complete_turn_authorization_denied(
     triage, high-confidence match) may pass an explicit `response_text` naming it.
     """
     response_text = (
-        response_text or "You are not authorized to access the requested target, or it does not exist."
+        response_text
+        or "You are not authorized to access the requested target, or it does not exist."
     )
     user_timestamp = datetime.now(timezone.utc).isoformat()
     assistant_message_id = str(ULID())
@@ -2387,7 +2388,8 @@ async def _process_agent_turn_impl(
                             _denied.append(_m)
                     if _denied:
                         _names = ", ".join(
-                            str(getattr(_m, "display_name", None) or _m.resource_id) for _m in _denied
+                            str(getattr(_m, "display_name", None) or _m.resource_id)
+                            for _m in _denied
                         )
                         await task_manager.add_task_update(
                             task_id,

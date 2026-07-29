@@ -46,8 +46,12 @@ class _FakeRedis:
 
 @pytest.fixture
 def fake_redis(monkeypatch):
-    monkeypatch.setattr(clusters_mod, "get_redis_client", lambda: _FakeRedis(json.dumps(_CLUSTER_DATA)))
-    monkeypatch.setattr(instances_mod, "get_redis_client", lambda: _FakeRedis(json.dumps(_INSTANCE_DATA)))
+    monkeypatch.setattr(
+        clusters_mod, "get_redis_client", lambda: _FakeRedis(json.dumps(_CLUSTER_DATA))
+    )
+    monkeypatch.setattr(
+        instances_mod, "get_redis_client", lambda: _FakeRedis(json.dumps(_INSTANCE_DATA))
+    )
 
 
 @pytest.fixture

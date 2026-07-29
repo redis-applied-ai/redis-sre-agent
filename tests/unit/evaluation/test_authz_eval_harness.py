@@ -15,7 +15,9 @@ from redis_sre_agent.evaluation.runtime import _apply_eval_authz
 def _scn(enabled, allowed_handles, catalog):
     return SimpleNamespace(
         scope=SimpleNamespace(
-            authz=SimpleNamespace(enabled=enabled, allowed_handles=allowed_handles, token="eval-tok"),
+            authz=SimpleNamespace(
+                enabled=enabled, allowed_handles=allowed_handles, token="eval-tok"
+            ),
             target_catalog=catalog,
         )
     )
@@ -40,9 +42,7 @@ async def test_eval_authz_scopes_to_allowed_handles(monkeypatch):
     try:
         assert settings.infrastructure_authorization_enabled is True
         assert authz.current_auth_token() == "eval-tok"
-        out = await scope_targets(
-            [TargetRef("instance", "res-a"), TargetRef("instance", "res-b")]
-        )
+        out = await scope_targets([TargetRef("instance", "res-a"), TargetRef("instance", "res-b")])
         assert [t.resource_id for t in out] == ["res-a"]  # only the allowed handle's resource
     finally:
         td()
@@ -55,9 +55,7 @@ async def test_eval_authz_allow_all_when_handles_none(monkeypatch):
     monkeypatch.setattr(settings, "infrastructure_authorization_enabled", False)
     td = _apply_eval_authz(_scn(True, None, [_entry("h_a", "res-a")]))
     try:
-        out = await scope_targets(
-            [TargetRef("instance", "res-a"), TargetRef("cluster", "res-z")]
-        )
+        out = await scope_targets([TargetRef("instance", "res-a"), TargetRef("cluster", "res-z")])
         assert {t.resource_id for t in out} == {"res-a", "res-z"}
     finally:
         td()
