@@ -54,7 +54,7 @@ class RedisCatalogDiscoveryBackend:
             get_target_catalog,
         )
 
-        docs = await get_target_catalog(user_id=request.user_id)
+        docs = await get_target_catalog(user_id=request.user_id, apply_scope=request.apply_scope)
         if not docs:
             return DiscoveryResponse(status="no_match")
 

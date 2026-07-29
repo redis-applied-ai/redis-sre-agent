@@ -1307,8 +1307,12 @@ async def resolve_target_query(
     allow_multiple: bool = False,
     max_results: int = 5,
     preferred_capabilities: Optional[Sequence[str]] = None,
+    apply_scope: bool = True,
 ) -> TargetResolutionResult:
-    """Resolve natural-language query text against the safe target catalog."""
+    """Resolve natural-language query text against the safe target catalog.
+
+    apply_scope=False bypasses authorization scoping (deep-triage unscoped-detection pass).
+    """
     service = TargetDiscoveryService()
     return await service.resolve(
         DiscoveryRequest(
@@ -1317,6 +1321,7 @@ async def resolve_target_query(
             max_results=max_results,
             preferred_capabilities=list(preferred_capabilities or []),
             user_id=user_id,
+            apply_scope=apply_scope,
         )
     )
 

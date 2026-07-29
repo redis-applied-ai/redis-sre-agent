@@ -88,6 +88,9 @@ class DiscoveryRequest(BaseModel):
     user_id: Optional[str] = None
     thread_id: Optional[str] = None
     task_id: Optional[str] = None
+    # apply_scope=False bypasses infrastructure-authorization scoping for the deep-triage
+    # unscoped-detection pass (to report which named targets are denied). Default scoped.
+    apply_scope: bool = True
 
 
 class DiscoveryCandidate(BaseModel):

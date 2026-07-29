@@ -902,13 +902,17 @@ async def _complete_turn_authorization_denied(
     thread_id: str,
     task_id: str,
     user_message: str,
+    response_text: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Complete a turn denied by infrastructure authorization for an explicitly-attached target.
+    """Complete a turn denied by infrastructure authorization.
 
-    The response is IDENTICAL for 'exists-but-denied' and 'does-not-exist' so it cannot be used
-    as an enumeration oracle.
+    Default response is IDENTICAL for 'exists-but-denied' and 'does-not-exist' so it cannot be
+    used as an enumeration oracle. Callers that already know the user named the target (deep
+    triage, high-confidence match) may pass an explicit `response_text` naming it.
     """
-    response_text = "You are not authorized to access the requested target, or it does not exist."
+    response_text = (
+        response_text or "You are not authorized to access the requested target, or it does not exist."
+    )
     user_timestamp = datetime.now(timezone.utc).isoformat()
     assistant_message_id = str(ULID())
     assistant_metadata = {
@@ -2351,6 +2355,63 @@ async def _process_agent_turn_impl(
                     max_results=5,
                     preferred_capabilities=["diagnostics", "admin", "cloud"],
                 )
+                # Authorization report (US-005): never silently drop a matched target. Resolve
+                # UNSCOPED to detect matches the principal may NOT access; name only HIGH-confidence
+                # matches (bounds the enumeration oracle). Some denied -> note + continue with the
+                # allowed subset; all denied -> reply-and-stop naming them.
+                if settings.infrastructure_authorization_enabled:
+                    from redis_sre_agent.core.authorization import (
+                        TargetRef as _TargetRef,
+                    )
+                    from redis_sre_agent.core.authorization import (
+                        assert_target_allowed as _assert_target_allowed,
+                    )
+
+                    _unscoped = await resolve_target_query(
+                        query=message,
+                        user_id=thread.metadata.user_id,
+                        allow_multiple=True,
+                        max_results=5,
+                        preferred_capabilities=["diagnostics", "admin", "cloud"],
+                        apply_scope=False,
+                    )
+                    _denied = []
+                    for _m in getattr(_unscoped, "matches", None) or []:
+                        _rid = getattr(_m, "resource_id", None)
+                        if not _rid or float(getattr(_m, "confidence", 0) or 0) < 0.8:
+                            continue
+                        if not await _assert_target_allowed(
+                            _TargetRef(str(getattr(_m, "target_kind", "") or ""), str(_rid))
+                        ):
+                            _denied.append(_m)
+                    if _denied:
+                        _names = ", ".join(
+                            str(getattr(_m, "display_name", None) or _m.resource_id) for _m in _denied
+                        )
+                        await task_manager.add_task_update(
+                            task_id,
+                            f"Not authorized for: {_names}. Continuing with the targets you can access.",
+                            "authorization_scoped",
+                            metadata={"unauthorized_targets": [_m.resource_id for _m in _denied]},
+                        )
+                        if (
+                            not resolution.selected_matches
+                            and resolution.status != DISCOVERY_STATUS_TOO_MANY_MATCHES
+                        ):
+                            result = await _complete_turn_authorization_denied(
+                                task_manager=task_manager,
+                                thread_manager=thread_manager,
+                                thread_id=thread_id,
+                                task_id=task_id,
+                                user_message=message,
+                                response_text=f"You are not authorized to access the requested target(s): {_names}.",
+                            )
+                            try:
+                                if _root_span is not None:
+                                    _root_span.end()
+                            except Exception:
+                                pass
+                            return result
                 if resolution.status == DISCOVERY_STATUS_TOO_MANY_MATCHES:
                     result = await _complete_deep_triage_target_limit_response(
                         task_manager=task_manager,
