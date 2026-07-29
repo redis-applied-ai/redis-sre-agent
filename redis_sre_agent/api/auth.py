@@ -41,6 +41,12 @@ async def require_auth(request: Request) -> dict:
     - enabled, no resource cfg -> 503 (fail-closed; never silently open)
     - enabled, discovery down  -> 503 (transient; auto-recovers, no restart)
     - enabled, bad/missing tok -> 401
+
+    On success it also sets the infrastructure-authorization principal (validated claims) in a
+    ContextVar so synchronous surfaces (cluster/instance list endpoints) enforce via the same
+    principal. No explicit reset needed here: Starlette handles each request in its own asyncio
+    task, and ContextVars are per-task, so there is no cross-request bleed. (The worker/docket
+    paths, which may reuse a context, DO reset in finally — see the @sre_task tops.)
     """
     if not settings.auth_enabled:
         return {}
@@ -64,6 +70,10 @@ async def require_auth(request: Request) -> dict:
         raise HTTPException(status_code=401, detail=exc.reason) from exc
 
     request.state.auth_claims = claims
+
+    from redis_sre_agent.core.authorization import set_principal
+
+    set_principal(claims)
     return claims
 
 

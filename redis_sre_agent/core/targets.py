@@ -918,6 +918,7 @@ async def sync_target_catalog(
 async def get_target_catalog(
     *,
     user_id: Optional[str] = None,
+    apply_scope: bool = True,
 ) -> List[TargetCatalogDoc]:
     """Return all safe target docs from the unified discovery index."""
     try:
@@ -996,6 +997,21 @@ async def get_target_catalog(
                 continue
             filtered.append(parsed)
         filtered.sort(key=lambda doc: _to_epoch(doc.updated_at), reverse=True)
+        # Authorization: scope the catalog to what the current principal may access, unless a
+        # caller explicitly opts out (apply_scope=False) for the deep-triage unscoped-detection
+        # pass. Passthrough when authz is disabled.
+        if apply_scope:
+            from redis_sre_agent.core.authorization import TargetRef, scope_models
+
+            filtered = await scope_models(
+                filtered,
+                lambda d: TargetRef(
+                    str(d.target_kind or ""),
+                    str(d.resource_id or ""),
+                    getattr(d, "name", "") or "",
+                    getattr(d, "environment", None),
+                ),
+            )
         return filtered
     except Exception:
         logger.exception("Failed to load target catalog")
@@ -1530,6 +1546,12 @@ async def materialize_bound_target_scope(
     replace_existing: bool = False,
 ) -> MaterializedTargetScope:
     """Resolve target matches into one authoritative bound-scope payload."""
+    # Authorization chokepoint: drop any match the current principal may not access before it
+    # is bound, so the deep-triage fan-out never operates on a denied target. Passthrough when
+    # authz is disabled.
+    from redis_sre_agent.core.authorization import scope_candidates
+
+    matches = await scope_candidates(list(matches))
     if thread_id:
         selected_bindings, generation = await attach_target_matches(
             thread_id=thread_id,

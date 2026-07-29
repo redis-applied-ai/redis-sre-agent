@@ -1803,6 +1803,13 @@ async def scheduler_task(
     2. Submits tasks to Docket with deduplication keys
     3. Updates schedule next_run_at times
     """
+    # Scheduling is disabled while infrastructure authorization is enabled (this phase):
+    # a pre-existing schedule must NOT fire unscoped. No-op so nothing is enqueued.
+    if settings.infrastructure_authorization_enabled:
+        logger.info(
+            "scheduler_task skipped: infrastructure authorization enabled (scheduling disabled)"
+        )
+        return {"status": "skipped", "reason": "infrastructure_authorization_enabled"}
     try:
         logger.info("Running scheduler task")
         current_time = datetime.now(timezone.utc)
@@ -3176,6 +3183,39 @@ async def resume_task_after_approval(
     return result
 
 
+async def _set_worker_authz_principal(context: Optional[Dict[str, Any]]):
+    """Resolve + set the infrastructure-authorization principal for a worker turn.
+
+    A worker turn runs after the request returned, so identity comes from the persisted
+    bearer in the turn context (captured at create_task). This is THE point where deferred
+    turns get scoped — set the principal here and every guarded loader/resolver the turn
+    hits enforces against it. Fan-out children (asyncio.create_task) inherit this context.
+
+    - authz off                       -> no-op (returns None).
+    - valid bearer                    -> claims (live re-validation catches expiry).
+    - invalid/expired bearer          -> None (fail closed).
+    - no bearer + explicit _authz_system -> system_principal (continuation/eval).
+    - otherwise (authz on, no identity) -> None (fail closed).
+    Returns the ContextVar reset token (or None) to reset in finally.
+    """
+    if not settings.infrastructure_authorization_enabled:
+        return None
+    from redis_sre_agent.core import auth as _core_auth
+    from redis_sre_agent.core.authorization import set_principal, system_principal
+
+    ctx = context or {}
+    bearer = ctx.get("_authz_bearer")
+    principal = None
+    if bearer:
+        try:
+            principal = await _core_auth.validate_token(bearer)
+        except Exception:
+            principal = None  # expired/invalid/discovery-down -> fail closed
+    elif ctx.get("_authz_system"):
+        principal = system_principal()
+    return set_principal(principal)
+
+
 @sre_task
 async def process_agent_turn(
     thread_id: str,
@@ -3188,13 +3228,19 @@ async def process_agent_turn(
     retry: Retry = Retry(attempts=3, delay=timedelta(seconds=5)),
 ) -> Dict[str, Any]:
     """Docket-managed wrapper around the in-process agent turn implementation."""
+    from redis_sre_agent.core.authorization import reset_principal
 
-    return await _process_agent_turn_impl(
-        thread_id=thread_id,
-        message=message,
-        context=context,
-        task_id=task_id,
-    )
+    _authz_token = await _set_worker_authz_principal(context)
+    try:
+        return await _process_agent_turn_impl(
+            thread_id=thread_id,
+            message=message,
+            context=context,
+            task_id=task_id,
+        )
+    finally:
+        if _authz_token is not None:
+            reset_principal(_authz_token)
 
 
 async def run_agent_with_progress(

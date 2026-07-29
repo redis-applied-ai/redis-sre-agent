@@ -494,15 +494,25 @@ async def query_instances(
         limit = max(1, min(limit, 1000))
         offset = max(0, offset)
 
+        # Authorization: when enabled, scope BEFORE count+paginate so `total` and the page
+        # reflect only accessible instances (no hidden-count leak). Fetch the filter-matched
+        # set (bounded), scope via the hook, then count/paginate in Python. When disabled,
+        # keep the server-side count/paging path unchanged.
+        from redis_sre_agent.core.authorization import TargetRef, scope_and_paginate
+        from redis_sre_agent.core.config import settings as _settings
+
+        _authz_on = _settings.infrastructure_authorization_enabled
+
         fq = FilterQuery(
             return_fields=["data"],
-            num_results=limit,
+            num_results=(1000 if _authz_on else limit),
         ).sort_by("updated_at", asc=False)
 
         if filter_expr is not None:
             fq.set_filter(filter_expr)
 
-        fq.paging(offset, limit)
+        if not _authz_on:
+            fq.paging(offset, limit)
 
         results = await index.query(fq)
 
@@ -523,6 +533,11 @@ async def query_instances(
                 instances.append(RedisInstance(**inst_data))
             except Exception as e:
                 logger.exception("Failed to load instance from query result: %s. Skipping.", e)
+
+        if _authz_on:
+            instances, total = await scope_and_paginate(
+                instances, TargetRef.from_instance, offset, limit
+            )
 
         return InstanceQueryResult(
             instances=instances,
@@ -842,7 +857,14 @@ async def get_instance_by_id(instance_id: str) -> Optional[RedisInstance]:
         if inst_data.get("admin_password"):
             inst_data["admin_password"] = get_secret_value(inst_data["admin_password"])
 
-        return RedisInstance(**inst_data)
+        instance = RedisInstance(**inst_data)
+        # Infrastructure authorization chokepoint: a denied principal gets None (the
+        # existing not-found path), so no caller can obtain an instance it may not access.
+        from redis_sre_agent.core.authorization import TargetRef, assert_target_allowed
+
+        if not await assert_target_allowed(TargetRef.from_instance(instance)):
+            return None
+        return instance
     except Exception as e:
         logger.exception("Failed to get instance by ID %s: %s", instance_id, e)
         return None

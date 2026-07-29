@@ -257,11 +257,23 @@ async def query_clusters(
         limit = max(1, min(limit, 1000))
         offset = max(0, offset)
 
-        fq = FilterQuery(return_fields=["data"], num_results=limit).sort_by("updated_at", asc=False)
+        # Authorization: when enabled, scope BEFORE count+paginate so `total` and the page
+        # reflect only accessible clusters (no hidden-count leak). Fetch the filter-matched
+        # set (bounded), scope via the hook, then count/paginate in Python. When disabled,
+        # keep the server-side count/paging path unchanged.
+        from redis_sre_agent.core.authorization import TargetRef, scope_and_paginate
+        from redis_sre_agent.core.config import settings as _settings
+
+        _authz_on = _settings.infrastructure_authorization_enabled
+
+        fq = FilterQuery(
+            return_fields=["data"], num_results=(1000 if _authz_on else limit)
+        ).sort_by("updated_at", asc=False)
 
         if filter_expr is not None:
             fq.set_filter(filter_expr)
-        fq.paging(offset, limit)
+        if not _authz_on:
+            fq.paging(offset, limit)
 
         results = await index.query(fq)
 
@@ -281,6 +293,11 @@ async def query_clusters(
                 clusters.append(RedisCluster(**cluster_data))
             except Exception as e:
                 logger.exception("Failed to load cluster from query result: %s. Skipping.", e)
+
+        if _authz_on:
+            clusters, total = await scope_and_paginate(
+                clusters, TargetRef.from_cluster, offset, limit
+            )
 
         return ClusterQueryResult(clusters=clusters, total=total, limit=limit, offset=offset)
 
@@ -440,7 +457,14 @@ async def get_cluster_by_id(cluster_id: str) -> Optional[RedisCluster]:
         if cluster_data.get("admin_password"):
             cluster_data["admin_password"] = get_secret_value(cluster_data["admin_password"])
 
-        return RedisCluster(**cluster_data)
+        cluster = RedisCluster(**cluster_data)
+        # Infrastructure authorization chokepoint: a denied principal gets None (the
+        # existing not-found path), so no caller can obtain a cluster it may not access.
+        from redis_sre_agent.core.authorization import TargetRef, assert_target_allowed
+
+        if not await assert_target_allowed(TargetRef.from_cluster(cluster)):
+            return None
+        return cluster
     except Exception as e:
         logger.exception("Failed to get cluster by ID %s: %s", cluster_id, e)
         return None

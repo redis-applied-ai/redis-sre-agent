@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 
 from docket import Docket
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from redis.exceptions import RedisError
 
 from redis_sre_agent.api.schemas import (
@@ -132,10 +132,16 @@ async def _enqueue_resume_task(
 
 
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
-async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
+async def create_task_endpoint(req: TaskCreateRequest, request: Request) -> TaskCreateResponse:
     context = dict(req.context or {})
     if req.user_id:
         context.setdefault("user_id", req.user_id)
+    # Capture the validated bearer so the deferred worker turn can re-validate it and resolve
+    # the authorization principal (the token is fresh here; req.user_id is NOT an authz input).
+    # Persisted with the turn context (accepted token-at-rest tradeoff; never logged).
+    _auth_header = request.headers.get("authorization") or ""
+    if _auth_header.lower().startswith("bearer "):
+        context["_authz_bearer"] = _auth_header.split(" ", 1)[1].strip()
     if context.get("instance_id") and context.get("cluster_id"):
         raise HTTPException(
             status_code=400,

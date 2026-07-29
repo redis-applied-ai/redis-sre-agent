@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Literal, Optional,
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     InitSettingsSource,
@@ -437,6 +437,31 @@ class Settings(BaseSettings):
         default=60,
         description="Allowed clock-skew leeway (s) when validating token exp/nbf.",
     )
+
+    # Infrastructure authorization (authz): per-principal scoping of clusters/instances
+    # via a pluggable, deployment-supplied hook. Separate from authn (auth_enabled) but
+    # depends on it. Off by default; fail-closed when on.
+    infrastructure_authorization_enabled: bool = Field(
+        default=False,
+        description="Enable per-principal authorization scoping of clusters/instances via a pluggable hook. Requires auth_enabled AND a configured hook; fail-closed.",
+    )
+    infrastructure_authorization_hook: Optional[str] = Field(
+        default=None,
+        description="Import path 'module:callable' resolving the authorization scope hook. REQUIRED when infrastructure_authorization_enabled.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_infrastructure_authorization(self):
+        # authz requires authn (can't scope by an identity you haven't verified) and a hook
+        # (there is no built-in principal->target mapping). Fail at startup, not silently open.
+        if self.infrastructure_authorization_enabled:
+            if not self.auth_enabled:
+                raise ValueError("infrastructure_authorization_enabled requires auth_enabled")
+            if not self.infrastructure_authorization_hook:
+                raise ValueError(
+                    "infrastructure_authorization_enabled requires infrastructure_authorization_hook"
+                )
+        return self
 
     # Vector Search / Embeddings
     embedding_provider: str = Field(
