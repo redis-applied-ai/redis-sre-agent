@@ -628,7 +628,6 @@ def _apply_eval_authz(scenario: EvalScenario):
         return [t for t in targets if t.resource_id in allowed_ids]
 
     prev_enabled = _settings.infrastructure_authorization_enabled
-    _authz.reset_hook_cache()
     _authz._hook_cache = _hook
     _settings.infrastructure_authorization_enabled = True
     reset_tok = _authz.set_auth_token(authz_cfg.token)
