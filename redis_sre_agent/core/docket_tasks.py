@@ -2338,6 +2338,72 @@ async def _process_agent_turn_impl(
                 user_preferences=None,  # Could be extended to include user preferences
             )
 
+        # Authorization (US-005): validate targets EXPLICITLY NAMED in THIS turn's message on
+        # EVERY triage turn — not only the first (zero-scope) one. Otherwise a thread already
+        # bound to an allowed target shadows a newly-named denied target and silently reuses the
+        # old target instead of denying (e.g. "triage inst-1" then "triage inst-3"). Resolve
+        # UNSCOPED so denied targets still resolve; a reference that resolves to nothing needs no
+        # authz. Some denied -> note + continue with the allowed subset; all denied -> deny.
+        if agent_type == AgentType.REDIS_TRIAGE and settings.infrastructure_authorization_enabled:
+            try:
+                from redis_sre_agent.core.authorization import (
+                    TargetRef as _TargetRef,
+                )
+                from redis_sre_agent.core.authorization import (
+                    assert_target_allowed as _assert_target_allowed,
+                )
+                from redis_sre_agent.core.targets import (
+                    resolve_target_query as _resolve_named_targets,
+                )
+
+                _named = await _resolve_named_targets(
+                    query=message,
+                    user_id=thread.metadata.user_id,
+                    allow_multiple=True,
+                    max_results=5,
+                    preferred_capabilities=["diagnostics", "admin", "cloud"],
+                    apply_scope=False,
+                )
+                _denied_ids: list[str] = []
+                _denied_names: list[str] = []
+                _allowed_named = 0
+                for _m in getattr(_named, "matches", None) or []:
+                    _rid = getattr(_m, "resource_id", None)
+                    if not _rid:
+                        continue  # unresolved reference -> no target to authorize
+                    if await _assert_target_allowed(
+                        _TargetRef(str(getattr(_m, "target_kind", "") or ""), str(_rid))
+                    ):
+                        _allowed_named += 1
+                    else:
+                        _denied_ids.append(str(_rid))
+                        _denied_names.append(str(getattr(_m, "display_name", None) or _rid))
+                if _denied_ids:
+                    _names = ", ".join(_denied_names)
+                    await task_manager.add_task_update(
+                        task_id,
+                        f"Not authorized for: {_names}. Continuing with the targets you can access.",
+                        "authorization_scoped",
+                        metadata={"unauthorized_targets": _denied_ids},
+                    )
+                    if not _allowed_named:
+                        result = await _complete_turn_authorization_denied(
+                            task_manager=task_manager,
+                            thread_manager=thread_manager,
+                            thread_id=thread_id,
+                            task_id=task_id,
+                            user_message=message,
+                            response_text=f"You are not authorized to access the requested target(s): {_names}.",
+                        )
+                        try:
+                            if _root_span is not None:
+                                _root_span.end()
+                        except Exception:
+                            pass
+                        return result
+            except Exception:
+                logger.exception("Failed to authorize named targets for triage turn")
+
         if (
             agent_type == AgentType.REDIS_TRIAGE
             and current_scope.scope_kind == "zero_scope"
@@ -2356,65 +2422,6 @@ async def _process_agent_turn_impl(
                     max_results=5,
                     preferred_capabilities=["diagnostics", "admin", "cloud"],
                 )
-                # Authorization report (US-005): never silently drop a RESOLVED target. Rule: if
-                # discovery resolves a reference to a target, validate that target; a reference
-                # that resolves to nothing needs no authz. Resolve UNSCOPED (so denied targets
-                # still resolve), then validate each resolved match. Some denied -> note + continue
-                # with the allowed subset; all denied -> reply-and-stop naming them.
-                if settings.infrastructure_authorization_enabled:
-                    from redis_sre_agent.core.authorization import (
-                        TargetRef as _TargetRef,
-                    )
-                    from redis_sre_agent.core.authorization import (
-                        assert_target_allowed as _assert_target_allowed,
-                    )
-
-                    _unscoped = await resolve_target_query(
-                        query=message,
-                        user_id=thread.metadata.user_id,
-                        allow_multiple=True,
-                        max_results=5,
-                        preferred_capabilities=["diagnostics", "admin", "cloud"],
-                        apply_scope=False,
-                    )
-                    _denied = []
-                    for _m in getattr(_unscoped, "matches", None) or []:
-                        _rid = getattr(_m, "resource_id", None)
-                        if not _rid:
-                            continue  # unresolved reference -> no target to authorize
-                        if not await _assert_target_allowed(
-                            _TargetRef(str(getattr(_m, "target_kind", "") or ""), str(_rid))
-                        ):
-                            _denied.append(_m)
-                    if _denied:
-                        _names = ", ".join(
-                            str(getattr(_m, "display_name", None) or _m.resource_id)
-                            for _m in _denied
-                        )
-                        await task_manager.add_task_update(
-                            task_id,
-                            f"Not authorized for: {_names}. Continuing with the targets you can access.",
-                            "authorization_scoped",
-                            metadata={"unauthorized_targets": [_m.resource_id for _m in _denied]},
-                        )
-                        if (
-                            not resolution.selected_matches
-                            and resolution.status != DISCOVERY_STATUS_TOO_MANY_MATCHES
-                        ):
-                            result = await _complete_turn_authorization_denied(
-                                task_manager=task_manager,
-                                thread_manager=thread_manager,
-                                thread_id=thread_id,
-                                task_id=task_id,
-                                user_message=message,
-                                response_text=f"You are not authorized to access the requested target(s): {_names}.",
-                            )
-                            try:
-                                if _root_span is not None:
-                                    _root_span.end()
-                            except Exception:
-                                pass
-                            return result
                 if resolution.status == DISCOVERY_STATUS_TOO_MANY_MATCHES:
                     result = await _complete_deep_triage_target_limit_response(
                         task_manager=task_manager,

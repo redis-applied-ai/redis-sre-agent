@@ -178,6 +178,28 @@ def test_agent_does_not_call_unscoped_bulk_loaders():
     assert "await get_clusters()" not in src, "unscoped get_clusters() call in agent module"
 
 
+def test_named_target_authz_deny_runs_on_every_triage_turn():
+    """Regression (multi-turn deny): a target NAMED in a follow-up message must be authorized on
+    EVERY triage turn, not only the first (zero-scope) one. Otherwise a thread already bound to an
+    allowed target shadows a newly-named denied target and silently reuses the old target instead
+    of denying (e.g. "triage inst-1" then "triage inst-3"). Guard: the named-target deny block must
+    appear BEFORE (i.e. not be nested inside) the zero_scope gate in docket_tasks.
+    """
+    import inspect
+
+    from redis_sre_agent.core import docket_tasks
+
+    src = inspect.getsource(docket_tasks)
+    deny_marker = "Failed to authorize named targets for triage turn"
+    zero_scope_gate = 'current_scope.scope_kind == "zero_scope"'
+    assert deny_marker in src, "named-target authz deny block missing"
+    assert zero_scope_gate in src, "zero_scope gate missing (test anchor stale)"
+    assert src.index(deny_marker) < src.index(zero_scope_gate), (
+        "named-target authz deny is gated behind zero_scope — follow-up denied targets would be "
+        "shadowed by an existing binding (multi-turn regression)"
+    )
+
+
 # --- the agent's scoped bulk-instance loader (US-008 fix) ---
 
 from redis_sre_agent.agent import langgraph_agent as _lg  # noqa: E402
