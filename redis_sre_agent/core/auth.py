@@ -144,6 +144,9 @@ def auth_status() -> Dict[str, Any]:
         "resource_configured": auth_resource_configured(),
         "surfaces": {kind: surface_enabled(kind) for kind in _SURFACES},
         "fail_closed": settings.auth_enabled and not auth_resource_configured(),
+        # Infrastructure authorization (authz) flag — surfaced so the UI can hide features
+        # that are unavailable when authz is on (e.g. scheduling). Advisory only; never gates.
+        "infrastructure_authorization_enabled": settings.infrastructure_authorization_enabled,
     }
 
 

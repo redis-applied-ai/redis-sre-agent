@@ -37,6 +37,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
 
 
+def _reject_scheduling_if_authz_enabled() -> None:
+    """Scheduling is unavailable when infrastructure authorization is enabled (this phase):
+    a scheduled run cannot be safely scoped to its creator's current access yet, so we
+    disable creation/triggering rather than run unscoped. See the scheduler_task no-op too."""
+    from redis_sre_agent.core.config import settings
+
+    if settings.infrastructure_authorization_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Scheduling is unavailable when infrastructure authorization is enabled.",
+        )
+
+
 @router.get("/", response_model=List[Schedule])
 async def list_schedules():
     """List all schedules."""
@@ -57,6 +70,7 @@ async def list_schedules():
 @router.post("/", response_model=Schedule)
 async def create_schedule(request: CreateScheduleRequest):
     """Create a new schedule."""
+    _reject_scheduling_if_authz_enabled()
     try:
         # Validate interval type
         if request.interval_type not in ["minutes", "hours", "days", "weeks"]:
@@ -124,6 +138,7 @@ async def get_schedule(schedule_id: str):
 @router.put("/{schedule_id}", response_model=Schedule)
 async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
     """Update a schedule."""
+    _reject_scheduling_if_authz_enabled()
     try:
         # Get existing schedule from Redis
         schedule_data = await _get_schedule(schedule_id)
@@ -308,6 +323,7 @@ async def list_schedule_runs(schedule_id: str):
 @router.post("/{schedule_id}/trigger", response_model=ScheduledRun)
 async def trigger_schedule_now(schedule_id: str):
     """Manually trigger a schedule to run immediately."""
+    _reject_scheduling_if_authz_enabled()
     try:
         # Check if schedule exists in Redis
         schedule_data = await _get_schedule(schedule_id)

@@ -6,8 +6,10 @@ and CLI, using standard OIDC with **Microsoft Entra ID as the default provider**
 dex, Ping, Google) works with no code change — everything is driven by the provider's
 discovery document.
 
-> **Scope:** identity only (who you are), not authorization (what you may do). MCP server
-> auth is deferred. There is **no static/long-lived API-key** path on any surface.
+> **Scope:** identity only (who you are), not authorization (what you may do) — for
+> per-principal scoping of clusters/instances see
+> [Infrastructure Authorization](infrastructure-authorization.md). MCP server auth is
+> deferred. There is **no static/long-lived API-key** path on any surface.
 
 ## Default: OFF
 

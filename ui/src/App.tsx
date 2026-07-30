@@ -15,7 +15,8 @@ import Settings from "./pages/Settings";
 import { useApp } from "./hooks/useApp";
 
 function App() {
-  const { currentUser, navigationItems, userMenuItems } = useApp();
+  const { currentUser, navigationItems, userMenuItems, schedulesDisabled } =
+    useApp();
 
   return (
     <Layout
@@ -59,7 +60,18 @@ function App() {
           path="/knowledge/document-chunks/:documentHash"
           element={<KnowledgeDocumentChunks />}
         />
-        <Route path="/schedules" element={<Schedules />} />
+        <Route
+          path="/schedules"
+          element={
+            schedulesDisabled ? (
+              <div className="p-6 text-muted-foreground">
+                Scheduling is unavailable while infrastructure authorization is enabled.
+              </div>
+            ) : (
+              <Schedules />
+            )
+          }
+        />
         <Route path="/settings" element={<Settings />} />
         {/* Redirect instances to settings with instances section */}
         <Route

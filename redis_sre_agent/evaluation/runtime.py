@@ -425,10 +425,30 @@ def _target_registry_override_scope(
     catalog_docs = _build_eval_target_catalog_docs(scenario)
     target_handle_lookup = _build_eval_target_handle_lookup(scenario)
 
-    async def _get_eval_target_catalog(*, user_id: str | None = None) -> list[TargetCatalogDoc]:
-        if not user_id:
-            return list(catalog_docs)
-        return [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+    async def _get_eval_target_catalog(
+        *, user_id: str | None = None, apply_scope: bool = True
+    ) -> list[TargetCatalogDoc]:
+        docs = (
+            list(catalog_docs)
+            if not user_id
+            else [doc for doc in catalog_docs if doc.user_id in {None, "", user_id}]
+        )
+        # Mirror the real get_target_catalog: apply infrastructure-authorization scoping unless
+        # the caller opts out (apply_scope=False, the deep-triage unscoped-detection pass). This
+        # lets authz behavioral scenarios exercise scoped vs unscoped resolution in the fixture.
+        if apply_scope:
+            from redis_sre_agent.core.authorization import TargetRef, scope_models
+
+            docs = await scope_models(
+                docs,
+                lambda d: TargetRef(
+                    str(d.target_kind or ""),
+                    str(d.resource_id or ""),
+                    getattr(d, "name", "") or "",
+                    getattr(d, "environment", None),
+                ),
+            )
+        return docs
 
     original_build_public_binding = TargetBindingService.build_public_binding
 
@@ -578,6 +598,49 @@ def _llm_mode_name(mode: Any) -> str:
     return str(value)
 
 
+def _apply_eval_authz(scenario: EvalScenario):
+    """Install per-scenario infrastructure authorization for a behavioral authz eval.
+
+    When `scenario.scope.authz.enabled`, turn authz on + install a stub hook that allows only
+    the resource_ids of `allowed_handles` (None => all), and set a stub validated token — so
+    the turn is scoped like a real authorized user. Returns a zero-arg teardown callable
+    (a no-op when authz is not declared). Idempotent restore of prior settings/token.
+    """
+    authz_cfg = getattr(scenario.scope, "authz", None)
+    if not authz_cfg or not authz_cfg.enabled:
+        return lambda: None
+
+    from redis_sre_agent.core import authorization as _authz
+    from redis_sre_agent.core.config import settings as _settings
+
+    allowed_ids = None
+    if authz_cfg.allowed_handles is not None:
+        by_handle = {e.handle: e for e in scenario.scope.target_catalog}
+        allowed_ids = {
+            by_handle[h].resource_id
+            for h in authz_cfg.allowed_handles
+            if h in by_handle and by_handle[h].resource_id
+        }
+
+    def _hook(auth_token, targets):
+        # targets are {type,id,name,environment} dicts; return the {"allowed_targets": [...]} dict.
+        if allowed_ids is None:
+            return {"allowed_targets": list(targets)}
+        return {"allowed_targets": [t for t in targets if t["id"] in allowed_ids]}
+
+    prev_enabled = _settings.infrastructure_authorization_enabled
+    _authz._hook_cache = _hook
+    _settings.infrastructure_authorization_enabled = True
+    reset_tok = _authz.set_auth_token(authz_cfg.token)
+
+    def _teardown():
+        _authz.reset_auth_token(reset_tok)
+        _settings.infrastructure_authorization_enabled = prev_enabled
+        _authz.reset_hook_cache()
+
+    return _teardown
+
+
 async def run_full_turn_scenario(
     scenario: EvalScenario,
     *,
@@ -655,13 +718,17 @@ async def run_full_turn_scenario(
                 await thread_manager.update_thread_context(thread_id, turn_context, merge=False)
 
                 active_turn_processor = turn_processor or _default_turn_processor
-                turn_result = await active_turn_processor(
-                    thread_id=thread_id,
-                    message=scenario.execution.query,
-                    context=turn_context,
-                    task_id=task_id,
-                    redis_client=redis_client,
-                )
+                _authz_teardown = _apply_eval_authz(scenario)
+                try:
+                    turn_result = await active_turn_processor(
+                        thread_id=thread_id,
+                        message=scenario.execution.query,
+                        context=turn_context,
+                        task_id=task_id,
+                        redis_client=redis_client,
+                    )
+                finally:
+                    _authz_teardown()
                 assistant_message_id = str(turn_result.get("message_id") or "").strip()
                 if assistant_message_id:
                     message_trace = await thread_manager.get_message_trace(assistant_message_id)

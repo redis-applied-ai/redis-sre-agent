@@ -1162,6 +1162,18 @@ export class SREAgentAPI {
     };
   }
 
+  async getInfraAuthorizationEnabled(): Promise<boolean> {
+    // Surfaced on /health.auth so the UI can hide features unavailable under authz (scheduling).
+    try {
+      const response = await fetch(`${this.tasksBaseUrl}/health`);
+      if (!response.ok) return false;
+      const healthData = await response.json();
+      return healthData?.auth?.infrastructure_authorization_enabled === true;
+    } catch {
+      return false;
+    }
+  }
+
   async checkHealth(): Promise<boolean> {
     try {
       const status = await this.getAgentStatus();

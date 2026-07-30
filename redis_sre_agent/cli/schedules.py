@@ -230,6 +230,11 @@ def schedules_create(
     as_json: bool,
 ):
     """Create a new schedule."""
+    from redis_sre_agent.core.config import settings
+
+    if settings.infrastructure_authorization_enabled:
+        click.echo("❌ Scheduling is unavailable when infrastructure authorization is enabled.")
+        return
 
     async def _create():
         import json as _json
@@ -490,6 +495,11 @@ def schedules_delete(schedule_id: str, yes: bool, as_json: bool):
 @click.option("--json", "as_json", is_flag=True, help="Output JSON")
 def schedules_run_now(schedule_id: str, as_json: bool):
     """Trigger a schedule to run immediately (enqueue an agent turn)."""
+    from redis_sre_agent.core.config import settings
+
+    if settings.infrastructure_authorization_enabled:
+        click.echo("❌ Scheduling is unavailable when infrastructure authorization is enabled.")
+        return
 
     async def _run():
         import json as _json

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 
 from docket import Docket
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from redis.exceptions import RedisError
 
 from redis_sre_agent.api.schemas import (
@@ -117,6 +117,7 @@ async def _enqueue_resume_task(
     decision,
     decision_by: str | None,
     decision_comment: str | None,
+    authz_bearer: str | None = None,
 ):
     """Schedule the resume worker using Docket's returned scheduler callable."""
 
@@ -128,14 +129,21 @@ async def _enqueue_resume_task(
         decision=decision_value,
         decision_by=decision_by,
         decision_comment=decision_comment,
+        authz_bearer=authz_bearer,
     )
 
 
 @router.post("/tasks", response_model=TaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
-async def create_task_endpoint(req: TaskCreateRequest) -> TaskCreateResponse:
+async def create_task_endpoint(req: TaskCreateRequest, request: Request) -> TaskCreateResponse:
     context = dict(req.context or {})
     if req.user_id:
         context.setdefault("user_id", req.user_id)
+    # Capture the validated bearer so the deferred worker turn can re-validate it and resolve
+    # the authorization principal (the token is fresh here; req.user_id is NOT an authz input).
+    # Persisted with the turn context (accepted token-at-rest tradeoff; never logged).
+    _auth_header = request.headers.get("authorization") or ""
+    if _auth_header.lower().startswith("bearer "):
+        context["_authz_bearer"] = _auth_header.split(" ", 1)[1].strip()
     if context.get("instance_id") and context.get("cluster_id"):
         raise HTTPException(
             status_code=400,
@@ -195,7 +203,15 @@ async def list_task_approvals(task_id: str) -> TaskApprovalListResponse:
 
 
 @router.post("/tasks/{task_id}/resume", response_model=TaskResponse)
-async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
+async def resume_task(task_id: str, req: TaskResumeRequest, request: Request) -> TaskResponse:
+    # Capture the approver's fresh bearer: the approver authorizes this resume, so their
+    # current access governs whether the gated tool may re-run (see resume_task_after_approval).
+    _auth_header = request.headers.get("authorization") or ""
+    _authz_bearer = (
+        _auth_header.split(" ", 1)[1].strip()
+        if _auth_header.lower().startswith("bearer ")
+        else None
+    )
     redis_client = get_redis_client()
     task_manager = TaskManager(redis_client=redis_client)
     state = await task_manager.get_task_state(task_id)
@@ -227,6 +243,7 @@ async def resume_task(task_id: str, req: TaskResumeRequest) -> TaskResponse:
                 decision=req.decision,
                 decision_by=req.decision_by,
                 decision_comment=req.decision_comment,
+                authz_bearer=_authz_bearer,
             )
     except ValueError as exc:
         message = str(exc)
