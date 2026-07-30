@@ -149,3 +149,6 @@ eval_reports
 specs/
 docs/superpowers/
 source_documents/packs
+
+# OMC planning artifacts (specs, plans, state) — never commit
+.omc/

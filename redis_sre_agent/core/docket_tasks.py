@@ -2371,7 +2371,7 @@ async def _process_agent_turn_impl(
                 user_preferences=None,  # Could be extended to include user preferences
             )
 
-        # Authorization (US-005): validate targets EXPLICITLY NAMED in THIS turn's message on
+        # Authorization: validate targets EXPLICITLY NAMED in THIS turn's message on
         # EVERY triage turn — not only the first (zero-scope) one. Otherwise a thread already
         # bound to an allowed target shadows a newly-named denied target and silently reuses the
         # old target instead of denying (e.g. "triage inst-1" then "triage inst-3"). Resolve

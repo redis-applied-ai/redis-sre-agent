@@ -45,7 +45,7 @@ class TargetRef:
     """The single identity shape the authorization hook receives.
 
     Each surface (RedisCluster/RedisInstance records, TargetCatalogDoc) adapts its native
-    object to/from this so ONE hook serves clusters and instances (AC-10).
+    object to/from this so ONE hook serves clusters and instances.
     """
 
     kind: str  # "cluster" | "instance"

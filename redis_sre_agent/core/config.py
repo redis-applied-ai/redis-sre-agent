@@ -376,7 +376,7 @@ class Settings(BaseSettings):
         description="LangCache API key (required when semantic_cache_enabled).",
     )
 
-    # OIDC SSO Authentication (authn only) — default OFF; see .omc/plans/entra-sso-implementation-plan.md
+    # OIDC SSO Authentication (authn only) — default OFF
     # Flat fields (NOT nested models): Settings has no env_nested_delimiter, so a nested model
     # would silently fail to bind from env (worst case: AUTH_ENABLED set but ignored => open agent).
     # Mirrors the flat semantic_cache_* / langcache_* precedent above.

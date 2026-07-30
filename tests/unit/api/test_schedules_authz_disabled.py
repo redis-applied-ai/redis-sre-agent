@@ -1,4 +1,4 @@
-"""US-006: scheduling is disabled when infrastructure authorization is enabled.
+"""Scheduling is disabled when infrastructure authorization is enabled.
 
 Both halves are covered: creation/trigger surfaces refuse, and the scheduler execution loop
 no-ops so a pre-existing schedule cannot fire unscoped. auth_status exposes the flag for the UI.
@@ -38,7 +38,7 @@ async def test_trigger_schedule_refused_when_authz_on(authz_on):
 
 
 async def test_update_schedule_refused_when_authz_on(authz_on):
-    # Modifying an existing schedule is a scheduling surface too -> refuse under authz (Bugbot).
+    # Modifying an existing schedule is a scheduling surface too -> refuse under authz.
     # Guard fires before touching the request body or Redis.
     with pytest.raises(HTTPException) as ei:
         await update_schedule("sched-1", SimpleNamespace())
@@ -47,7 +47,7 @@ async def test_update_schedule_refused_when_authz_on(authz_on):
 
 async def test_mcp_module_app_refuses_to_serve_when_authz_enabled(monkeypatch):
     # The module-level ASGI `app` (uvicorn ...:app) must also refuse under authz, not just
-    # get_http_app(). The guard runs at ASGI startup/request time (Bugbot).
+    # get_http_app(). The guard runs at ASGI startup/request time.
     from redis_sre_agent.mcp_server import server as mcp_server
 
     monkeypatch.setattr(settings, "infrastructure_authorization_enabled", True)

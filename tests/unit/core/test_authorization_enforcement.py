@@ -1,4 +1,4 @@
-"""Enforcement at the base target loaders (US-001).
+"""Enforcement at the base target loaders.
 
 The security invariant: no caller can obtain a RedisCluster/RedisInstance it may not
 access, because the base loaders (get_cluster_by_id / get_instance_by_id) route through
@@ -159,7 +159,7 @@ def test_chokepoint_guards_present():
 
     ponytail: this checks the enforcement call is present in the known chokepoints — it
     does not (yet) prove no NEW unguarded construction path exists elsewhere. The stronger
-    no-unguarded-construction AST scan is tracked for the hardening pass (US-008).
+    no-unguarded-construction AST scan is tracked as follow-up work.
     """
     import inspect
 
@@ -168,7 +168,7 @@ def test_chokepoint_guards_present():
 
 
 def test_agent_does_not_call_unscoped_bulk_loaders():
-    """Regression for the fail-open the architect caught (US-008): the agent must NOT call the
+    """Regression for a fail-open in the agent's bulk-loader use: the agent must NOT call the
     unscoped bulk loaders get_instances()/get_clusters() directly — only via the authz-scoped
     _scoped_instances() helper or the guarded get_*_by_id loaders. A new unguarded bulk call in
     the agent bumps the count and fails here.
@@ -181,7 +181,7 @@ def test_agent_does_not_call_unscoped_bulk_loaders():
     # Unscoped get_instances() is allowed in EXACTLY two places: (1) inside the _scoped_instances
     # helper, and (2) the instance-type persist path, which feeds save_instances() (REPLACE
     # semantics) and MUST see the full registry or it deletes instances the principal can't access
-    # (Bugbot). A NEW unguarded bulk call for an authz-relevant read bumps this and fails here.
+    # A NEW unguarded bulk call for an authz-relevant read bumps this and fails here.
     assert src.count("await get_instances()") == 2, "unexpected unscoped get_instances() call count"
     assert "await get_clusters()" not in src, "unscoped get_clusters() call in agent module"
 
@@ -208,7 +208,7 @@ def test_named_target_authz_deny_runs_on_every_triage_turn():
     )
 
 
-# --- the agent's scoped bulk-instance loader (US-008 fix) ---
+# --- the agent's scoped bulk-instance loader ---
 
 from redis_sre_agent.agent import langgraph_agent as _lg  # noqa: E402
 
@@ -248,7 +248,7 @@ async def test_agent_scoped_instances_passthrough_off(monkeypatch):
     assert await _lg._scoped_instances() == fakes
 
 
-# --- scope_candidates: drop denied bindings before materialization (US-001b) ---
+# --- scope_candidates: drop denied bindings before materialization ---
 
 from types import SimpleNamespace  # noqa: E402
 
@@ -295,7 +295,7 @@ async def test_scope_candidates_drops_candidate_without_resource_id(authz_on, mo
         authz.reset_auth_token(tok)
 
 
-# --- listing: scope-before-count/paginate (US-003, no hidden-count leak) ---
+# --- listing: scope-before-count/paginate (no hidden-count leak) ---
 
 from redis_sre_agent.core.authorization import scope_and_paginate, scope_models  # noqa: E402
 

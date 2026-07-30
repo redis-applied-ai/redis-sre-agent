@@ -43,7 +43,7 @@ def _allow(records):
     return {"allowed_targets": list(records)}
 
 
-# --- config validator (AC-2, AC-3) ---
+# --- config validator ---
 
 
 def test_authz_requires_authn():
@@ -77,7 +77,7 @@ def test_authz_off_by_default():
     assert Settings().infrastructure_authorization_enabled is False
 
 
-# --- passthrough when disabled (AC-1) ---
+# --- passthrough when disabled ---
 
 
 async def test_passthrough_when_disabled(monkeypatch):
@@ -85,7 +85,7 @@ async def test_passthrough_when_disabled(monkeypatch):
     assert await scope_targets([C1, I1]) == [C1, I1]
 
 
-# --- fail closed (AC-11) ---
+# --- fail closed ---
 
 
 async def test_fail_closed_no_principal(authz_on):
@@ -119,7 +119,7 @@ async def test_fail_closed_hook_timeout(authz_on, monkeypatch):
         authz.reset_auth_token(tok)
 
 
-# --- allowed subset, sync + async (AC-5/AC-10 core) ---
+# --- allowed subset, sync + async ---
 
 
 async def test_sync_hook_returns_subset(authz_on, monkeypatch):

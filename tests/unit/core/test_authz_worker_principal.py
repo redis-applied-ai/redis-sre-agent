@@ -1,4 +1,4 @@
-"""Worker-side identity resolution (US-002, token contract): _set_worker_auth_token.
+"""Worker-side identity resolution (token contract): _set_worker_auth_token.
 
 A deferred worker turn resolves its auth token from the persisted bearer, RE-VALIDATES it
 (authn), and sets the validated token; anything else fails closed. No system principal.
@@ -59,7 +59,7 @@ async def test_no_bearer_fail_closed(authz_on):
 
 
 def test_all_agent_tasks_set_and_reset_worker_token():
-    """Regression (Bugbot): every @sre_task that runs the agent / hits guarded loaders must set
+    """Regression: every @sre_task that runs the agent / hits guarded loaders must set
     the worker auth token at the top and reset it in a finally, or a reused worker context can
     leak a prior task's principal. process_chat_turn was missing this.
     """

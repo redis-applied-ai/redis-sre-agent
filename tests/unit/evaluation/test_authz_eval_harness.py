@@ -1,4 +1,4 @@
-"""US-007: the eval harness injects infrastructure authorization for authz behavioral scenarios.
+"""The eval harness injects infrastructure authorization for authz behavioral scenarios.
 
 Deterministic (no LLM): asserts _apply_eval_authz turns authz on, installs a stub hook scoped
 to `allowed_handles`, sets a validated token, and that teardown restores prior state.
