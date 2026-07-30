@@ -2,11 +2,11 @@ import { useLocation } from "react-router-dom";
 import type { NavigationItem, DropdownMenuItem } from "@radar/ui-kit";
 import { isAuthEnabled } from "../auth/oidcConfig";
 import { signOut } from "../auth/tokenStore";
-import { useInfraAuthzDisabled } from "./useInfraAuthzDisabled";
+import { useSchedulingDisabled } from "./useSchedulingDisabled";
 
 export const useApp = () => {
   const location = useLocation();
-  const schedulesDisabled = useInfraAuthzDisabled();
+  const schedulesDisabled = useSchedulingDisabled();
 
   const currentUser = {
     name: "SRE Admin",

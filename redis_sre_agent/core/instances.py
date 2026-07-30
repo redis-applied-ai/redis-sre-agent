@@ -495,9 +495,10 @@ async def query_instances(
         offset = max(0, offset)
 
         # Authorization: when enabled, scope BEFORE count+paginate so `total` and the page
-        # reflect only accessible instances (no hidden-count leak). Fetch the filter-matched
-        # set (bounded), scope via the hook, then count/paginate in Python. When disabled,
-        # keep the server-side count/paging path unchanged.
+        # reflect only accessible instances (no hidden-count leak). Fetch ALL filter-matched
+        # records (num_results=total) — authz must see every match to scope correctly, so a
+        # smaller cap would silently drop authorized targets past the cap — then scope via the
+        # hook and count/paginate in Python. When disabled, keep server-side count/paging.
         from redis_sre_agent.core.authorization import TargetRef, scope_and_paginate
         from redis_sre_agent.core.config import settings as _settings
 
@@ -505,7 +506,7 @@ async def query_instances(
 
         fq = FilterQuery(
             return_fields=["data"],
-            num_results=(1000 if _authz_on else limit),
+            num_results=(total if _authz_on else limit),
         ).sort_by("updated_at", asc=False)
 
         if filter_expr is not None:
