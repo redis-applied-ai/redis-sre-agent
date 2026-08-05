@@ -373,7 +373,16 @@ class Settings(BaseSettings):
     )
     langcache_api_key: Optional[SecretStr] = Field(
         default=None,
-        description="LangCache API key (required when semantic_cache_enabled).",
+        description="LangCache API key (required when semantic_cache_backend='langcache').",
+    )
+    semantic_cache_backend: Literal["redisvl", "langcache"] = Field(
+        default="redisvl",
+        description=(
+            "Semantic cache transport. 'redisvl' runs on this service's own Redis and "
+            "needs no external provisioning (embeddings computed client-side). "
+            "'langcache' uses the managed LangCache service and requires "
+            "langcache_cache_id + langcache_api_key."
+        ),
     )
 
     # OIDC SSO Authentication (authn only) — default OFF
