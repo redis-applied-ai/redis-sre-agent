@@ -36,7 +36,10 @@ _STORED_KEY = "sre_semantic_cache:contract"
 
 
 def test_contract_covers_every_protocol_method():
-    assert set(CacheBackend.__protocol_attrs__) == _COVERED_METHODS
+    # Read the methods off the class rather than `__protocol_attrs__`, which
+    # does not exist before Python 3.12 (CI runs 3.11 and 3.12).
+    declared = {name for name, value in vars(CacheBackend).items() if callable(value)}
+    assert {n for n in declared if not n.startswith("_")} == _COVERED_METHODS
 
 
 # -- backend construction ----------------------------------------------------
