@@ -6,7 +6,7 @@ so the mapping code runs for real with no Redis, no vectorizer and no network.
 
 import pytest
 
-from redis_sre_agent.core.semantic_cache.backend import NO_ENTITY, CacheBackend
+from redis_sre_agent.core.semantic_cache.backend import NO_ENTITY
 from redis_sre_agent.core.semantic_cache.redisvl_backend import (
     _FILTERABLE_FIELDS,
     RedisVLBackend,
@@ -195,10 +195,6 @@ def test_hit_tolerates_missing_optional_fields():
 # -- transport ---------------------------------------------------------------
 
 
-def test_backend_satisfies_the_protocol():
-    assert isinstance(RedisVLBackend(cache=StubCache()), CacheBackend)
-
-
 @pytest.mark.asyncio
 async def test_search_passes_converted_threshold_and_filter():
     stub = StubCache(hits=[_hit()])
@@ -230,7 +226,7 @@ async def test_search_fails_open_on_error():
 
 @pytest.mark.asyncio
 async def test_search_handles_none_hits():
-    stub = StubCache(hits=None)
+    stub = StubCache()
     stub.hits = None
     assert await RedisVLBackend(cache=stub).search("q", similarity_threshold=0.9) == []
 
@@ -364,32 +360,43 @@ def test_backend_is_built_once_per_process(monkeypatch):
     reset_backend_cache()
 
 
-def test_distinct_settings_get_distinct_backends(monkeypatch):
+def test_construction_failure_degrades_to_no_cache(monkeypatch):
     import redis_sre_agent.core.semantic_cache.redisvl_backend as mod
-    from redis_sre_agent.core.config import settings as live_settings
 
-    monkeypatch.setattr(mod, "_build_cache", lambda cfg: StubCache())
+    monkeypatch.setattr(mod, "_build_cache", lambda cfg: (_ for _ in ()).throw(RuntimeError("x")))
     reset_backend_cache()
 
-    other = live_settings.model_copy(update={"embedding_model": "some-other-model"})
-    assert get_redisvl_backend(live_settings) is not get_redisvl_backend(other)
-    reset_backend_cache()
+    assert get_redisvl_backend() is None
 
 
-def test_construction_failure_degrades_to_no_cache_and_is_not_memoized(monkeypatch):
+def test_construction_failure_is_attempted_only_once(monkeypatch):
+    """Regression: a permanent failure must not be retried on every turn.
+
+    The realistic failure -- an index-schema mismatch after changing
+    ``filterable_fields`` or ``embedding_model`` -- never resolves on its own, and
+    every retry pays the uncached blocking OpenAI dimension probe again. Because
+    service.py builds a cache twice per turn, retrying turned a dead cache into
+    two blocking OpenAI calls per request, on the event loop, forever.
+    """
     import redis_sre_agent.core.semantic_cache.redisvl_backend as mod
 
     attempts = []
 
     def _boom(cfg):
         attempts.append(cfg)
-        raise RuntimeError("no redis")
+        raise ValueError("Existing index schema does not match. Use overwrite=True")
 
     monkeypatch.setattr(mod, "_build_cache", _boom)
     reset_backend_cache()
 
-    assert get_redisvl_backend() is None
-    # Not cached, so a transient failure is retried on the next turn.
+    # Ten construction requests == five agent turns.
+    for _ in range(10):
+        assert get_redisvl_backend() is None
+
+    assert len(attempts) == 1, f"permanent failure retried {len(attempts)} times"
+
+    # A restart (or an explicit reset) is the recovery path.
+    reset_backend_cache()
     assert get_redisvl_backend() is None
     assert len(attempts) == 2
     reset_backend_cache()

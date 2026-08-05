@@ -29,6 +29,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from redisvl.query.filter import Tag
+
 from redis_sre_agent.core.config import Settings
 from redis_sre_agent.core.config import settings as global_settings
 from redis_sre_agent.core.semantic_cache.client import CacheEntry
@@ -86,8 +88,6 @@ def _filter_for(attributes: Optional[Dict[str, str]]) -> Any:
     ``Tag`` value renders as ``*`` -- match everything -- which would silently
     widen the query instead of narrowing it.
     """
-    from redisvl.query.filter import Tag
-
     expression = None
     for name in _ATTRIBUTE_FIELDS:
         value = (attributes or {}).get(name)
@@ -193,32 +193,19 @@ class RedisVLBackend:
         return None
 
 
-# Memoized per settings identity. Construction is expensive AND blocking:
+# Built once per process. Construction is expensive AND blocking:
 # `SemanticCache.__init__` does a synchronous Redis round trip, and
 # `create_vectorizer()` makes an *uncached* synchronous OpenAI call to discover
 # embedding dimensions (redisvl's `_set_model_dims` calls the private `_embed`,
 # bypassing its own EmbeddingsCache despite a comment claiming otherwise).
 # service.py builds a cache twice per turn, so without this every turn would pay
 # both costs twice.
-_BACKENDS: Dict[tuple, "RedisVLBackend"] = {}
-
-
-def _identity(cfg: Settings) -> tuple:
-    """Everything that determines which backend instance is the right one.
-
-    Spelled out because ``Settings`` is not hashable. ``vectorizer_factory`` is
-    included because it selects the embedding implementation; the module-global
-    override installed by ``set_vectorizer_factory`` cannot be keyed at all,
-    which is why that setter calls :func:`reset_backend_cache` instead.
-    """
-    return (
-        cfg.redis_url.get_secret_value(),
-        cfg.embedding_provider,
-        cfg.embedding_model,
-        cfg.embeddings_cache_ttl,
-        cfg.openai_base_url,
-        getattr(cfg, "vectorizer_factory", None),
-    )
+#
+# Not keyed on settings: `from_settings` uses global settings on every production
+# path, so one instance per process is the only shape that occurs. Tests that vary
+# settings call `reset_backend_cache`.
+_BACKEND: Optional["RedisVLBackend"] = None
+_BUILD_FAILED = False
 
 
 def _build_cache(cfg: Settings) -> Any:
@@ -241,7 +228,7 @@ def _build_cache(cfg: Settings) -> Any:
 
 
 def get_redisvl_backend(settings: Optional[Settings] = None) -> Optional[RedisVLBackend]:
-    """Return the process-wide backend for these settings, building it once.
+    """Return the process-wide backend, building it at most once.
 
     Deliberately synchronous. A plain function called from a coroutine has no
     await point inside it, so two concurrent turns cannot interleave through it
@@ -251,27 +238,33 @@ def get_redisvl_backend(settings: Optional[Settings] = None) -> Optional[RedisVL
     knowledge-search path already takes on the loop today.
 
     Returns None (and logs) if construction fails, so a misconfigured cache
-    degrades to "no cache" instead of breaking the agent. Failures are not
-    memoized, so a transient error is retried on the next turn.
+    degrades to "no cache" instead of breaking the agent.
+
+    A failure is remembered, deliberately. The realistic failure is *permanent* --
+    an index-schema mismatch after changing ``filterable_fields`` or
+    ``embedding_model`` -- and every retry pays the uncached blocking OpenAI
+    dimension probe again, twice per turn, on the event loop. So a broken cache
+    would not just be dead, it would actively slow every request. Trading
+    recovery-without-restart for that is worth it: this cache is a non-essential
+    optimization that already fails open, and a worker restart clears the flag.
     """
-    cfg = settings or global_settings
-    key = _identity(cfg)
-    backend = _BACKENDS.get(key)
-    if backend is not None:
-        return backend
+    global _BACKEND, _BUILD_FAILED
+    if _BACKEND is not None or _BUILD_FAILED:
+        return _BACKEND
     try:
-        backend = RedisVLBackend(_build_cache(cfg))
+        _BACKEND = RedisVLBackend(_build_cache(settings or global_settings))
     except Exception as exc:
+        _BUILD_FAILED = True
         logger.warning("redisvl semantic cache unavailable (disabling): %s", exc)
-        return None
-    _BACKENDS[key] = backend
-    return backend
+    return _BACKEND
 
 
 def reset_backend_cache() -> None:
-    """Drop memoized backends.
+    """Forget the memoized backend and any remembered failure.
 
-    Used by tests, and by ``set_vectorizer_factory`` since a module-global
-    factory override cannot be part of the memo key.
+    Used by tests, and by ``set_vectorizer_factory`` since a module-global factory
+    override cannot be detected from settings.
     """
-    _BACKENDS.clear()
+    global _BACKEND, _BUILD_FAILED
+    _BACKEND = None
+    _BUILD_FAILED = False
