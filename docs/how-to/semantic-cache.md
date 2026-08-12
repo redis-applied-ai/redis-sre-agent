@@ -11,6 +11,52 @@
 
 ---
 
+## Backends
+
+The cache strategy — canonical key, scope resolution, cacheability, provenance,
+tombstones, invalidation — is identical regardless of backend. Only the
+match-and-store transport differs, selected by `semantic_cache_backend`:
+
+| | `redisvl` (default) | `langcache` |
+|---|---|---|
+| Where it runs | This service's own Redis | Managed LangCache service |
+| Setup required | None | `langcache_cache_id` + `langcache_api_key` |
+| Embeddings | Client-side (this process) | Server-side |
+| Missing config | N/A | Degrades to no cache, with a warning |
+
+Both are gated by `semantic_cache_enabled`, which remains **off by default**.
+Enabling the cache on the `redisvl` backend needs no external provisioning, which
+is what makes the feature demonstrable on a plain local stack.
+
+One backend is active at a time. Switching backends abandons existing entries
+rather than migrating them; they expire on their own TTL (≤24h).
+
+### Divergences on the `redisvl` backend
+
+1. **No server-side exact-match tier.** LangCache tries `exact` then `semantic`;
+   redisvl is vector-only, so `search_strategy` is always reported as
+   `semantic`. Behaviourally equivalent in practice — identical text yields
+   distance 0, so an exact match still outranks a semantic neighbour.
+2. **A miss costs an embedding round trip.** Because embeddings are computed
+   client-side, a *novel* query must be embedded before the miss is known.
+   Repeated queries are free (`create_vectorizer` attaches an `EmbeddingsCache`),
+   but this is the main operational difference to watch: LangCache is one network
+   hop, redisvl is an OpenAI hop plus a Redis hop.
+3. **TTL-refresh-on-read is deliberately disabled.** `acheck()` refreshes the TTL
+   of every hit it returns, which would turn our fixed store-time TTLs into a
+   sliding window — a popular `latest` answer would then never expire, defeating
+   the short TTL it has precisely because it tracks a moving pointer. The backend
+   therefore never passes a cache-level `ttl`, and a test pins that invariant.
+4. **Entry ids are deterministic.** redisvl derives an entry id from
+   `hash(prompt, filters)`, so re-storing the same prompt and scope overwrites in
+   place, where LangCache mints a fresh `entryId` per set.
+5. **Schema changes are breaking.** Changing the filterable fields or
+   `embedding_model` makes redisvl's index-schema check raise, which fail-open
+   turns into a permanently dead cache behind a single warning. The index must be
+   dropped for the new schema to take effect.
+
+---
+
 ## What the Cache Contains
 
 An answer is cacheable only when all of these hold:
@@ -30,7 +76,7 @@ LangCache is a managed service — it owns embeddings, the vector index, similar
 | `prompt` | — | The canonical/rewritten question, the string LangCache embeds and matches on |
 | `response` | text | The served payload — the answer plus its source citations (titles/paths), serialized as JSON so a hit reconstructs sources with no extra read |
 | `entry_id` | — | Unique ID LangCache returns from `astore()`, our join key to the Redis-side structures |
-| `ttlMillis` | — | Per-entry expiry, fixed at store time (1h for latest, 24h for pinned). No refresh-on-hit |
+| `ttlMillis` | — | Per-entry expiry, fixed at store time (1h for latest, 24h for pinned). No refresh-on-hit on either backend — see divergence 3 for how that is preserved on `redisvl` |
 
 **Attributes (declared at cache creation, immutable, scalar, exact-equality filters):**
 
@@ -38,7 +84,7 @@ LangCache is a managed service — it owns embeddings, the vector index, similar
 |---|---|---|
 | `version` | `latest` / `7.8` / `7.4` | Lookup filter — never serve latest to a 7.2 query |
 | `cache_origin` | `dynamic` / `curated` | Distinguishes generated vs. pre-warmed (for warming) |
-| `entity_id` | `RET-4421` | Exact identifier gate set only on identifier queries when referencing a support ticket or specific Redis target name; pre-filters before similarity so `RET-4422` can't match `RET-4421` |
+| `entity_id` | `RET-4421` or `_none` | Exact identifier gate; pre-filters before similarity so `RET-4422` can't match `RET-4421`. **Always written**, using the `_none` sentinel when a query names no ticket — a tag filter cannot express "field absent", and an empty tag value compiles to `*` (match *everything*), so omitting it would let a general query match ticket-scoped entries. Collision-free: real ids must match `[A-Z]{2,}-\d+` |
 
 > **Note:** Attributes are a 1:1 relationship in LangCache. They are scalar exact-match filter fields, so any query with multiple attribute matches is skipped for now and scoped for a future iteration.
 
@@ -119,13 +165,15 @@ The only thing derived from provenance is the reverse index: one `SADD cache_pro
 
 1. Query comes in. Any query that is instance-scoped is bypassed entirely. Only `knowledge_only` turns hit the cache.
 2. Check `semantic_cache_enabled` flag. If off, straight to the agent, no cache calls.
-3. Connect to the cache. If creds are missing or disabled, returns `None` and exits cache flow.
+3. Build the configured backend. If it cannot be built — `langcache` without credentials, or `redisvl` failing to construct — returns `None` and exits the cache flow.
 4. Compute the canonical key on the raw query. Resolve the scope from that key:
    - **Version**: default `latest`
    - **Entity_id**: only a single support_ticket ID
    - **Multi-entity flag**: if enabled (≥ 2 tickets), treat as a miss, don't serve
-5. Query LangCache. If no entries or top similarity < 0.9, miss.
-6. Does the candidate's `entity_id` match the requested one? Mismatch = miss.
+5. Query the backend. If no entries come back, miss.
+6. Scan the returned entries for the first one at or above the similarity threshold whose `entity_id` matches the requested scope exactly, comparing sentinel-to-sentinel in both directions. If none qualifies, miss.
+
+   > Scanning rather than judging only the top hit is deliberate: a transport that ranks an out-of-scope near-miss first would otherwise produce a *false* miss while a valid in-scope answer sat right behind it.
 7. On a hit, reconstruct the `AgentResponse` (answer + citations) from the entry's response JSON, log the hit via `exact|semantic (similarity=..)`; close the client.
 
 > **Note:** Any errors are failed open, logged, and treated as a miss.

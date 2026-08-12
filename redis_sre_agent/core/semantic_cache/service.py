@@ -1,8 +1,13 @@
 """SemanticCache orchestrator: read (lookup) and write (store) + invalidation.
 
-This ties together the LangCache client (match + serve), the provenance store
+This ties together a cache backend (match + serve), the provenance store
 (invalidate), and the extraction/rewrite/cacheability helpers. It is the only
 object the agent and ingestion paths interact with.
+
+Backend-agnostic: everything here is strategy, reached through the four methods
+of :class:`~redis_sre_agent.core.semantic_cache.backend.CacheBackend`. Which
+transport is used is a settings choice (``semantic_cache_backend``); no logic in
+this module branches on it.
 
 Design references: read path §D, write path §H, invalidation §G, identifiers §I.
 """
@@ -22,9 +27,14 @@ if TYPE_CHECKING:
 
 from redis_sre_agent.core.config import Settings
 from redis_sre_agent.core.config import settings as global_settings
+from redis_sre_agent.core.semantic_cache.backend import NO_ENTITY, CacheBackend
 from redis_sre_agent.core.semantic_cache.cacheability import decide_cacheability
-from redis_sre_agent.core.semantic_cache.client import LangCacheClient
-from redis_sre_agent.core.semantic_cache.extraction import DEFAULT_VERSION, extract_cache_scope
+from redis_sre_agent.core.semantic_cache.client import CacheEntry, LangCacheClient
+from redis_sre_agent.core.semantic_cache.extraction import (
+    DEFAULT_VERSION,
+    CacheScope,
+    extract_cache_scope,
+)
 from redis_sre_agent.core.semantic_cache.provenance import ProvenanceStore, path_hash_for_source
 from redis_sre_agent.core.semantic_cache.rewrite import rewrite_query
 
@@ -35,13 +45,41 @@ _MAX_PROMPT_LEN = 1024
 _CACHE_ORIGIN_DYNAMIC = "dynamic"
 
 
+def build_backend(cfg: Settings) -> Optional[CacheBackend]:
+    """Build the configured cache transport, or None when it cannot run.
+
+    ``redisvl`` (the default) runs on this service's own Redis and needs no
+    external provisioning. ``langcache`` keeps its historical behaviour of
+    degrading to "no cache" when credentials are absent, so enabling the flag
+    without provisioning logs a warning rather than raising.
+    """
+    if cfg.semantic_cache_backend == "langcache":
+        if not cfg.langcache_cache_id or not cfg.langcache_api_key:
+            if cfg.semantic_cache_enabled:
+                logger.warning(
+                    "semantic_cache_enabled but LangCache credentials missing; disabling."
+                )
+            return None
+        return LangCacheClient(
+            server_url=cfg.langcache_server_url,
+            cache_id=cfg.langcache_cache_id.get_secret_value(),
+            api_key=cfg.langcache_api_key.get_secret_value(),
+        )
+
+    # Imported lazily so `redisvl`'s cache extension (and the vectorizer it
+    # builds) is only touched when this backend is actually selected.
+    from redis_sre_agent.core.semantic_cache.redisvl_backend import get_redisvl_backend
+
+    return get_redisvl_backend(cfg)
+
+
 class SemanticCache:
     """Semantic answer cache sitting above the knowledge-agent graph."""
 
     def __init__(
         self,
         *,
-        client: LangCacheClient,
+        client: CacheBackend,
         provenance: ProvenanceStore,
         similarity_threshold: float,
         ttl_latest_ms: int,
@@ -65,26 +103,19 @@ class SemanticCache:
     ) -> Optional["SemanticCache"]:
         """Build a SemanticCache from settings, or None if it cannot/should not run.
 
-        Returns None when LangCache credentials are missing. When
-        ``require_enabled`` is True (serve/store paths) it also returns None
-        while ``semantic_cache_enabled`` is False. Invalidation passes
-        ``require_enabled=False`` so push invalidation keeps running even with
-        the kill switch off (design §L). Callers treat None as "cache absent".
+        Returns None when the configured backend cannot be built (see
+        :func:`build_backend`). When ``require_enabled`` is True (serve/store
+        paths) it also returns None while ``semantic_cache_enabled`` is False.
+        Invalidation passes ``require_enabled=False`` so push invalidation keeps
+        running even with the kill switch off (design §L). Callers treat None as
+        "cache absent".
         """
         cfg = settings or global_settings
         if require_enabled and not cfg.semantic_cache_enabled:
             return None
-        if not cfg.langcache_cache_id or not cfg.langcache_api_key:
-            if cfg.semantic_cache_enabled:
-                logger.warning(
-                    "semantic_cache_enabled but LangCache credentials missing; disabling."
-                )
+        client = build_backend(cfg)
+        if client is None:
             return None
-        client = LangCacheClient(
-            server_url=cfg.langcache_server_url,
-            cache_id=cfg.langcache_cache_id.get_secret_value(),
-            api_key=cfg.langcache_api_key.get_secret_value(),
-        )
         provenance = ProvenanceStore(
             redis_client,
             tombstone_ttl_seconds=cfg.semantic_cache_inval_tombstone_ttl_seconds,
@@ -127,6 +158,31 @@ class SemanticCache:
 
     def _ttl_for_version(self, version: str) -> int:
         return self._ttl_latest_ms if version == DEFAULT_VERSION else self._ttl_pinned_ms
+
+    def _first_in_scope(
+        self, entries: Sequence[CacheEntry], scope: CacheScope
+    ) -> Optional[CacheEntry]:
+        """First entry above threshold whose entity scope matches exactly (§D note 4).
+
+        Scanning instead of trusting ``entries[0]`` removes the last dependence on
+        a backend's own filtering. If a transport ranks a near-miss from another
+        entity ahead of a valid in-scope entry, that entry is still found rather
+        than the lookup reporting a false miss.
+
+        The entity comparison normalizes BOTH sides: ``scope.entity_id`` is
+        Optional while stored attributes always carry an explicit value, so
+        comparing them raw would reject every general query. A general query must
+        not receive a ticket-scoped entry, and vice versa.
+        """
+        wanted = scope.entity_id or NO_ENTITY
+        for entry in entries:
+            if entry.similarity < self._threshold:
+                continue
+            if (entry.attributes.get("entity_id") or NO_ENTITY) != wanted:
+                logger.debug("semantic-cache post-filter reject: entity_id mismatch")
+                continue
+            return entry
+        return None
 
     # -- read path (§D) -------------------------------------------------------
 
@@ -173,9 +229,14 @@ class SemanticCache:
                 # single entity_id.
                 logger.debug("semantic-cache lookup skipped: multi-entity query")
                 return None
-            attributes: Dict[str, str] = {"version": scope.version}
-            if scope.entity_id:
-                attributes["entity_id"] = scope.entity_id
+            # entity_id is ALWAYS sent (NO_ENTITY when the query names none) so the
+            # backend filter is an exact equality match. Omitting it is not the
+            # same as "no entity": a tag filter cannot express absence, and an
+            # empty tag value renders as `*` — match everything.
+            attributes: Dict[str, str] = {
+                "version": scope.version,
+                "entity_id": scope.entity_id or NO_ENTITY,
+            }
 
             entries = await self._client.search(
                 key,
@@ -186,16 +247,9 @@ class SemanticCache:
                 logger.debug("semantic-cache miss")
                 return None
 
-            candidate = entries[0]
-            if candidate.similarity < self._threshold:
-                return None
-
-            # Post-filter safety net (§D note 4): the served entry's entity_id must
-            # EQUAL the requested one — symmetrically. A general query (no entity_id)
-            # must not receive a ticket-scoped entry, and vice versa. Holds
-            # regardless of whether LangCache pre- or post-filters on attributes.
-            if (candidate.attributes.get("entity_id") or None) != scope.entity_id:
-                logger.debug("semantic-cache post-filter reject: entity_id mismatch")
+            candidate = self._first_in_scope(entries, scope)
+            if candidate is None:
+                logger.debug("semantic-cache miss: no in-scope candidate")
                 return None
 
             response = self._reconstruct_response(candidate.response)
@@ -262,12 +316,13 @@ class SemanticCache:
                 # scope — deferred per §J, so don't store them under one ticket.
                 logger.debug("semantic-cache store skipped: multi-entity query")
                 return None
+            # Mirrors the lookup attribute map: entity_id is always written so the
+            # lookup filter can match it exactly on either backend.
             attributes: Dict[str, str] = {
                 "version": scope.version,
+                "entity_id": scope.entity_id or NO_ENTITY,
                 "cache_origin": _CACHE_ORIGIN_DYNAMIC,
             }
-            if scope.entity_id:
-                attributes["entity_id"] = scope.entity_id
 
             payload = json.dumps(
                 {"response": response, "search_results": list(search_results)}, default=str

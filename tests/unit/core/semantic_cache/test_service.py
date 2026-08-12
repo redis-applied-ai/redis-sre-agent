@@ -5,7 +5,8 @@ import json
 import fakeredis.aioredis
 import pytest
 
-from redis_sre_agent.core.semantic_cache.client import LangCacheEntry
+from redis_sre_agent.core.semantic_cache.backend import NO_ENTITY
+from redis_sre_agent.core.semantic_cache.client import CacheEntry
 from redis_sre_agent.core.semantic_cache.provenance import ProvenanceStore, path_hash_for_source
 from redis_sre_agent.core.semantic_cache.service import (
     SemanticCache,
@@ -14,7 +15,16 @@ from redis_sre_agent.core.semantic_cache.service import (
 )
 
 
-class FakeLangCache:
+class FakeBackend:
+    """Programmable ``CacheBackend`` double for exercising *strategy*.
+
+    Implements exactly the Protocol's four methods, which is what makes the tests
+    below evidence that service.py is transport-agnostic. Real-backend mapping is
+    covered separately in ``test_backend_contract.py``; the error hooks here
+    (``search_exc``, ``delete_fail``) exist to drive fail-open paths that are
+    awkward to force through a real transport.
+    """
+
     def __init__(self):
         self.search_result = []
         self.search_exc = None
@@ -92,7 +102,7 @@ def _make_cache(client, provenance):
 
 
 def _entry(response_payload, *, similarity=0.97, attributes=None, strategy="semantic"):
-    return LangCacheEntry(
+    return CacheEntry(
         id="a" * 32,
         prompt="q",
         response=json.dumps(response_payload),
@@ -107,7 +117,7 @@ def _entry(response_payload, *, similarity=0.97, attributes=None, strategy="sema
 
 @pytest.mark.asyncio
 async def test_lookup_hit_reconstructs_response_and_sources():
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_result = [
         _entry({"response": "cached answer", "search_results": [{"title": "Doc"}]})
     ]
@@ -121,7 +131,7 @@ async def test_lookup_hit_reconstructs_response_and_sources():
 
 @pytest.mark.asyncio
 async def test_lookup_miss_returns_none():
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_result = []
     cache = _make_cache(client, FakeProvenance())
     assert await cache.lookup("anything") is None
@@ -129,7 +139,7 @@ async def test_lookup_miss_returns_none():
 
 @pytest.mark.asyncio
 async def test_lookup_below_threshold_rejected():
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_result = [_entry({"response": "x"}, similarity=0.5)]
     cache = _make_cache(client, FakeProvenance())
     assert await cache.lookup("anything") is None
@@ -137,7 +147,7 @@ async def test_lookup_below_threshold_rejected():
 
 @pytest.mark.asyncio
 async def test_lookup_post_filter_rejects_entity_mismatch():
-    client = FakeLangCache()
+    client = FakeBackend()
     # Candidate is for RET-9999 but query asks about RET-4421.
     client.search_result = [
         _entry({"response": "wrong ticket"}, attributes={"entity_id": "RET-9999"})
@@ -152,7 +162,7 @@ async def test_lookup_post_filter_rejects_entity_mismatch():
 
 @pytest.mark.asyncio
 async def test_lookup_post_filter_accepts_entity_match():
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_result = [
         _entry({"response": "right ticket"}, attributes={"entity_id": "RET-4421"})
     ]
@@ -162,8 +172,100 @@ async def test_lookup_post_filter_accepts_entity_match():
 
 
 @pytest.mark.asyncio
+async def test_lookup_general_query_rejects_ticket_scoped_entry():
+    """The other direction of the scope check: general question, ticket answer.
+
+    Both sides of the comparison must be normalized. Comparing a stored
+    ``entity_id`` against a raw ``None`` scope would make this pass by accident
+    while the *general* case below silently rejected everything.
+    """
+    client = FakeBackend()
+    client.search_result = [
+        _entry({"response": "ticket answer"}, attributes={"entity_id": "RET-4421"})
+    ]
+    cache = _make_cache(client, FakeProvenance())
+
+    assert await cache.lookup("how do I tune maxmemory?") is None
+    # A general query still filters on entity_id, using the explicit sentinel.
+    assert client.search_calls[0]["attributes"]["entity_id"] == NO_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_lookup_general_query_accepts_general_entry():
+    client = FakeBackend()
+    client.search_result = [
+        _entry({"response": "general answer"}, attributes={"entity_id": NO_ENTITY})
+    ]
+    cache = _make_cache(client, FakeProvenance())
+
+    result = await cache.lookup("how do I tune maxmemory?")
+    assert result is not None and result.response == "general answer"
+
+
+@pytest.mark.asyncio
+async def test_lookup_serves_entry_behind_an_out_of_scope_top_hit():
+    """Regression: an out-of-scope top hit must not manufacture a miss.
+
+    Taking ``entries[0]`` unconditionally meant a ticket-scoped entry ranking
+    first would be rejected and reported as a miss, even with a perfectly good
+    general answer right behind it.
+    """
+    client = FakeBackend()
+    client.search_result = [
+        _entry({"response": "ticket answer"}, attributes={"entity_id": "RET-4421"}),
+        _entry({"response": "general answer"}, attributes={"entity_id": NO_ENTITY}),
+    ]
+    cache = _make_cache(client, FakeProvenance())
+
+    result = await cache.lookup("how do I tune maxmemory?")
+    assert result is not None and result.response == "general answer"
+
+
+@pytest.mark.asyncio
+async def test_lookup_skips_below_threshold_entry_to_reach_valid_one():
+    client = FakeBackend()
+    client.search_result = [
+        _entry({"response": "too weak"}, attributes={"entity_id": NO_ENTITY}, similarity=0.4),
+        _entry({"response": "strong enough"}, attributes={"entity_id": NO_ENTITY}),
+    ]
+    cache = _make_cache(client, FakeProvenance())
+
+    result = await cache.lookup("how do I tune maxmemory?")
+    assert result is not None and result.response == "strong enough"
+
+
+@pytest.mark.asyncio
+async def test_lookup_accepts_legacy_entry_without_entity_attribute():
+    """Entries stored before the sentinel existed carry no entity_id at all.
+
+    The read path normalizes a missing attribute to the sentinel, so a general
+    query still serves them rather than treating the whole pre-existing cache as
+    out of scope.
+    """
+    client = FakeBackend()
+    client.search_result = [_entry({"response": "legacy answer"}, attributes={})]
+    cache = _make_cache(client, FakeProvenance())
+
+    result = await cache.lookup("how do I tune maxmemory?")
+    assert result is not None and result.response == "legacy answer"
+
+
+@pytest.mark.asyncio
+async def test_store_writes_entity_sentinel_for_general_query():
+    client = FakeBackend()
+    cache = _make_cache(client, FakeProvenance())
+
+    await cache.store(
+        "how do I tune maxmemory?",
+        "answer",
+        [{"source_document_path": "docs/a.md"}],
+    )
+    assert client.set_calls[0]["attributes"]["entity_id"] == NO_ENTITY
+
+
+@pytest.mark.asyncio
 async def test_lookup_fails_open_on_client_error():
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_exc = RuntimeError("langcache down")
     cache = _make_cache(client, FakeProvenance())
     assert await cache.lookup("anything") is None
@@ -174,7 +276,7 @@ async def test_lookup_fails_open_on_client_error():
 
 @pytest.mark.asyncio
 async def test_store_grounded_writes_entry_and_index():
-    client = FakeLangCache()
+    client = FakeBackend()
     prov = FakeProvenance()
     cache = _make_cache(client, prov)
 
@@ -205,7 +307,7 @@ async def test_store_reuses_supplied_rewritten_key_without_calling_nano(monkeypa
 
     monkeypatch.setattr(service_mod, "rewrite_query", _boom)
 
-    client = FakeLangCache()
+    client = FakeBackend()
     cache = _make_cache(client, FakeProvenance())
     entry_id = await cache.store(
         "follow up?",
@@ -220,7 +322,7 @@ async def test_store_reuses_supplied_rewritten_key_without_calling_nano(monkeypa
 
 @pytest.mark.asyncio
 async def test_canonical_key_truncates_to_prompt_limit():
-    client = FakeLangCache()
+    client = FakeBackend()
     cache = _make_cache(client, FakeProvenance())
     key = await cache.canonical_key("x" * 5000, conversation_history=None)
     assert key == "x" * 1024
@@ -228,7 +330,7 @@ async def test_canonical_key_truncates_to_prompt_limit():
 
 @pytest.mark.asyncio
 async def test_store_ungrounded_skipped():
-    client = FakeLangCache()
+    client = FakeBackend()
     cache = _make_cache(client, FakeProvenance())
     entry_id = await cache.store("q", "answer", [])
     assert entry_id is None
@@ -237,7 +339,7 @@ async def test_store_ungrounded_skipped():
 
 @pytest.mark.asyncio
 async def test_store_skipped_when_tombstone_present_before_write():
-    client = FakeLangCache()
+    client = FakeBackend()
     prov = FakeProvenance(tombstone_sequence=[True])  # fresh tombstone before store
     cache = _make_cache(client, prov)
     entry_id = await cache.store("q", "answer", [{"source_document_path": "a.md"}])
@@ -247,7 +349,7 @@ async def test_store_skipped_when_tombstone_present_before_write():
 
 @pytest.mark.asyncio
 async def test_store_undone_when_tombstone_appears_during_write():
-    client = FakeLangCache()
+    client = FakeBackend()
     # False before write, True on the post-SADD recheck.
     prov = FakeProvenance(tombstone_sequence=[False, True])
     cache = _make_cache(client, prov)
@@ -261,7 +363,7 @@ async def test_store_undone_when_tombstone_appears_during_write():
 
 @pytest.mark.asyncio
 async def test_store_pinned_version_uses_longer_ttl():
-    client = FakeLangCache()
+    client = FakeBackend()
     cache = _make_cache(client, FakeProvenance())
     await cache.store("what changed in 7.8?", "answer", [{"source_document_path": "a.md"}])
     assert client.set_calls[0]["ttl"] == 86_400_000
@@ -273,7 +375,7 @@ async def test_store_pinned_version_uses_longer_ttl():
 
 @pytest.mark.asyncio
 async def test_invalidate_deletes_entries_and_writes_tombstone():
-    client = FakeLangCache()
+    client = FakeBackend()
     redis_client = fakeredis.aioredis.FakeRedis()
     store = ProvenanceStore(redis_client)
     cache = _make_cache(client, store)
@@ -327,7 +429,7 @@ async def test_store_version_resolved_from_rewritten_key_not_raw_query():
     version in the raw text, but the nano rewrite resolves it (e.g. 7.2). The
     stored entry must carry version=7.2 (+ pinned TTL), not latest.
     """
-    client = FakeLangCache()
+    client = FakeBackend()
     cache = _make_cache(client, FakeProvenance())
     await cache.store(
         "what about that version?",
@@ -342,7 +444,7 @@ async def test_store_version_resolved_from_rewritten_key_not_raw_query():
 
 @pytest.mark.asyncio
 async def test_lookup_version_resolved_from_rewritten_key():
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_result = []
     cache = _make_cache(client, FakeProvenance())
     await cache.lookup(
@@ -364,7 +466,7 @@ def test_path_hashes_ignores_source_fallback():
 
 @pytest.mark.asyncio
 async def test_store_without_source_document_path_records_no_reverse_index():
-    client = FakeLangCache()
+    client = FakeBackend()
     prov = FakeProvenance()
     cache = _make_cache(client, prov)
     entry_id = await cache.store("q", "answer", [{"source": "configuration", "title": "X"}])
@@ -375,7 +477,7 @@ async def test_store_without_source_document_path_records_no_reverse_index():
 @pytest.mark.asyncio
 async def test_lookup_rejects_ticket_entry_for_general_query():
     """A general query (no entity_id) must not be served a ticket-scoped entry."""
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_result = [
         _entry({"response": "ticket-scoped answer"}, attributes={"entity_id": "RET-4421"})
     ]
@@ -388,7 +490,7 @@ async def test_lookup_rejects_ticket_entry_for_general_query():
 async def test_meta_provenance_path_hashes_align_with_mixed_citations():
     """cache_meta provenance must pair each result with ITS OWN path_hash, even
     when some cited rows lack source_document_path (would misalign under zip)."""
-    client = FakeLangCache()
+    client = FakeBackend()
     prov = FakeProvenance()
     cache = _make_cache(client, prov)
     await cache.store(
@@ -413,7 +515,7 @@ async def test_meta_provenance_path_hashes_align_with_mixed_citations():
 async def test_store_rolls_back_when_provenance_recording_fails():
     """If reverse-index recording fails, the LangCache entry must be rolled back
     so it can't linger un-invalidatable (only TTL would reach it)."""
-    client = FakeLangCache()
+    client = FakeBackend()
     prov = FakeProvenance(record_ok=False)
     cache = _make_cache(client, prov)
     entry_id = await cache.store("q", "answer", [{"source_document_path": "a.md"}])
@@ -426,7 +528,7 @@ async def test_store_rolls_back_when_provenance_recording_fails():
 async def test_store_no_paths_not_rolled_back_on_meta_only_failure():
     """An entry with no source paths is TTL-only by design; a meta-only record
     failure should NOT delete an otherwise-servable entry."""
-    client = FakeLangCache()
+    client = FakeBackend()
     prov = FakeProvenance(record_ok=False)
     cache = _make_cache(client, prov)
     entry_id = await cache.store("q", "answer", [{"source": "configuration"}])
@@ -438,7 +540,7 @@ async def test_store_no_paths_not_rolled_back_on_meta_only_failure():
 async def test_invalidate_keeps_reverse_index_for_failed_deletes():
     """A failed LangCache delete must NOT drop its reverse-index link — the row
     may still exist and needs to stay invalidatable on a later retry."""
-    client = FakeLangCache()
+    client = FakeBackend()
     client.delete_fail = {"e_fail"}
     redis_client = fakeredis.aioredis.FakeRedis()
     store = ProvenanceStore(redis_client)
@@ -477,7 +579,7 @@ async def test_aclose_never_raises():
 async def test_invalidate_multi_path_shared_entry_clears_all_links():
     """An entry cited by several changed paths must be deleted once and have its
     link cleared from EVERY path's reverse-index set (no orphan on later paths)."""
-    client = FakeLangCache()
+    client = FakeBackend()
     redis_client = fakeredis.aioredis.FakeRedis()
     store = ProvenanceStore(redis_client)
     cache = _make_cache(client, store)
@@ -495,7 +597,7 @@ async def test_invalidate_multi_path_shared_entry_clears_all_links():
 
 @pytest.mark.asyncio
 async def test_lookup_skips_multi_entity_query():
-    client = FakeLangCache()
+    client = FakeBackend()
     client.search_result = [_entry({"response": "x"})]
     cache = _make_cache(client, FakeProvenance())
     result = await cache.lookup("compare RET-4421 and RET-4422")
@@ -505,7 +607,7 @@ async def test_lookup_skips_multi_entity_query():
 
 @pytest.mark.asyncio
 async def test_store_skips_multi_entity_query():
-    client = FakeLangCache()
+    client = FakeBackend()
     cache = _make_cache(client, FakeProvenance())
     entry_id = await cache.store(
         "compare RET-4421 and RET-4422", "answer", [{"source_document_path": "a.md"}]

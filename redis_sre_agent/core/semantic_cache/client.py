@@ -28,8 +28,13 @@ DEFAULT_SEARCH_STRATEGIES: Sequence[str] = ("exact", "semantic")
 
 
 @dataclass(frozen=True)
-class LangCacheEntry:
-    """A single cache entry returned by a search (api.yaml ``CacheEntry``)."""
+class CacheEntry:
+    """A single cache entry returned by a search (api.yaml ``CacheEntry``).
+
+    Backend-neutral: both transports map their native hit shape onto this. All
+    six fields are load-bearing -- ``response`` is what gets served and
+    ``attributes`` is what the scope check in service.py compares against.
+    """
 
     id: str
     prompt: str
@@ -39,7 +44,7 @@ class LangCacheEntry:
     search_strategy: str
 
     @classmethod
-    def from_payload(cls, payload: Dict[str, Any]) -> "LangCacheEntry":
+    def from_payload(cls, payload: Dict[str, Any]) -> "CacheEntry":
         return cls(
             id=str(payload.get("id", "")),
             prompt=str(payload.get("prompt", "")),
@@ -48,6 +53,10 @@ class LangCacheEntry:
             attributes=dict(payload.get("attributes") or {}),
             search_strategy=str(payload.get("searchStrategy", "")),
         )
+
+
+# Historical name from when LangCache was the only transport.
+LangCacheEntry = CacheEntry
 
 
 class LangCacheClient:
@@ -100,7 +109,7 @@ class LangCacheClient:
         similarity_threshold: float,
         attributes: Optional[Dict[str, str]] = None,
         search_strategies: Sequence[str] = DEFAULT_SEARCH_STRATEGIES,
-    ) -> List[LangCacheEntry]:
+    ) -> List[CacheEntry]:
         """Search the cache. Returns matching entries (possibly empty) or [] on error."""
         body: Dict[str, Any] = {
             "prompt": prompt,
@@ -114,7 +123,7 @@ class LangCacheClient:
             resp = await client.post(self._url("/entries/search"), json=body, headers=self._headers)
             resp.raise_for_status()
             data = resp.json().get("data") or []
-            return [LangCacheEntry.from_payload(item) for item in data]
+            return [CacheEntry.from_payload(item) for item in data]
         except Exception as exc:
             logger.warning("LangCache search failed (fail-open miss): %s", exc)
             return []
