@@ -43,11 +43,11 @@ def _print_instances_table(items: List[core_instances.RedisInstance], limit: int
 
     console = Console()
     table = Table(title="Redis Instances", show_lines=False)
-    table.add_column("ID", no_wrap=True)
+    table.add_column("ID", overflow="fold")
     table.add_column("Name")
-    table.add_column("Env", no_wrap=True)
-    table.add_column("Type", no_wrap=True)
-    table.add_column("Cluster ID", no_wrap=True)
+    table.add_column("Env")
+    table.add_column("Type")
+    table.add_column("Cluster ID")
     table.add_column("URL (masked)")
 
     for inst in items[:limit]:

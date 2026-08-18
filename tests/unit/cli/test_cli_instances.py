@@ -2,9 +2,11 @@
 
 import logging
 import os
+from io import StringIO
 from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
+from rich.console import Console as RichConsole
 
 from redis_sre_agent.cli.instance import instance
 from redis_sre_agent.core import clusters as core_clusters
@@ -52,6 +54,37 @@ def test_instances_list_json_with_item():
     assert result.exit_code == 0
     assert "redis-dev-123" in result.output
     assert "dev-cache" in result.output
+
+
+def test_instances_list_pretty_output_does_not_truncate_id():
+    runner = CliRunner()
+    instance_id = "redis-development-01KT8TD0C4NWSP02TBSK461ABC"
+    item = core_instances.RedisInstance(
+        id=instance_id,
+        name="dev-cache",
+        connection_url="redis://localhost:6380/0",
+        environment="development",
+        usage="cache",
+        description="Dev cache",
+        instance_type="unknown",
+    )
+
+    for width in (40, 60, 80):
+        output = StringIO()
+        console = RichConsole(file=output, width=width, color_system=None)
+        with (
+            patch.object(core_instances, "get_instances", new=AsyncMock(return_value=[item])),
+            patch("redis_sre_agent.cli.instance.Console", return_value=console),
+        ):
+            result = runner.invoke(instance, ["list"])
+
+        assert result.exit_code == 0
+        rendered_id = "".join(
+            line.split("│")[1].strip()
+            for line in output.getvalue().splitlines()
+            if line.startswith("│")
+        )
+        assert rendered_id == instance_id, f"ID was truncated at console width {width}"
 
 
 def test_instances_create_logs_exception_trace_when_debug_enabled(caplog):
