@@ -22,6 +22,9 @@ EXCLUDED_CLI_COMMAND_PATHS = frozenset(
         "knowledge-pack build",
         "knowledge-pack inspect",
         "knowledge-pack load",
+        # Human-only OIDC auth; no MCP equivalent (MCP auth is deferred, app-to-app).
+        "login",
+        "logout",
         "mcp list-tools",
         "mcp serve",
         "worker start",

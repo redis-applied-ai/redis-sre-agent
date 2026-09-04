@@ -16,7 +16,8 @@ import Settings from "./pages/Settings";
 import { useApp } from "./hooks/useApp";
 
 function App() {
-  const { currentUser, navigationItems, userMenuItems } = useApp();
+  const { currentUser, navigationItems, userMenuItems, schedulesDisabled } =
+    useApp();
 
   return (
     <Layout
@@ -48,6 +49,10 @@ function App() {
       contentClassName="app-content-shell"
     >
       <Routes>
+        {/* OIDC redirect target: react-oidc-context processes the code before this
+            renders (RequireAuth gates on auth), so just hand off into the app. This
+            route is what makes the post-login landing work without a manual reload. */}
+        <Route path="/callback" element={<Navigate to="/" replace />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/chat" element={<Triage />} />
         <Route path="/triage" element={<Navigate to="/chat" replace />} />
@@ -56,7 +61,19 @@ function App() {
           path="/knowledge/document-chunks/:documentHash"
           element={<KnowledgeDocumentChunks />}
         />
-        <Route path="/schedules" element={<Schedules />} />
+        <Route
+          path="/schedules"
+          element={
+            schedulesDisabled ? (
+              <div className="p-6 text-muted-foreground">
+                Scheduling is unavailable while infrastructure authorization is enabled.
+              </div>
+            ) : (
+              <Schedules />
+            )
+          }
+        />
+
         <Route path="/support-packages" element={<SupportPackages />} />
         <Route path="/settings" element={<Settings />} />
         {/* Redirect instances to settings with instances section */}

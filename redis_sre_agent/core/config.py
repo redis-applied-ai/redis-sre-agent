@@ -2,15 +2,16 @@
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     InitSettingsSource,
     JsonConfigSettingsSource,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -341,6 +342,136 @@ class Settings(BaseSettings):
         default="gpt-5-nano", description="OpenAI model for very simple classification/triage"
     )
 
+    # Semantic Answer Cache (LangCache) — default OFF; see docs/design/semantic-cache-knowledge-agent.md
+    semantic_cache_enabled: bool = Field(
+        default=False,
+        description="Enable the semantic answer cache in front of the knowledge agent (serve + store).",
+    )
+    semantic_cache_similarity_threshold: float = Field(
+        default=0.9,
+        description="LangCache similarity threshold for a cache hit (higher = stricter).",
+    )
+    semantic_cache_ttl_latest_ms: int = Field(
+        default=60 * 60 * 1000,
+        description="Store-time TTL (ms) for version='latest' entries (moving pointer => short).",
+    )
+    semantic_cache_ttl_pinned_ms: int = Field(
+        default=24 * 60 * 60 * 1000,
+        description="Store-time TTL (ms) for pinned-version entries (stable => longer).",
+    )
+    semantic_cache_inval_tombstone_ttl_seconds: int = Field(
+        default=120,
+        description="TTL (s) for cache_inval write-vs-invalidate tombstones in our Redis.",
+    )
+    langcache_server_url: str = Field(
+        default="https://aws-us-east-1.langcache.redis.io",
+        description="Base URL for the managed LangCache service.",
+    )
+    langcache_cache_id: Optional[SecretStr] = Field(
+        default=None,
+        description="LangCache cache identifier (required when semantic_cache_enabled).",
+    )
+    langcache_api_key: Optional[SecretStr] = Field(
+        default=None,
+        description="LangCache API key (required when semantic_cache_backend='langcache').",
+    )
+    semantic_cache_backend: Literal["redisvl", "langcache"] = Field(
+        default="redisvl",
+        description=(
+            "Semantic cache transport. 'redisvl' runs on this service's own Redis and "
+            "needs no external provisioning (embeddings computed client-side). "
+            "'langcache' uses the managed LangCache service and requires "
+            "langcache_cache_id + langcache_api_key."
+        ),
+    )
+
+    # OIDC SSO Authentication (authn only) — default OFF
+    # Flat fields (NOT nested models): Settings has no env_nested_delimiter, so a nested model
+    # would silently fail to bind from env (worst case: AUTH_ENABLED set but ignored => open agent).
+    # Mirrors the flat semantic_cache_* / langcache_* precedent above.
+    auth_enabled: bool = Field(
+        default=False,
+        description="Enable OIDC SSO authentication on all in-scope surfaces (UI/API/WS/CLI). Default OFF keeps the open agent working; when ON, missing resource config is fail-closed.",
+    )
+    auth_issuer_url: Optional[str] = Field(
+        default=None,
+        description="OIDC issuer URL; discovery is read from {issuer}/.well-known/openid-configuration. REQUIRED when auth_enabled.",
+    )
+    auth_audience: Optional[str] = Field(
+        default=None,
+        description="Expected token audience (the API resource identifier). REQUIRED when auth_enabled.",
+    )
+    # NoDecode: stop pydantic-settings from JSON-decoding this list env var at the source
+    # level, so the validator below can accept an operator-friendly comma/space-separated string.
+    auth_scopes: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: ["openid", "profile", "email"],
+        description="OIDC scopes requested by the login/device-code flows. As an env var, "
+        "give a comma- or space-separated string (e.g. AUTH_SCOPES=openid,profile,email).",
+    )
+
+    @field_validator("auth_scopes", mode="before")
+    @classmethod
+    def _split_auth_scopes(cls, v):
+        # Env vars arrive as a plain string; accept comma/space-separated (operator-friendly).
+        # A real list (config file / default) passes through unchanged.
+        if isinstance(v, str):
+            return [s for s in v.replace(",", " ").split() if s]
+        return v
+
+    auth_ui_client_id: Optional[str] = Field(
+        default=None,
+        description="Public SPA client_id for the UI (auth-code + PKCE). Set => UI login enabled (partial registration).",
+    )
+    auth_cli_client_id: Optional[str] = Field(
+        default=None,
+        description="Public client_id for the CLI device-code flow. Set => CLI login enabled (partial registration).",
+    )
+    auth_api_client_id: Optional[str] = Field(
+        default=None,
+        description="Confidential client_id for the API browser-login flow (/auth/login). Set => API login enabled (partial registration).",
+    )
+    auth_api_client_secret: Optional[SecretStr] = Field(
+        default=None,
+        description="Confidential client secret for the API browser-login flow. Required when auth_api_client_id is set.",
+    )
+    auth_api_public_base_url: Optional[str] = Field(
+        default=None,
+        description="Public base URL the API is reachable at in this deployment (e.g. https://sre-agent.example.com). Server derives /auth/callback and the logout post_logout_redirect_uri from it. REQUIRED when the API login surface (auth_api_client_id) is enabled; never derived from request Host headers.",
+    )
+    auth_jwks_cache_ttl_seconds: int = Field(
+        default=3600,
+        description="TTL (s) for the cached OIDC discovery document / JWKS metadata.",
+    )
+    auth_clock_skew_leeway_seconds: int = Field(
+        default=60,
+        description="Allowed clock-skew leeway (s) when validating token exp/nbf.",
+    )
+
+    # Infrastructure authorization (authz): per-principal scoping of clusters/instances
+    # via a pluggable, deployment-supplied hook. Separate from authn (auth_enabled) but
+    # depends on it. Off by default; fail-closed when on.
+    infrastructure_authorization_enabled: bool = Field(
+        default=False,
+        description="Enable per-principal authorization scoping of clusters/instances via a pluggable hook. Requires auth_enabled AND a configured hook; fail-closed.",
+    )
+    infrastructure_authorization_hook: Optional[str] = Field(
+        default=None,
+        description="Import path 'module:callable' resolving the authorization scope hook. REQUIRED when infrastructure_authorization_enabled.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_infrastructure_authorization(self):
+        # authz requires authn (can't scope by an identity you haven't verified) and a hook
+        # (there is no built-in principal->target mapping). Fail at startup, not silently open.
+        if self.infrastructure_authorization_enabled:
+            if not self.auth_enabled:
+                raise ValueError("infrastructure_authorization_enabled requires auth_enabled")
+            if not self.infrastructure_authorization_hook:
+                raise ValueError(
+                    "infrastructure_authorization_enabled requires infrastructure_authorization_hook"
+                )
+        return self
+
     # Vector Search / Embeddings
     embedding_provider: str = Field(
         default="openai",
@@ -555,7 +686,13 @@ class Settings(BaseSettings):
     grafana_api_key: Optional[str] = Field(default=None, description="Grafana API key")
 
     # Security
-    api_key: Optional[str] = Field(default=None, description="API authentication key")
+    # DEPRECATED / UNUSED: not read by any request path. Do NOT wire this into auth —
+    # authentication is OIDC bearer-JWT only (see core/auth.py). A static/long-lived
+    # API key is explicitly a non-goal (AC-9); adding one here would reintroduce it.
+    api_key: Optional[str] = Field(
+        default=None,
+        description="DEPRECATED, unused. Not an auth path — use OIDC (auth_* settings).",
+    )
     allowed_hosts: list[str] = Field(default=["*"], description="Allowed hosts for CORS")
 
     # Support Package Configuration
@@ -614,38 +751,13 @@ class Settings(BaseSettings):
     )
     skill_backend_kind: Literal["redis", "custom"] = Field(
         default="redis",
-        description="Runtime skill backend selection. 'redis' uses the shipped Redis backend; "
+        description="Skill backend selection. 'redis' uses the shipped Redis backend; "
         "'custom' loads a deployment-provided implementation.",
     )
     skill_backend_class: Optional[str] = Field(
         default=None,
         description="Dot-path to a custom SkillBackend implementation when "
         "skill_backend_kind='custom'.",
-    )
-    skills_api_base_url: Optional[str] = Field(
-        default=None,
-        description="Base URL for the runtime-owned Skills facade when using the proxy-backed "
-        "workspace skill backend.",
-    )
-    skills_api_tenant_id: Optional[str] = Field(
-        default=None,
-        description="Tenant id used when calling the runtime-owned Skills facade.",
-    )
-    skills_api_project_id: Optional[str] = Field(
-        default=None,
-        description="Project id used when calling the runtime-owned Skills facade.",
-    )
-    skills_api_agent_id: Optional[str] = Field(
-        default=None,
-        description="Agent app id used when calling the runtime-owned Skills facade.",
-    )
-    skills_api_token: Optional[str] = Field(
-        default=None,
-        description="Optional bearer token for the runtime-owned Skills facade.",
-    )
-    skills_api_timeout_seconds: float = Field(
-        default=15.0,
-        description="HTTP timeout in seconds for the runtime-owned Skills facade.",
     )
     skill_reference_char_budget: int = Field(
         default=12000,

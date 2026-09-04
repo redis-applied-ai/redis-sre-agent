@@ -183,7 +183,7 @@ services:
       - AGENT_MEMORY_BASE_URL=http://agent-memory-server:8000
       # OTEL: export spans to Tempo via OTLP HTTP
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
-      - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.6.0,deployment.environment=dev
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-agent,service.version=0.7.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
@@ -226,7 +226,7 @@ services:
       - AGENT_MEMORY_BASE_URL=http://agent-memory-server:8000
       # OpenTelemetry export to Tempo
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
-      - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.6.0,deployment.environment=dev
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=redis-sre-worker,service.version=0.7.0,deployment.environment=dev
     depends_on:
       redis:
         condition: service_healthy
@@ -331,6 +331,15 @@ services:
       - NODE_ENV=development
       - VITE_API_URL=http://sre-agent:8000
       - VITE_API_BASE_URL=http://localhost:8080/api/v1
+      # OIDC SSO for the SPA — derived from the same AUTH_* the backend uses, so you set the
+      # values ONCE. The SPA is a separate Vite build and can only read VITE_-prefixed,
+      # build-time vars, hence the remap. Unset AUTH_* -> UI runs open (same as before).
+      # AUTH_SCOPES already includes api://<api-app-id>/access_as_user, which audiences the
+      # UI's access token to the API (the UI normalizes its comma/space separators).
+      - VITE_OIDC_ISSUER=${AUTH_ISSUER_URL:-}
+      - VITE_OIDC_CLIENT_ID=${AUTH_UI_CLIENT_ID:-}
+      - VITE_OIDC_SCOPE=${AUTH_SCOPES:-}
+      - VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI:-}
     depends_on:
       - sre-agent
     volumes:

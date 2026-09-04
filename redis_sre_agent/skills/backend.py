@@ -1,4 +1,4 @@
-"""Runtime skill backend abstraction and default Redis implementation."""
+"""Skill backend abstraction and default Redis implementation."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def unsupported_skill_search_type_result(
 
 
 class SkillBackend(Protocol):
-    """Runtime backend for skill discovery and retrieval."""
+    """Backend for skill discovery and retrieval."""
 
     async def list_skills(
         self,
@@ -685,7 +685,7 @@ def _load_custom_backend(config: Settings) -> SkillBackend:
 
 
 def get_skill_backend(config: Settings | None = None) -> SkillBackend:
-    """Return the active runtime skill backend."""
+    """Return the active skill backend."""
 
     global _DEFAULT_BACKEND_CACHE
     active_config = config or settings

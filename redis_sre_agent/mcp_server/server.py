@@ -3113,13 +3113,29 @@ async def redis_sre_list_feedback(
 # ============================================================================
 
 
+def _refuse_if_authz_enabled() -> None:
+    """MCP has no authenticated principal this phase, so its target access cannot be scoped.
+    When infrastructure authorization is enabled, refuse to serve rather than run unscoped (or
+    silently fail-closed to empty). MCP authn/authz is separate future work."""
+    from redis_sre_agent.core.config import settings
+
+    if settings.infrastructure_authorization_enabled:
+        raise RuntimeError(
+            "The MCP interface is unavailable when infrastructure authorization is enabled "
+            "(MCP has no authenticated principal this phase). Use the authenticated UI/API/CLI "
+            "surfaces, or disable infrastructure_authorization_enabled to use MCP."
+        )
+
+
 def run_stdio():
     """Run the MCP server in stdio mode."""
+    _refuse_if_authz_enabled()
     mcp.run(transport="stdio")
 
 
 def run_sse(host: str = "127.0.0.1", port: int = 8080):
     """Run the MCP server in SSE mode (legacy, use HTTP instead)."""
+    _refuse_if_authz_enabled()
     mcp.run(transport="sse", host=host, port=port)
 
 
@@ -3134,6 +3150,7 @@ def run_http(host: str = "0.0.0.0", port: int = 8081):
         host: Host to bind to (default 0.0.0.0 for external access)
         port: Port to listen on (default 8081)
     """
+    _refuse_if_authz_enabled()
     import asyncio
 
     mcp.settings.host = host
@@ -3149,9 +3166,20 @@ def get_http_app():
 
     The MCP endpoint will be available at /mcp
     """
+    _refuse_if_authz_enabled()
     return mcp.streamable_http_app()
 
 
 # ASGI app for uvicorn deployment
 # Usage: uvicorn redis_sre_agent.mcp_server.server:app --host 0.0.0.0 --port 8081
-app = mcp.streamable_http_app()
+# Serving is refused under infrastructure authorization (MCP has no authenticated principal).
+# The guard runs at ASGI startup/request time, NOT import time, so the module stays importable
+# by the CLI and other code that only needs `mcp` / `run_*` (importing must not raise).
+_mcp_http_app = mcp.streamable_http_app()
+
+
+async def app(scope, receive, send):
+    # Refuse on EVERY scope type (lifespan/http/websocket/...) so no connection kind can reach
+    # the unguarded MCP app under authz.
+    _refuse_if_authz_enabled()
+    await _mcp_http_app(scope, receive, send)

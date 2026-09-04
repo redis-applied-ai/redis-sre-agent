@@ -32,6 +32,8 @@ _COMMANDS = {
     "support-package": "redis_sre_agent.cli.support_package:support_package",
     "eval": "redis_sre_agent.cli.eval:eval",
     "feedback": "redis_sre_agent.cli.feedback:feedback",
+    "login": "redis_sre_agent.cli.auth:login",
+    "logout": "redis_sre_agent.cli.auth:logout",
 }
 
 # Built-in commands that don't need lazy loading

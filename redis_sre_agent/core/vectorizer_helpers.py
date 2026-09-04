@@ -82,6 +82,13 @@ def set_vectorizer_factory(factory: Optional[VectorizerFactory]) -> None:
     _settings_vectorizer_factory = None
     _factory_initialized = True
 
+    # The semantic cache memoizes a backend holding a vectorizer built by this
+    # factory. That memo cannot key on a module global, so drop it here or the
+    # override would be silently inert for an already-built cache.
+    from redis_sre_agent.core.semantic_cache.redisvl_backend import reset_backend_cache
+
+    reset_backend_cache()
+
 
 def get_vectorizer_factory() -> Optional[VectorizerFactory]:
     """Get the currently registered global vectorizer factory, if any."""

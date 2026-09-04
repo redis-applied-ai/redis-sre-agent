@@ -109,7 +109,7 @@ skills/
 Agent Skills package scripts are retrieval-only in v1.
 
 - They are indexed and returned through `get_skill` and `get_skill_resource`.
-- They are not executed by this agent runtime.
+- They are not executed by this agent.
 - A future execution path must go through a separate executor interface.
 
 ### Text assets

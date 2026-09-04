@@ -109,6 +109,8 @@ class TestCliMcpParityHelpers:
             "knowledge-pack build",
             "knowledge-pack inspect",
             "knowledge-pack load",
+            "login",
+            "logout",
             "mcp list-tools",
             "mcp serve",
             "worker restart",

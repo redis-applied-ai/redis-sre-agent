@@ -623,6 +623,7 @@ class TestTasksAPI:
             decision="approved",
             decision_by=None,
             decision_comment=None,
+            authz_bearer=None,
         )
 
     def test_resume_task_restores_awaiting_approval_when_enqueue_fails(self, client):

@@ -42,6 +42,13 @@ OPENAI_API_KEY=sk-your-openai-key
 REDIS_SRE_MASTER_KEY=your-secret-key
 ```
 
+> **SSO / authorization:** to enable OIDC login see
+> [Authentication (OIDC SSO)](../how-to/authentication-sso.md). To additionally scope which
+> clusters/instances each user may access, see
+> [Infrastructure Authorization](../how-to/infrastructure-authorization.md) — its *Running via
+> Docker* section covers making the hook importable in both the `sre-agent` and `sre-worker`
+> containers.
+
 ### 3. Start Services
 
 ```bash

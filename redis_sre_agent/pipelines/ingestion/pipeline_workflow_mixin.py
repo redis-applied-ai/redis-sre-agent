@@ -195,25 +195,35 @@ class PipelineWorkflowMixin:
                     }
                 )
 
-        stale_source_documents = await self._delete_stale_source_documents(
-            deduplicators,
-            tracked_source_documents,
-            current_source_paths,
-            scope_prefixes,
-        )
-        for deletion in stale_source_documents:
-            results.append(
-                {
-                    "file": deletion["path"],
-                    "title": deletion.get("title", ""),
-                    "category": deletion.get("category", ""),
-                    "severity": deletion.get("severity", ""),
-                    "status": "success",
-                    "action": "delete",
-                    "chunks_created": 0,
-                    "chunks_indexed": 0,
-                }
+        try:
+            stale_source_documents = await self._delete_stale_source_documents(
+                deduplicators,
+                tracked_source_documents,
+                current_source_paths,
+                scope_prefixes,
             )
+            for deletion in stale_source_documents:
+                results.append(
+                    {
+                        "file": deletion["path"],
+                        "title": deletion.get("title", ""),
+                        "category": deletion.get("category", ""),
+                        "severity": deletion.get("severity", ""),
+                        "status": "success",
+                        "action": "delete",
+                        "chunks_created": 0,
+                        "chunks_indexed": 0,
+                    }
+                )
+        finally:
+            # Push-invalidate the semantic answer cache for replaced/removed docs
+            # in `finally` so a partial ingestion (per-doc changes recorded, then
+            # a failure e.g. in stale-source deletion) still evicts the cache
+            # entries citing those now-stale docs (§G/§L). Fails open, so it never
+            # masks the original error or blocks ingestion.
+            from redis_sre_agent.core.semantic_cache.service import invalidate_changed_sources
+
+            await invalidate_changed_sources(results)
 
         return results
 

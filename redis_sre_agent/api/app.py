@@ -3,11 +3,13 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import PlainTextResponse
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from redis_sre_agent import __version__
+from redis_sre_agent.api.auth import require_auth
+from redis_sre_agent.api.auth import router as auth_router
 from redis_sre_agent.api.clusters import router as clusters_router
 from redis_sre_agent.api.feedback import list_router as feedback_list_router
 from redis_sre_agent.api.feedback import router as feedback_router
@@ -131,6 +133,15 @@ async def lifespan(app: FastAPI):
             logger.warning("Target catalog startup sync failed (continuing): %s", e)
             _app_startup_state["target_catalog_sync"] = {"error": str(e)}
 
+        # Advisory auth self-check (observability only; never gates requests).
+        try:
+            from redis_sre_agent.core.auth import auth_startup_selfcheck
+
+            _app_startup_state["auth"] = await auth_startup_selfcheck()
+        except Exception as e:  # advisory only
+            logger.warning("Auth self-check failed (continuing): %s", e)
+            _app_startup_state["auth"] = {"error": str(e)}
+
         # Log configuration (mask Redis URL credentials)
         from redis_sre_agent.core.instances import mask_redis_url
 
@@ -192,22 +203,35 @@ async def root_health_check():
     return f"{settings.app_name} is running! 🚀"
 
 
+# OIDC auth: protected routers depend on require_auth (a no-op when auth_enabled=False,
+# 401 when a valid bearer is missing, 503 fail-closed when misconfigured/discovery-down).
+# EXEMPT (no bearer): root "/", health_router (/api/v1/ + /api/v1/health), metrics_router
+# (/api/v1/metrics* — Prometheus scrape, gate behind network policy), /docs, /openapi.json,
+# and the /auth/* router. The WebSockets router is NOT gated here: a browser WebSocket cannot
+# send an Authorization header, so its auth is enforced pre-accept in the handler (Phase 2).
+_auth = [Depends(require_auth)]
+
+# Browser-login convenience endpoints (unauthenticated by design).
+app.include_router(auth_router)
+
 # Include routers
 app.include_router(health_router, prefix="/api/v1", tags=["Health"])
 app.include_router(metrics_router, prefix="/api/v1", tags=["Metrics"])
-app.include_router(clusters_router, prefix="/api/v1", tags=["Clusters"])
-app.include_router(instances_router, prefix="/api/v1", tags=["Instances"])
-app.include_router(knowledge_router, tags=["Knowledge"])
+app.include_router(clusters_router, prefix="/api/v1", tags=["Clusters"], dependencies=_auth)
+app.include_router(instances_router, prefix="/api/v1", tags=["Instances"], dependencies=_auth)
+app.include_router(knowledge_router, tags=["Knowledge"], dependencies=_auth)
 # Mount the Threads/Tasks APIs under /api/v1
-app.include_router(threads_router, prefix="/api/v1", tags=["Threads"])
-app.include_router(tasks_api_router, prefix="/api/v1", tags=["Tasks"])
-app.include_router(feedback_router)
-app.include_router(feedback_list_router)
-app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
+app.include_router(threads_router, prefix="/api/v1", tags=["Threads"], dependencies=_auth)
+app.include_router(tasks_api_router, prefix="/api/v1", tags=["Tasks"], dependencies=_auth)
+app.include_router(feedback_router, dependencies=_auth)
+app.include_router(feedback_list_router, dependencies=_auth)
+app.include_router(memory_router, prefix="/api/v1", tags=["Memory"], dependencies=_auth)
 
-app.include_router(schedules_router, tags=["Schedules"])
+app.include_router(schedules_router, tags=["Schedules"], dependencies=_auth)
 app.include_router(websockets_router, prefix="/api/v1", tags=["WebSockets"])
-app.include_router(support_package_router, prefix="/api/v1", tags=["Support Packages"])
+app.include_router(
+    support_package_router, prefix="/api/v1", tags=["Support Packages"], dependencies=_auth
+)
 
 
 if __name__ == "__main__":

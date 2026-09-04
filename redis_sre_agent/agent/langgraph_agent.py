@@ -119,6 +119,16 @@ def _to_int(value: Any, default: int = 0) -> int:
             return default
 
 
+async def _scoped_instances() -> list:
+    """`get_instances()` filtered to the current principal's allowed set — the authorization
+    chokepoint for the agent's zero-scope auto-detect and cluster-linked instance paths, which
+    would otherwise enumerate/operate on the full registry. Passthrough when authz is disabled.
+    """
+    from redis_sre_agent.core.authorization import TargetRef, scope_models
+
+    return await scope_models(await get_instances(), TargetRef.from_instance)
+
+
 async def _collect_cluster_instance_diagnostics(
     linked_instances: List[Any],
     *,
@@ -1936,7 +1946,7 @@ CONTEXT: This query mentioned Redis instance ID: {instance_id}, but there was an
 CONTEXT: This query mentioned Redis cluster ID: {cluster_id}, but the cluster was not found in the system. Please proceed with general Redis troubleshooting."""
                 else:
                     target_cluster = cluster
-                    all_instances = await get_instances()
+                    all_instances = await _scoped_instances()
                     linked_instances = [
                         inst
                         for inst in all_instances
@@ -2146,7 +2156,7 @@ Please verify the details and try again, or let me know if you'd like help with 
                 if not target_instance:
                     # No instance created from user input, check existing instances
                     try:
-                        instances = await get_instances()
+                        instances = await _scoped_instances()
                         if len(instances) == 1:
                             # Only one instance available - use it automatically
                             target_instance = instances[0]
@@ -2264,6 +2274,9 @@ Alternatively, if you're looking for general Redis knowledge or best practices (
 
                 # Save the updated instance type
                 try:
+                    # Persist path: save_instances() has REPLACE semantics (it deletes any stored
+                    # instance not in this list), so it MUST see the FULL registry. Scoping here
+                    # would permanently delete every instance the principal can't access.
                     instances = await get_instances()
                     for i, inst in enumerate(instances):
                         if inst.id == target_instance.id:

@@ -4,11 +4,14 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from redis.asyncio import Redis
 
+from redis_sre_agent.api.auth import require_auth
+from redis_sre_agent.core import auth as core_auth
+from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.keys import RedisKeys
 from redis_sre_agent.core.redis import get_redis_client
 from redis_sre_agent.core.task_events import InitialStateEvent, TaskStreamEvent
@@ -17,6 +20,32 @@ from redis_sre_agent.core.threads import ThreadManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# WebSocket close code for auth failure (RFC 6455 private-use range). Note: a pre-accept
+# close surfaces to real browsers as 1006 (abnormal); 4401 is observable via TestClient.
+WS_AUTH_FAILED_CODE = 4401
+
+
+async def authenticate_ws(websocket: WebSocket) -> Optional[dict]:
+    """Validate a WebSocket's bearer token via the ONE shared validator.
+
+    Browsers cannot set an Authorization header, so the token rides the
+    `Sec-WebSocket-Protocol` subprotocol as ["bearer", "<token>"]; a `?token=` query
+    param is accepted as a fallback for non-browser clients. Returns claims or None.
+    """
+    token: Optional[str] = None
+    subprotocols = websocket.scope.get("subprotocols", [])
+    if len(subprotocols) >= 2 and subprotocols[0] == "bearer":
+        token = subprotocols[1]
+    if not token:
+        token = websocket.query_params.get("token")
+    if not token:
+        return None
+    try:
+        return await core_auth.validate_token(token)
+    except (core_auth.AuthError, core_auth.DiscoveryError, core_auth.AuthConfigError):
+        return None
+
 
 # Active WebSocket connections per task
 _active_connections: Dict[str, Set[WebSocket]] = {}
@@ -191,7 +220,21 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
     Clients can connect to this endpoint to receive real-time updates
     about a specific task's progress without polling.
     """
-    await websocket.accept()
+    # Auth is enforced BEFORE accept(): a rejected socket never completes the handshake.
+    # Router-level HTTP dependencies do not apply to WebSockets, so this is the WS gate.
+    if settings.auth_enabled:
+        claims = await authenticate_ws(websocket)
+        if claims is None:
+            await websocket.close(code=WS_AUTH_FAILED_CODE)
+            logger.info(f"WebSocket auth rejected for thread {thread_id}")
+            return
+        # Echo the "bearer" subprotocol only if the client actually offered it. Clients
+        # that authenticated via the ?token= query fallback offer no subprotocol, and
+        # selecting one the client didn't offer breaks the handshake (RFC 6455).
+        offered = websocket.scope.get("subprotocols", [])
+        await websocket.accept(subprotocol="bearer" if "bearer" in offered else None)
+    else:
+        await websocket.accept()
     logger.info(f"WebSocket client connected for thread {thread_id}")
 
     try:
@@ -291,7 +334,7 @@ async def websocket_task_status(websocket: WebSocket, thread_id: str):
         logger.info(f"WebSocket client disconnected for thread {thread_id}")
 
 
-@router.get("/tasks/{thread_id}/stream-info")
+@router.get("/tasks/{thread_id}/stream-info", dependencies=[Depends(require_auth)])
 async def get_task_stream_info(thread_id: str):
     """Get information about the task's stream status."""
     try:

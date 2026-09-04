@@ -3195,12 +3195,13 @@ wheels = [
 
 [[package]]
 name = "redis-sre-agent"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-memory-client" },
     { name = "aiofiles" },
     { name = "aiohttp" },
+    { name = "authlib" },
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "click" },
@@ -3234,6 +3235,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pydocket" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pypdf2" },
     { name = "python-dotenv" },
     { name = "python-ulid" },
@@ -3271,6 +3273,7 @@ requires-dist = [
     { name = "agent-memory-client", specifier = ">=0.14.0" },
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "aiohttp", specifier = ">=3.8.0" },
+    { name = "authlib", specifier = ">=1.3.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "boto3", specifier = ">=1.34.0" },
     { name = "click", specifier = ">=8.0.0" },
@@ -3304,6 +3307,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pydocket", specifier = ">=0.18.2" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8.0" },
     { name = "pypdf2", specifier = ">=3.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-ulid", specifier = ">=3.0.0" },

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Response
 from fastapi.responses import PlainTextResponse
 
 from redis_sre_agent import __version__
+from redis_sre_agent.core.auth import auth_status
 from redis_sre_agent.core.config import settings
 from redis_sre_agent.core.docket_tasks import test_task_system
 from redis_sre_agent.core.redis import initialize_redis
@@ -102,6 +103,7 @@ async def detailed_health_check():
             "embedding_model": settings.embedding_model,
             "task_queue": settings.task_queue_name,
         },
+        "auth": auth_status(),
     }
 
     return Response(
