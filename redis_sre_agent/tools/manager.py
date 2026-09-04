@@ -739,6 +739,25 @@ class ToolManager:
                 )
                 return
 
+            # The package may have been extracted in a different container
+            # (e.g. the API container extracts on upload); if the directory is
+            # missing here, re-extract it from storage. The extraction dir is
+            # named after the package ID.
+            package_dir = Path(self.support_package_path)
+            if not package_dir.exists():
+                from redis_sre_agent.core.support_package_helpers import (
+                    get_support_package_manager,
+                )
+
+                package_id = package_dir.name
+                logger.info(
+                    f"Support package path missing locally; re-extracting '{package_id}' "
+                    "from storage"
+                )
+                self.support_package_path = await get_support_package_manager().extract(
+                    package_id
+                )
+
             # Create and enter the provider's async context
             provider = SupportPackageToolProvider(package_path=self.support_package_path)
             provider = await self._stack.enter_async_context(provider)

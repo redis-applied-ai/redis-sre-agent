@@ -203,6 +203,7 @@ services:
       - ./evals:/app/evals  # Mount live eval suites and scenarios for container CLI runs
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
+      - support_packages:/tmp/sre_agent/support_packages  # Shared with sre-worker; persists uploads
     group_add:
       - "0"  # Docker Desktop exposes the socket as root:root
     command: uvicorn redis_sre_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
@@ -241,6 +242,7 @@ services:
       - ./redis_sre_agent:/app/redis_sre_agent  # Mount source code for development
       - ./tests:/app/tests  # Mount tests for development
       - uv_cache:/root/.cache/uv  # Persist UV cache for MCP server deps
+      - support_packages:/tmp/sre_agent/support_packages  # Shared with sre-agent; persists uploads
     group_add:
       - "0"  # Docker Desktop exposes the socket as root:root
     # Run the worker directly from the project virtualenv instead of via
@@ -407,3 +409,4 @@ volumes:
   loki_data:
   tempo_data:
   uv_cache:  # Persist UV cache for MCP server dependencies
+  support_packages:  # Shared between sre-agent and sre-worker; survives restarts

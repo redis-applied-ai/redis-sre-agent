@@ -276,6 +276,8 @@ const Triage = () => {
   const [clusters, setClusters] = useState<RedisCluster[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
   const [selectedClusterId, setSelectedClusterId] = useState<string>("");
+  // Support package to analyze, passed from the Support Packages page via URL
+  const supportPackageId = searchParams.get("support_package_id") || "";
   const [isThinking, setIsThinking] = useState(false);
   const [showWebSocketMonitor, setShowWebSocketMonitor] = useState(false);
   const [isThreadBusy, setIsThreadBusy] = useState(false);
@@ -708,6 +710,10 @@ const Triage = () => {
       const params = new URLSearchParams(window.location.search);
       if (threadId) {
         params.set("thread", threadId);
+        // One-shot params from the Support Packages "Analyze" flow: consumed
+        // when the thread is created, so later conversations don't inherit them.
+        params.delete("support_package_id");
+        params.delete("subject");
       } else {
         params.delete("thread");
       }
@@ -787,6 +793,16 @@ const Triage = () => {
       setShowNewConversation(true);
     }
   }, [threads.length, activeThreadId, showNewConversation, searchParams]);
+
+  // Prefill the message when arriving from the Support Packages "Analyze" button
+  useEffect(() => {
+    if (supportPackageId && !activeThreadId && !inputMessage) {
+      const subject = searchParams.get("subject");
+      setInputMessage(subject || "Analyze this support package");
+    }
+    // Only on mount / param change — don't re-prefill as the user types
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supportPackageId]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -1421,6 +1437,7 @@ const Triage = () => {
           undefined,
           selectedInstanceId || undefined,
           selectedClusterId || undefined,
+          supportPackageId || undefined,
         );
         threadId = triageResponse;
 

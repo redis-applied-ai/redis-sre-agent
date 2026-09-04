@@ -28,6 +28,7 @@ class PackageMetadata(BaseModel):
     )
     content_type: str = Field(default="application/gzip", description="MIME type of the package")
     checksum: Optional[str] = Field(default=None, description="SHA-256 checksum of the package")
+    tags: List[str] = Field(default_factory=list, description="User-defined tags for the package")
 
 
 class SupportPackageStorage(ABC):
@@ -42,6 +43,7 @@ class SupportPackageStorage(ABC):
         self,
         source_path: Path,
         package_id: Optional[str] = None,
+        original_filename: Optional[str] = None,
     ) -> str:
         """Upload a support package to storage.
 
@@ -117,5 +119,21 @@ class SupportPackageStorage(ABC):
 
         Returns:
             True if the package exists, False otherwise
+        """
+        ...
+
+    @abstractmethod
+    async def update_tags(self, package_id: str, tags: List[str]) -> PackageMetadata:
+        """Replace the tag list for a package.
+
+        Args:
+            package_id: ID of the package
+            tags: New list of tags (replaces existing)
+
+        Returns:
+            Updated PackageMetadata
+
+        Raises:
+            PackageNotFoundError: If the package doesn't exist
         """
         ...

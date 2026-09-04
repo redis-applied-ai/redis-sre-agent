@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from redis_sre_agent.core.config import settings
@@ -56,6 +56,7 @@ class PackageInfoResponse(BaseModel):
     is_extracted: bool
     storage_path: Optional[str] = None
     checksum: Optional[str] = None
+    tags: List[str] = []
 
 
 class PackageListResponse(BaseModel):
@@ -100,7 +101,11 @@ async def upload_package(
             tmp_path = Path(tmp.name)
 
         try:
-            result_id = await manager.upload(tmp_path, package_id=package_id)
+            result_id = await manager.upload(
+                tmp_path,
+                package_id=package_id,
+                original_filename=file.filename or None,
+            )
             return PackageUploadResponse(
                 package_id=result_id,
                 status="uploaded",
@@ -136,6 +141,7 @@ async def list_packages(
                     is_extracted=is_extracted,
                     storage_path=pkg.storage_path,
                     checksum=pkg.checksum,
+                    tags=pkg.tags,
                 )
             )
 
@@ -166,6 +172,7 @@ async def get_package_info(package_id: str):
             is_extracted=is_extracted,
             storage_path=metadata.storage_path,
             checksum=metadata.checksum,
+            tags=metadata.tags,
         )
 
     except HTTPException:
@@ -210,4 +217,30 @@ async def delete_package(package_id: str):
 
     except Exception as e:
         logger.error(f"Failed to delete package: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/support-packages/{package_id}/tags", response_model=PackageInfoResponse)
+async def update_package_tags(
+    package_id: str,
+    tags: List[str] = Body(..., description="Complete list of tags to set on this package"),
+):
+    """Replace the tag list for a support package."""
+    try:
+        manager = get_manager()
+        updated = await manager.update_tags(package_id, tags)
+        is_extracted = await manager.is_extracted(package_id)
+        return PackageInfoResponse(
+            package_id=updated.package_id,
+            filename=updated.filename,
+            size_bytes=updated.size_bytes,
+            uploaded_at=updated.uploaded_at.isoformat(),
+            is_extracted=is_extracted,
+            storage_path=updated.storage_path,
+            checksum=updated.checksum,
+            tags=updated.tags,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to update tags for package {package_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
