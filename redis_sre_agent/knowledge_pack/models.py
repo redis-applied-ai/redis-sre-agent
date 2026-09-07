@@ -23,6 +23,9 @@ class RecordCounts(BaseModel):
     """Counts of exported records included in a knowledge pack."""
 
     artifact_documents: int = 0
+    repo_source_documents: int = 0
+    knowledge_artifact_documents: int = 0
+    knowledge_source_documents: int = 0
     chunk_records: int = 0
     document_meta_records: int = 0
     source_meta_records: int = 0
